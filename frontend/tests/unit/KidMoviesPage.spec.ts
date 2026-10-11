@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import KidMoviesPage from '@/kid/pages/KidMoviesPage.vue'
-import { i18n } from '@/i18n'
+import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
 import type { KidCatalogItem, KidScreenTimeSummary } from '@/shared/api/types'
 
@@ -75,7 +75,7 @@ const catalog: KidCatalogItem[] = [
 describe('KidMoviesPage', () => {
   beforeEach(() => {
     sessionStorage.clear()
-    i18n.global.locale.value = 'zh-CN'
+    setAppLocale('zh-CN')
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path === '/kid/movies') return catalog
       if (path === '/kid/screen-time') return screenTime
@@ -95,16 +95,15 @@ describe('KidMoviesPage', () => {
     expect(wrapper.text()).toContain('海洋奇缘')
     expect(wrapper.text()).toContain('冰雪奇缘系列')
     expect(wrapper.text()).not.toContain('加入库')
-    expect(wrapper.find('.fold.open').exists()).toBe(false)
+    expect(wrapper.find('.series-fold').exists()).toBe(false)
   })
 
   it('unfolds a series into an ordered filmstrip', async () => {
     const wrapper = await openPage()
 
-    await wrapper.get('[aria-expanded="false"]').trigger('click')
+    await wrapper.get('.fold-btn').trigger('click')
 
-    const fold = wrapper.get('.fold')
-    expect(fold.classes()).toContain('open')
+    const fold = wrapper.get('.series-fold')
     expect(fold.text()).toContain('冰雪奇缘')
     expect(fold.text()).toContain('冰雪奇缘2')
     expect(fold.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('100')

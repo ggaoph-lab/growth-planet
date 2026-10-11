@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
         $middleware->throttleApi();
+        // Only nginx on the compose network talks to php-fpm; trust X-Forwarded-* from it.
+        $middleware->trustProxies(at: '*');
         $middleware->prepend(AssignRequestId::class);
         $middleware->alias([
             'role' => EnsureRole::class,
@@ -29,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withCommands([
         CreateFamilyCommand::class,
+        \App\Modules\Core\Console\PreflightCommand::class,
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
         ApiExceptionRenderer::register($exceptions);

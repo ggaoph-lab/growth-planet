@@ -1,22 +1,33 @@
-COMPOSE := docker compose
-APP     := $(COMPOSE) exec app
-RUN_APP := $(COMPOSE) run --rm --no-deps app
+COMPOSE      := docker compose
+COMPOSE_PROD := docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod
+APP          := $(COMPOSE) exec app
+RUN_APP      := $(COMPOSE) run --rm --no-deps app
+PROD_APP     := $(COMPOSE_PROD) exec app
 
 .PHONY: help init up down build ps logs shell composer artisan key migrate fresh seed-demo \
-        test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev family
+        test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev family \
+        prod-init prod-check prod-build prod-up prod-down prod-ps prod-logs prod-migrate prod-artisan \
+        prod-preflight prod-family prod-backup
 
 help:
-	@echo "make init            生成本地 .env（随机数据库密码）"
-	@echo "make build           构建 PHP 镜像"
-	@echo "make up / down       启动 / 停止容器"
-	@echo "make composer ARGS=  在容器中执行 composer"
-	@echo "make key             生成 APP_KEY"
-	@echo "make migrate         执行数据库迁移"
-	@echo "make family          交互式创建家庭与首位家长"
-	@echo "make seed-demo       写入明确标注的测试数据（仅本地）"
-	@echo "make test            运行后端与前端全部测试"
-	@echo "make frontend-build  构建前端到 frontend/dist（由 nginx 提供）"
-	@echo "make frontend-dev    启动 Vite 开发服务器 http://localhost:5173"
+	@echo "Development"
+	@echo "  make init            生成本地 .env（随机数据库密码）"
+	@echo "  make build           构建 PHP 开发镜像"
+	@echo "  make up / down       启动 / 停止开发容器"
+	@echo "  make migrate         执行数据库迁移"
+	@echo "  make family          交互式创建家庭与首位家长"
+	@echo "  make test            运行后端与前端全部测试"
+	@echo "  make frontend-build  构建前端到 frontend/dist"
+	@echo ""
+	@echo "Production (Oracle Cloud ARM / compose.prod.yaml)"
+	@echo "  make prod-init       生成 deploy/compose/.env.prod"
+	@echo "  make prod-check      主机兼容性检查"
+	@echo "  make prod-build      构建生产镜像（php + nginx/前端）"
+	@echo "  make prod-up/down    启动 / 停止生产容器"
+	@echo "  make prod-migrate    执行 migrate --force"
+	@echo "  make prod-preflight  生产配置预检"
+	@echo "  make prod-family     创建首位家庭/家长"
+	@echo "  make prod-backup     加密备份数据库与附件"
 
 init:
 	bash deploy/scripts/init-dev.sh
@@ -83,3 +94,51 @@ frontend-build:
 
 frontend-dev:
 	cd frontend && npm run dev
+
+# ---- Production -------------------------------------------------------------
+
+prod-init:
+	bash deploy/scripts/init-prod.sh
+
+prod-check:
+	bash deploy/scripts/check-host.sh
+
+prod-build:
+	mkdir -p deploy/certs
+	$(COMPOSE_PROD) build
+
+# If Docker Hub cannot pull node:*, build the SPA on the host then:
+#   make frontend-install frontend-build
+#   make prod-build-host-frontend
+prod-build-host-frontend:
+	mkdir -p deploy/certs
+	$(COMPOSE_PROD) build app
+	$(COMPOSE_PROD) build --build-arg FRONTEND_DIST=host nginx
+
+prod-up:
+	mkdir -p deploy/certs backups
+	$(COMPOSE_PROD) up -d
+
+prod-down:
+	$(COMPOSE_PROD) down
+
+prod-ps:
+	$(COMPOSE_PROD) ps
+
+prod-logs:
+	$(COMPOSE_PROD) logs -f --tail=200
+
+prod-migrate:
+	$(PROD_APP) php artisan migrate --force
+
+prod-artisan:
+	$(PROD_APP) php artisan $(ARGS)
+
+prod-preflight:
+	$(PROD_APP) php artisan app:preflight
+
+prod-family:
+	$(COMPOSE_PROD) exec -it app php artisan family:create
+
+prod-backup:
+	bash deploy/scripts/backup.sh

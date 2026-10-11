@@ -11,7 +11,9 @@
 !**/.env.*.example
 *.pem
 *.key
-deploy/certs/
+deploy/certs/*
+!deploy/certs/.gitkeep
+deploy/compose/.env.prod
 
 # Backend
 backend/vendor/
