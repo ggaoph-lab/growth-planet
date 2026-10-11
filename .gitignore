@@ -1,0 +1,37 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+!**/.env.*.example
+*.pem
+*.key
+deploy/certs/
+
+# Backend
+backend/vendor/
+backend/storage/*.key
+backend/storage/app/*
+backend/storage/framework/*
+backend/storage/logs/*
+backend/bootstrap/cache/*
+backend/.phpunit.result.cache
+backend/coverage/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+
+# Backups
+backups/
+*.sql.gz
+*.age
+.tools/

@@ -1,0 +1,192 @@
+<?php
+
+namespace Tests\Feature\Identity;
+
+use App\Modules\Identity\Enums\ChildStatus;
+use App\Modules\Identity\Models\TrustedDevice;
+use App\Modules\Identity\Services\DeviceTokens;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class KidLoginTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_parent_authorizes_device_and_token_is_only_in_httponly_cookie(): void
+    {
+        ['parent' => $parent] = $this->makeFamily();
+        $this->actingAsParent($parent);
+
+        $this->postJson('/api/v1/parent/devices', ['name' => '客厅 iPad'])->assertStatus(423);
+
+        $this->actingAsParent($parent, sudo: true);
+        $response = $this->postJson('/api/v1/parent/devices', ['name' => '客厅 iPad'])->assertCreated();
+
+        $cookie = $response->getCookie(DeviceTokens::COOKIE, false);
+        $this->assertNotNull($cookie);
+        $this->assertTrue($cookie->isHttpOnly());
+        $this->assertStringNotContainsString('token', $response->getContent());
+
+        $token = decrypt($cookie->getValue(), false);
+        $token = str_contains($token, '|') ? explode('|', $token, 2)[1] : $token;
+        $this->assertSame(DeviceTokens::hash($token), TrustedDevice::sole()->token_hash);
+    }
+
+    public function test_kid_profiles_and_login_require_an_authorized_device(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+
+        $this->getJson('/api/v1/auth/kid/profiles')->assertStatus(401)->assertJsonPath('error.code', 'DEVICE_NOT_AUTHORIZED');
+        $this->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '1234'])->assertStatus(401);
+    }
+
+    public function test_kid_logs_in_with_pin_on_authorized_device(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [, $token] = $this->makeDevice($family, $parent);
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->getJson('/api/v1/auth/kid/profiles')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.nickname', '小星星')
+            ->assertJsonPath('data.0.pin_required', true)
+            ->assertJsonMissingPath('data.0.birth_date');
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '0000'])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'INVALID_PIN');
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '1234'])
+            ->assertOk()
+            ->assertJsonPath('data.user.role', 'child')
+            ->assertJsonPath('data.child.nickname', '小星星')
+            ->assertJsonMissingPath('data.child.birth_date');
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)->getJson('/api/v1/kid/home')->assertOk();
+    }
+
+    public function test_pin_is_throttled_per_device_and_child(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [, $token] = $this->makeDevice($family, $parent);
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->withCookie(DeviceTokens::COOKIE, $token)
+                ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '000'.$i])
+                ->assertStatus(422);
+        }
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '1234'])
+            ->assertStatus(429);
+    }
+
+    public function test_child_without_pin_logs_in_with_device_only(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family, ['pin' => null]);
+        [, $token] = $this->makeDevice($family, $parent);
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id])
+            ->assertOk();
+    }
+
+    public function test_device_cannot_log_in_child_from_another_family(): void
+    {
+        ['family' => $familyA, 'parent' => $parentA] = $this->makeFamily('mama_a');
+        ['family' => $familyB] = $this->makeFamily('mama_b');
+        $otherChild = $this->makeChild($familyB);
+        [, $token] = $this->makeDevice($familyA, $parentA);
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $otherChild->id, 'pin' => '1234'])
+            ->assertNotFound();
+    }
+
+    public function test_revoking_device_ends_kid_session_immediately(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/home')->assertOk();
+
+        $device->forceFill(['revoked_at' => now()])->save();
+
+        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/home')->assertUnauthorized();
+    }
+
+    public function test_kid_session_without_device_cookie_is_rejected(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device] = $this->makeDevice($family, $parent);
+
+        $this->actingAs($child->member->user, 'web')
+            ->withSession(['kid_device_id' => $device->id])
+            ->getJson('/api/v1/kid/home')
+            ->assertUnauthorized();
+    }
+
+    public function test_paused_child_cannot_log_in_or_keep_session(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        $child->status = ChildStatus::Paused;
+        $child->save();
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '1234'])
+            ->assertNotFound();
+        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/home')->assertUnauthorized();
+    }
+
+    public function test_kid_home_lists_all_planets_without_fake_data(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        $planets = $this->actingAsKid($child, $device, $token)
+            ->getJson('/api/v1/kid/home')
+            ->assertOk()
+            ->assertJsonPath('data.profile.nickname', '小星星')
+            ->assertJsonMissingPath('data.profile.birth_date')
+            ->json('data.planets');
+
+        $this->assertCount(11, $planets);
+        $available = [
+            'today_tasks', 'wallet', 'level', 'task_planet', 'shop',
+            'bag_planet', 'explore_planet', 'food_diary',
+            'movie_planet', 'english_planet', 'collection',
+        ];
+        foreach ($planets as $planet) {
+            if (in_array($planet['key'], $available, true)) {
+                $this->assertTrue($planet['available'], "{$planet['key']} should be available");
+            } else {
+                $this->assertFalse($planet['available'], "{$planet['key']} must not be shown as available before its phase");
+            }
+        }
+    }
+
+    public function test_kid_can_toggle_own_animation_and_sound(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        $this->actingAsKid($child, $device, $token)
+            ->patchJson('/api/v1/kid/preferences', ['animations' => false])
+            ->assertOk()
+            ->assertExactJson(['data' => ['animations' => false, 'sounds' => true]]);
+    }
+}

@@ -1,0 +1,74 @@
+# 成长星球 Growth Planet
+
+面向小学一年级儿童及家长的家庭成长管理系统：任务与习惯、XP 与金币账本、奖励商城、统一审核中心、书包星球、勇敢探索、食物探索日记、电影星球、英语探索星球、统一屏幕时间与成长报告。
+
+> 当前阶段：**第六阶段已完成**；**阶段 4.1（电影系列折叠与管理）已实现**。界面默认 **中英双语**（`中文 / English`），右上角可切换「中英双语 / 中文 / English」。各阶段进度见 [`docs/development-plan.md`](docs/development-plan.md)。
+
+## 技术栈
+
+Vue 3 + TypeScript + Vite + Pinia + Vue Router + Element Plus（家长端）｜Laravel 12（容器内 PHP 8.4）+ Sanctum SPA 会话｜MySQL 8.4 LTS｜Nginx｜Docker Compose
+
+## 本地启动
+
+前置：Docker（含 Compose v2）、Node.js 20+、make。
+
+```bash
+make init              # 生成 .env 与 backend/.env（随机数据库密码，不入库）
+make build             # 构建 PHP 镜像
+make up                # 启动 mysql / app / nginx
+make composer ARGS=install
+make key               # 生成 APP_KEY（仅首次）
+make migrate
+make frontend-install
+make frontend-build    # 构建到 frontend/dist，由 nginx 提供
+```
+
+打开 <http://localhost:8088>。
+
+创建家庭与首位家长（交互式输入密码，至少 10 位，系统不内置任何默认密码）：
+
+```bash
+make family
+```
+
+只想快速体验时，可以写入明确标注为“测试”的演示数据（生产环境拒绝执行；家长密码和孩子 PIN 随机生成，只在终端显示一次）：
+
+```bash
+make seed-demo
+```
+
+前端开发热更新：`make frontend-dev`，访问 <http://localhost:5173>（`/api`、`/sanctum` 代理到 8088）。
+
+| 端口 | 用途 |
+|---|---|
+| 8088 | Nginx（SPA + API），可在 `.env` 的 `HTTP_PORT` 修改 |
+| 33061 | MySQL，仅绑定 127.0.0.1，可在 `MYSQL_HOST_PORT` 修改 |
+| 5173 | Vite 开发服务器（可选） |
+
+> 无法访问 Docker Hub 时，可先从镜像源拉取 `mysql:8.4`、`php:8.4-fpm-bookworm` 并 `docker tag` 为原名；PHP 基础镜像也可通过 `.env` 的 `PHP_BASE` 指定。
+
+## 首次使用流程
+
+1. 家长登录 → “孩子档案”新建孩子（昵称、内置头像、生日、年级、可选 4-6 位 PIN）。
+2. 在孩子要使用的平板/手机上用家长账号登录 → “设备管理”授权当前设备（需再次输入家长密码）。
+3. 点“切换到孩子模式” → 孩子点头像、输入 PIN → 进入星球首页。
+
+## 测试与检查
+
+```bash
+make test        # 后端 PHPUnit（独立测试库 growth_planet_test）+ 前端 Vitest
+make lint        # Pint + ESLint
+make typecheck   # vue-tsc
+```
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [architecture](docs/architecture.md) | 模块划分、认证模型、时间与时区、第三方集成边界 |
+| [database](docs/database.md) | 数据表设计 |
+| [api](docs/api.md) | 接口约定与清单 |
+| [security](docs/security.md) | 权限、隐私、内容安全、密钥管理 |
+| [development-plan](docs/development-plan.md) | 分阶段计划、验收标准、待家长确认的问题 |
+
+`prd.md`、`points-rules.md`、`item-tracking.md`、`test-plan.md`、`deployment.md` 为 V0 规划稿，已被 V1.0 文档取代，仅供参考。

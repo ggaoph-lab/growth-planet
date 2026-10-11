@@ -1,0 +1,18 @@
+{
+  "name": "成长星球",
+  "short_name": "成长星球",
+  "description": "家庭成长管理系统",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1B1F4B",
+  "theme_color": "#1B1F4B",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
