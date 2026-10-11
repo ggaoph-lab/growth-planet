@@ -9,6 +9,7 @@ use App\Modules\Ledger\Enums\SourceModule;
 use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Movie\Models\ChildMovieLibrary;
 use App\Modules\Movie\Models\MovieRewardEvent;
+use App\Modules\Movie\Models\MovieViewing;
 use Illuminate\Support\Facades\DB;
 
 class MovieRewardService
@@ -26,6 +27,39 @@ class MovieRewardService
     public function onCompletion(ChildProfile $child, ChildMovieLibrary $library): void
     {
         $this->grantOnce($child, $library, 'COMPLETION', 'movie.completion', 'movie:completion:'.$library->id);
+    }
+
+    /**
+     * Points for finishing a pass. The first four passes of a movie can pay; later passes do not.
+     *
+     * @return array{xp: int, coins: int}|null
+     */
+    public function onViewingComplete(ChildProfile $child, ChildMovieLibrary $library, MovieViewing $viewing): ?array
+    {
+        if ($viewing->sequence > MovieViewing::REWARDABLE_COMPLETIONS || $viewing->rewarded) {
+            return null;
+        }
+
+        $grant = $this->rewards->grant(new RewardIntent(
+            familyId: $child->family_id,
+            childId: $child->id,
+            policyCode: 'movie.viewing',
+            grantKey: 'movie:viewing:'.$viewing->id,
+            sourceModule: SourceModule::Movie,
+            sourceType: 'child_movie_library',
+            sourceId: $library->id,
+            occurredAt: $this->clock->now(),
+        ));
+
+        $viewing->rewarded = true;
+        $viewing->reward_grant_id = $grant->id;
+        $viewing->save();
+
+        if ($grant->xp_amount <= 0 && $grant->coin_amount <= 0) {
+            return null;
+        }
+
+        return ['xp' => $grant->xp_amount, 'coins' => $grant->coin_amount];
     }
 
     public function onCrossMovie(ChildProfile $child, ChildMovieLibrary $library, ?int $previousLibraryId): void

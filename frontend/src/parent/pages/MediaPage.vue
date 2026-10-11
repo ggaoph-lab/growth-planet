@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import MoviePoster from '@/shared/MoviePoster.vue'
+import { overviewParagraphs } from '@/shared/movieOverview'
 import type {
   EnglishShow,
   EnglishWatchLog,
@@ -33,7 +34,6 @@ const englishLogs = ref<EnglishWatchLog[]>([])
 const policies = ref<ScreenTimePolicyRow[]>([])
 const expanded = ref<Record<string, boolean>>(loadExpanded())
 
-const movieForm = ref({ title_zh: '', runtime_minutes: 90 })
 const showForm = ref({ title: '', emoji: '📺' })
 const searchQuery = ref('')
 const searchHits = ref<TmdbMovieHit[]>([])
@@ -66,13 +66,49 @@ const importedExternalIds = computed(
   () => new Set(movies.value.filter((movie) => movie.source === 'tmdb' && movie.external_id).map((movie) => movie.external_id)),
 )
 
-const libraryTitles = computed(() => new Set(movies.value.map((movie) => movie.title_zh)))
+const libraryKeys = computed(() => {
+  const keys = new Set<string>()
+  for (const movie of movies.value) {
+    if (movie.external_id) keys.add(movie.external_id)
+    keys.add(normalizeTitle(movie.title_zh))
+    if (movie.original_title) keys.add(normalizeTitle(movie.original_title))
+  }
+  return keys
+})
+
+const wallSuggestions = computed(() => suggestions.value.filter((item) => !suggestionOwned(item)))
+
+const wallSourceHint = computed(() => {
+  const sources = new Set(wallSuggestions.value.map((item) => item.source))
+  if (sources.has('builtin') && sources.has('tmdb')) return t('common.wallSourcesBoth')
+  if (sources.has('tmdb')) return t('common.wallSourcesTmdb')
+  return t('common.wallSourcesBuiltin')
+})
+
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, '').toLowerCase()
+}
+
+function suggestionOwned(item: MovieSuggestion): boolean {
+  if (item.external_id && libraryKeys.value.has(item.external_id)) return true
+  if (libraryKeys.value.has(item.key)) return true
+  if (libraryKeys.value.has(normalizeTitle(item.title_zh))) return true
+  return item.original_title ? libraryKeys.value.has(normalizeTitle(item.original_title)) : false
+}
 
 function parentPoster(movie: ParentMovie | undefined): string {
   return movie?.poster_key ? `/api/v1/parent/movies/${movie.id}/poster` : ''
 }
 
-const posterDetail = ref<{ title: string; overview: string; meta: string; poster: string } | null>(null)
+const posterDetail = ref<{
+  title: string
+  originalTitle: string
+  overview: string
+  meta: string
+  poster: string
+} | null>(null)
+
+const introParagraphs = computed(() => overviewParagraphs(posterDetail.value?.overview))
 
 const detailOpen = computed({
   get: () => posterDetail.value !== null,
@@ -88,25 +124,46 @@ function movieMeta(year: number | null | undefined, runtime: number | null | und
   return bits.join(' · ')
 }
 
-function showPosterDetail(title: string, overview: string | null | undefined, meta: string, poster: string): void {
+function showPosterDetail(
+  title: string,
+  originalTitle: string | null | undefined,
+  overview: string | null | undefined,
+  meta: string,
+  poster: string,
+): void {
+  const english = originalTitle?.trim() ?? ''
   posterDetail.value = {
     title,
+    originalTitle: english && english !== title ? english : '',
     overview: overview?.trim() || t('common.noOverview'),
     meta,
     poster,
   }
 }
 
-function openParentMovie(movie: ParentMovie): void {
-  showPosterDetail(movie.title_zh, movie.overview, movieMeta(movie.release_year, movie.runtime_minutes), parentPoster(movie))
+function openParentMovie(movie: ParentMovie, fromSeries = false): void {
+  if (!fromSeries) collapseExpanded()
+  showPosterDetail(
+    movie.title_zh,
+    movie.original_title,
+    movie.overview,
+    movieMeta(movie.release_year, movie.runtime_minutes),
+    parentPoster(movie),
+  )
 }
 
 function openSuggestion(item: MovieSuggestion): void {
-  showPosterDetail(item.title_zh, item.overview, movieMeta(item.release_year, item.runtime_minutes), item.poster_url)
+  showPosterDetail(
+    item.title_zh,
+    item.original_title,
+    item.overview,
+    movieMeta(item.release_year, item.runtime_minutes),
+    item.poster_url,
+  )
 }
 
 function openHit(hit: TmdbMovieHit): void {
-  showPosterDetail(hit.title_zh, hit.overview, movieMeta(hit.release_year, null), '')
+  showPosterDetail(hit.title_zh, hit.original_title, hit.overview, movieMeta(hit.release_year, null), '')
 }
 
 const tabOptions = computed(() => [
@@ -126,9 +183,38 @@ function loadExpanded(): Record<string, boolean> {
   }
 }
 
-function toggle(key: string): void {
-  expanded.value = { ...expanded.value, [key]: !expanded.value[key] }
+function persistExpanded(): void {
   sessionStorage.setItem(EXPAND_KEY, JSON.stringify(expanded.value))
+}
+
+function toggle(key: string): void {
+  const opening = !expanded.value[key]
+  expanded.value = opening ? { [key]: true } : {}
+  persistExpanded()
+}
+
+function expandSeries(key: string): void {
+  if (expanded.value[key]) return
+  toggle(key)
+}
+
+function onCatalogClick(row: ParentCatalogItem, event: MouseEvent): void {
+  if (row.kind !== 'collection') return
+  const target = event.target
+  if (target instanceof Element && target.closest('button, a, .el-button')) return
+  expandSeries(`p-${row.collection.id}`)
+}
+
+function collapseExpanded(): void {
+  if (Object.keys(expanded.value).length === 0) return
+  expanded.value = {}
+  persistExpanded()
+}
+
+function onDocumentClick(event: MouseEvent): void {
+  const target = event.target
+  if (target instanceof Element && target.closest('[data-series-keep]')) return
+  collapseExpanded()
 }
 
 async function loadChildren(): Promise<void> {
@@ -174,32 +260,6 @@ async function loadAll(): Promise<void> {
 function reportError(e: unknown): void {
   if (e instanceof ApiError && e.code === 'SUDO_REQUIRED') return
   if (e instanceof ApiError) ElMessage.error(e.message)
-}
-
-async function createMovie(): Promise<void> {
-  const title = movieForm.value.title_zh.trim()
-  const match = suggestions.value.find((item) => item.title_zh === title)
-  if (match) {
-    movieForm.value = { title_zh: '', runtime_minutes: 90 }
-    await addSuggestion(match)
-    return
-  }
-  try {
-    const movie = await api.post<ParentMovie>('/parent/movies', { source: 'manual', ...movieForm.value })
-    await api.post(`/parent/movies/${movie.id}/reviews`, {
-      safety_status: 'APPROVED_SUITABLE',
-      min_age: 6,
-      reason: t('common.parentEnteredReason'),
-    })
-    if (childId.value) {
-      await api.put(`/parent/movies/${movie.id}/approvals/${childId.value}`, { visible: true })
-    }
-    ElMessage.success(t('common.movieAdded'))
-    movieForm.value = { title_zh: '', runtime_minutes: 90 }
-    await loadMovies()
-  } catch (e) {
-    reportError(e)
-  }
 }
 
 function askDeleteMovie(movie: ParentMovie): void {
@@ -341,7 +401,15 @@ async function savePolicies(): Promise<void> {
   }
 }
 
-onMounted(loadAll)
+watch(tab, (next) => {
+  if (next === 'movies') void loadMovies().catch(reportError)
+})
+
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  void loadAll()
+})
+onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 </script>
 
 <template>
@@ -354,15 +422,6 @@ onMounted(loadAll)
       </el-select>
 
       <section v-if="tab === 'movies'">
-        <el-card shadow="never">
-          <template #header>{{ t('common.addMovieManual') }}</template>
-          <el-form inline @submit.prevent="createMovie">
-            <el-input v-model="movieForm.title_zh" :placeholder="t('common.movieTitle')" />
-            <el-input-number v-model="movieForm.runtime_minutes" :min="1" />
-            <el-button type="primary" @click="createMovie">{{ t('common.addMovieOpen') }}</el-button>
-          </el-form>
-        </el-card>
-
         <h3 v-if="collections.length" style="margin: 16px 0 8px">{{ t('common.seriesList') }}</h3>
         <el-table v-if="collections.length" :data="collections" style="margin-bottom: 12px">
           <el-table-column prop="name" :label="t('common.seriesName')" />
@@ -389,31 +448,27 @@ onMounted(loadAll)
         </el-form>
         <p v-if="searchNote" class="hint">{{ searchNote }}</p>
         <p v-else-if="searchHits.length" class="hint">{{ t('common.tmdbAttribution') }}</p>
-        <div v-if="suggestions.length" class="poster-grid">
-          <article v-for="item in suggestions" :key="item.key" class="poster-card">
+        <p v-if="wallSuggestions.length" class="hint">{{ wallSourceHint }}</p>
+        <div v-if="wallSuggestions.length" class="poster-grid">
+          <article v-for="item in wallSuggestions" :key="item.key" class="poster-card">
             <button type="button" class="poster-hit" :aria-label="item.title_zh" @click="openSuggestion(item)">
               <MoviePoster :title="item.title_zh" :src="item.poster_url" />
             </button>
             <div class="poster-copy">
               <strong>{{ item.title_zh }}</strong>
-              <span v-if="item.series_name" class="meta">{{ item.series_name }}</span>
+              <span class="meta title-en">{{ item.original_title || '\u00a0' }}</span>
               <span class="meta">
                 {{ item.release_year ?? '—' }}
                 <template v-if="item.runtime_minutes"> · {{ item.runtime_minutes }} {{ t('common.minutes') }}</template>
               </span>
-              <el-button
-                v-if="!libraryTitles.has(item.title_zh) && !(item.external_id && importedExternalIds.has(item.external_id))"
-                type="primary"
-                size="small"
-                @click="addSuggestion(item)"
-              >
+              <el-button type="primary" size="small" @click="addSuggestion(item)">
                 {{ t('common.addToLibrary') }}
               </el-button>
-              <span v-else class="meta">{{ t('common.inLibrary') }}</span>
             </div>
           </article>
         </div>
-        <p v-else-if="catalog.length === 0" class="hint">{{ t('common.noRecommendationCards') }}</p>
+        <p v-else-if="movies.length" class="hint">{{ t('common.recommendationsInLibrary') }}</p>
+        <p v-else class="hint">{{ t('common.noRecommendationCards') }}</p>
 
         <div v-if="searchHits.length" class="poster-grid">
           <article v-for="hit in searchHits" :key="hit.external_id" class="poster-card">
@@ -422,6 +477,7 @@ onMounted(loadAll)
             </button>
             <div class="poster-copy">
               <strong>{{ hit.title_zh }}</strong>
+              <span class="meta title-en">{{ hit.original_title || '\u00a0' }}</span>
               <span class="meta">{{ hit.release_year ?? '—' }}</span>
               <el-button
                 v-if="!importedExternalIds.has(hit.external_id)"
@@ -438,64 +494,64 @@ onMounted(loadAll)
 
         <h3 v-if="catalog.length" style="margin: 16px 0 8px">{{ t('common.recommendations') }}</h3>
         <div v-if="catalog.length" class="poster-grid shelf">
-          <article
-            v-for="row in catalog"
-            :key="row.kind === 'collection' ? `c-${row.collection.id}` : `m-${row.movie.id}`"
-            class="poster-card"
-            :class="{ series: row.kind === 'collection', open: row.kind === 'collection' && expanded[`p-${row.collection.id}`] }"
-          >
-            <template v-if="row.kind === 'movie'">
-              <button type="button" class="poster-hit" :aria-label="row.movie.title_zh" @click="openParentMovie(row.movie)">
-                <MoviePoster :title="row.movie.title_zh" :src="parentPoster(row.movie)" />
-              </button>
-              <div class="poster-copy">
-                <strong>{{ row.movie.title_zh }}</strong>
-                <span class="meta">{{ row.movie.runtime_minutes ?? '—' }} {{ t('common.minutes') }}</span>
-                <el-button type="danger" link @click="askDeleteMovie(row.movie)">{{ t('common.deleteMovie') }}</el-button>
-              </div>
-            </template>
-            <template v-else>
-              <button
-                type="button"
-                class="series-face"
-                :aria-expanded="!!expanded[`p-${row.collection.id}`]"
-                @click="toggle(`p-${row.collection.id}`)"
-              >
+          <template v-for="row in catalog" :key="row.kind === 'collection' ? `c-${row.collection.id}` : `m-${row.movie.id}`">
+            <article
+              class="poster-card"
+              :class="{ series: row.kind === 'collection' }"
+              :data-series-keep="row.kind === 'collection' ? '' : undefined"
+              @click="onCatalogClick(row, $event)"
+            >
+              <template v-if="row.kind === 'movie'">
+                <button type="button" class="poster-hit" :aria-label="row.movie.title_zh" @click="openParentMovie(row.movie)">
+                  <MoviePoster :title="row.movie.title_zh" :src="parentPoster(row.movie)" />
+                </button>
+                <div class="poster-copy">
+                  <strong>{{ row.movie.title_zh }}</strong>
+                  <span class="meta">{{ row.movie.runtime_minutes ?? '—' }} {{ t('common.minutes') }}</span>
+                  <el-button type="danger" link @click="askDeleteMovie(row.movie)">{{ t('common.deleteMovie') }}</el-button>
+                </div>
+              </template>
+              <template v-else>
                 <span class="stack">
                   <span class="layer l2" />
                   <span class="layer l1" />
                   <MoviePoster :title="row.collection.name" :src="parentPoster(row.movies[0])" />
                 </span>
-                <span class="series-copy">
+                <div class="poster-copy">
                   <strong>{{ row.collection.name }}</strong>
                   <span class="meta">{{ t('common.moviesInSeries', { count: row.collection.movie_count }) }}</span>
-                  <span class="meta">{{ expanded[`p-${row.collection.id}`] ? t('common.collapseSeries') : t('common.expandSeries') }}</span>
-                </span>
-                <span class="chevron" aria-hidden="true" />
-              </button>
-              <el-button type="danger" link @click="askDeleteSeries(row.collection)">{{ t('common.deleteSeries') }}</el-button>
-              <div
-                class="fold"
-                :class="{ open: expanded[`p-${row.collection.id}`] }"
-                :inert="!expanded[`p-${row.collection.id}`]"
-              >
-                <div class="fold-clip">
-                  <div class="filmstrip">
-                    <button
-                      v-for="(m, order) in row.movies"
-                      :key="m.id"
-                      type="button"
-                      class="member-card"
-                      @click="openParentMovie(m)"
-                    >
-                      <MoviePoster :title="m.title_zh" :src="parentPoster(m)" />
-                      <strong><span class="order">{{ order + 1 }}</span>{{ m.title_zh }}</strong>
-                    </button>
-                  </div>
+                  <el-button
+                    link
+                    type="primary"
+                    data-series-keep
+                    :aria-expanded="!!expanded[`p-${row.collection.id}`]"
+                    @click="toggle(`p-${row.collection.id}`)"
+                  >
+                    {{ expanded[`p-${row.collection.id}`] ? t('common.collapseSeries') : t('common.expandSeries') }}
+                  </el-button>
+                  <el-button type="danger" link @click="askDeleteSeries(row.collection)">{{ t('common.deleteSeries') }}</el-button>
                 </div>
+              </template>
+            </article>
+            <div
+              v-if="row.kind === 'collection' && expanded[`p-${row.collection.id}`]"
+              class="series-fold"
+            >
+              <div class="filmstrip">
+                <button
+                  v-for="(m, order) in row.movies"
+                  :key="m.id"
+                  type="button"
+                  class="member-card"
+                  data-series-keep
+                  @click="openParentMovie(m, true)"
+                >
+                  <MoviePoster :title="m.title_zh" :src="parentPoster(m)" />
+                  <strong><span class="order">{{ order + 1 }}</span>{{ m.title_zh }}</strong>
+                </button>
               </div>
-            </template>
-          </article>
+            </div>
+          </template>
         </div>
 
         <el-table :data="movies" style="margin-top: 16px">
@@ -555,9 +611,16 @@ onMounted(loadAll)
       <div v-if="posterDetail" class="detail">
         <MoviePoster v-if="posterDetail.poster" class="detail-poster" :title="posterDetail.title" :src="posterDetail.poster" />
         <div>
+          <p v-if="posterDetail.originalTitle" class="meta title-en">{{ posterDetail.originalTitle }}</p>
           <p v-if="posterDetail.meta" class="meta">{{ posterDetail.meta }}</p>
           <h4>{{ t('common.movieIntro') }}</h4>
-          <p class="overview">{{ posterDetail.overview }}</p>
+          <p v-if="introParagraphs.length === 0" class="overview">{{ t('common.noOverview') }}</p>
+          <p
+            v-for="(paragraph, index) in introParagraphs"
+            :key="index"
+            class="overview"
+            :lang="index === 0 ? 'zh-CN' : 'en'"
+          >{{ paragraph }}</p>
         </div>
       </div>
     </el-dialog>
@@ -598,7 +661,6 @@ onMounted(loadAll)
   background: #fff;
   min-width: 0;
 }
-.poster-card.series.open { grid-column: 1 / -1; }
 .poster-hit {
   display: block;
   width: 100%;
@@ -610,24 +672,8 @@ onMounted(loadAll)
 }
 .poster-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; }
 .poster-copy strong { line-height: 1.3; }
-.series-face {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  width: 100%;
-  padding: 0 16px 0 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-}
-.series.open .series-face { flex-direction: row; align-items: center; }
-.series.open .stack { width: 84px; flex: none; }
-.series-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
-.stack { position: relative; margin: 8px 12px 0 0; }
+.poster-copy .title-en { min-height: 1.2em; }
+.stack { position: relative; display: block; margin: 8px 12px 0 0; }
 .layer {
   position: absolute;
   inset: 0;
@@ -638,30 +684,18 @@ onMounted(loadAll)
 .l2 { transform: translate(10px, -8px); }
 .l1 { transform: translate(5px, -4px); background: #f7f8fc; }
 .stack :deep(.poster) { position: relative; z-index: 1; }
-.chevron {
-  position: absolute;
-  right: 0;
-  top: 16px;
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(45deg);
-  transition: transform 0.2s ease;
+.series-fold {
+  grid-column: 1 / -1;
+  border: 1px solid var(--el-border-color);
+  border-radius: 16px;
+  padding: 8px 10px;
+  background: #fafbfe;
 }
-.series.open .chevron { top: 22px; transform: rotate(225deg); }
-.fold {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.28s ease;
-}
-.fold.open { grid-template-rows: 1fr; }
-.fold-clip { overflow: hidden; }
 .filmstrip {
   display: flex;
   gap: 12px;
   overflow-x: auto;
-  padding: 12px 2px 4px;
+  padding: 4px 2px;
 }
 .member-card {
   flex: 0 0 112px;
@@ -690,5 +724,7 @@ onMounted(loadAll)
 .detail-poster { width: 120px; flex: none; }
 .detail h4 { margin: 8px 0 6px; }
 .overview { margin: 0; line-height: 1.6; white-space: pre-wrap; }
+.overview + .overview { margin-top: 8px; }
+.poster-card.series { cursor: pointer; }
 .delete-body { margin: 0; line-height: 1.6; }
 </style>

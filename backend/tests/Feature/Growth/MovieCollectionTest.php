@@ -13,6 +13,7 @@ use App\Modules\Movie\Models\MovieRewardEvent;
 use App\Modules\Movie\Services\MovieCollectionService;
 use App\Modules\Movie\Services\MovieWatchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -330,8 +331,11 @@ class MovieCollectionTest extends TestCase
 
         $this->assertGreaterThanOrEqual(8, count($data));
         $this->assertNotEmpty($data[0]['title_zh']);
-        $this->assertSame('builtin', $data[0]['source']);
-        $this->assertStringStartsWith('/api/v1/parent/movie-posters/', $data[0]['poster_url']);
+        $this->assertContainsOnly('array', $data);
+        $this->assertTrue(collect($data)->every(fn (array $card) => $card['source'] === 'builtin'));
+        $this->assertTrue(collect($data)->every(
+            fn (array $card) => str_starts_with((string) $card['poster_url'], '/api/v1/parent/movie-posters/'),
+        ));
     }
 
     public function test_adding_toy_story_2_imports_the_whole_series(): void
@@ -339,7 +343,7 @@ class MovieCollectionTest extends TestCase
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
 
-        $data = $this->actingAsParent($parent, sudo: true)
+        $data = $this->actingAsParent($parent)
             ->postJson('/api/v1/parent/movies/suggestions/toy-story-2/adopt', ['child_id' => $child->id])
             ->assertCreated()
             ->json('data');
@@ -352,6 +356,77 @@ class MovieCollectionTest extends TestCase
             4,
             MovieApproval::query()->where('child_id', $child->id)->where('visible', true)->count(),
         );
+        $this->assertDatabaseCount('child_movie_library', 4);
         $this->assertNotNull(Movie::query()->where('family_id', $family->id)->where('title_zh', '玩具总动员2')->value('poster_key'));
+
+        $wallTitles = collect($this->actingAsParent($parent)
+            ->getJson('/api/v1/parent/movies/suggestions')
+            ->assertOk()
+            ->json('data'))->pluck('title_zh');
+        $this->assertFalse($wallTitles->contains('玩具总动员'));
+        $this->assertFalse($wallTitles->contains('玩具总动员2'));
+        $this->assertTrue($wallTitles->contains('寻梦环游记'));
+    }
+
+    public function test_suggestion_wall_hides_owned_titles_and_merges_tmdb(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $this->seedVisibleMovie($family, $child, $parent, ['title_zh' => '疯狂动物城']);
+        $this->seedVisibleMovie($family, $child, $parent, [
+            'source' => 'tmdb',
+            'external_id' => '7001',
+            'title_zh' => '海底总动员',
+            'original_title' => 'Finding Nemo',
+        ]);
+
+        $previousKey = config('services.tmdb.api_key');
+        config(['services.tmdb.api_key' => 'test-key']);
+        Http::fake(function ($request) {
+            $query = [];
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+            if (($query['with_original_language'] ?? null) === 'zh') {
+                return Http::response(['results' => [[
+                    'id' => 9001,
+                    'title' => '新中文动画',
+                    'original_title' => '新中文动画',
+                    'release_date' => '2024-01-01',
+                    'overview' => '中文',
+                ]]]);
+            }
+
+            return Http::response(['results' => [
+                [
+                    'id' => 862,
+                    'title' => '玩具总动员',
+                    'original_title' => 'Toy Story',
+                    'release_date' => '1995-11-22',
+                    'overview' => 'dup',
+                ],
+                [
+                    'id' => 7001,
+                    'title' => '海底总动员',
+                    'original_title' => 'Finding Nemo',
+                    'release_date' => '2003-05-30',
+                    'overview' => 'nemo',
+                ],
+            ]]);
+        });
+
+        try {
+            $cards = collect($this->actingAsParent($parent)
+                ->getJson('/api/v1/parent/movies/suggestions')
+                ->assertOk()
+                ->json('data'));
+        } finally {
+            config(['services.tmdb.api_key' => $previousKey]);
+        }
+
+        $this->assertFalse($cards->contains(fn (array $card) => $card['title_zh'] === '疯狂动物城'));
+        $this->assertFalse($cards->contains(fn (array $card) => $card['title_zh'] === '海底总动员'));
+        $this->assertSame(1, $cards->where('title_zh', '玩具总动员')->count());
+        $this->assertSame('builtin', $cards->firstWhere('title_zh', '玩具总动员')['source']);
+        $this->assertSame('tmdb', $cards->firstWhere('title_zh', '新中文动画')['source']);
+        $this->assertTrue($cards->contains(fn (array $card) => $card['title_zh'] === '寻梦环游记'));
     }
 }

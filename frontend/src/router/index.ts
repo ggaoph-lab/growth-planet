@@ -66,7 +66,11 @@ router.beforeEach(async (to) => {
   const home = async () => {
     if (session.isParent) return { name: 'parent-dashboard' }
     if (session.isChild) return { name: 'kid-home' }
-    return (await session.checkDevice()) ? { name: 'kid-select' } : { name: 'login' }
+    try {
+      return (await session.checkDevice()) ? { name: 'kid-select' } : { name: 'login' }
+    } catch {
+      return { name: 'login' }
+    }
   }
 
   if (to.name === 'root') return home()

@@ -2,6 +2,8 @@
 
 namespace App\Modules\Movie\Models;
 
+use App\Modules\Movie\Services\BuiltinMovieSuggestions;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -47,6 +49,22 @@ class Movie extends Model
             'certifications' => 'array',
             'tmdb_adult' => 'boolean',
         ];
+    }
+
+    /**
+     * Curated shelf copy is Chinese plus English. Prefer it over an older Chinese-only row.
+     */
+    protected function overview(): Attribute
+    {
+        return Attribute::make(
+            get: function (?string $value): ?string {
+                $builtin = BuiltinMovieSuggestions::overviewFor($this->external_id)
+                    ?? BuiltinMovieSuggestions::overviewFor($this->poster_key);
+
+                return $builtin ?? $value;
+            },
+            set: fn (?string $value): ?string => $value,
+        );
     }
 
     /** @return BelongsTo<MovieAgeReview, $this> */

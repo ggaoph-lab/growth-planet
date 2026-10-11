@@ -1,4 +1,4 @@
-const CACHE = 'growth-planet-shell-v2'
+const CACHE = 'growth-planet-shell-v3'
 
 self.addEventListener('install', (event) => {
   // Don't precache HTML — it must always point at the latest hashed assets.

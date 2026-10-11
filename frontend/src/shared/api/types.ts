@@ -374,6 +374,21 @@ export type ParentCatalogItem =
   | { kind: 'movie'; movie: ParentMovie }
   | { kind: 'collection'; collection: ParentMovieCollection; movies: ParentMovie[] }
 
+export interface MovieViewing {
+  id: number
+  sequence: number
+  language: 'zh' | 'en'
+  position_percent: number
+  status: string
+  reward_eligible: boolean
+  rewarded: boolean
+}
+
+export interface MovieViewingUpdate {
+  viewings: MovieViewing[]
+  reward: { xp: number; coins: number } | null
+}
+
 export interface KidMovie {
   id: number
   title_zh: string
@@ -383,7 +398,13 @@ export interface KidMovie {
   release_year?: number | null
   poster_key?: string | null
   collection_position?: { story: number | null; release: number | null; custom: number | null }
-  library?: { id: number; shelf: string; slot: string | null; progress?: { position_seconds: number; status: string } | null }
+  library?: {
+    id: number
+    shelf: string
+    slot: string | null
+    progress?: { position_seconds: number; status: string } | null
+    viewings?: MovieViewing[]
+  }
 }
 
 export interface KidMovieCollectionSummary {

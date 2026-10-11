@@ -138,4 +138,48 @@ class MovieVisibilityTest extends TestCase
             'movie_id' => $movie->id,
         ]);
     }
+
+    public function test_builtin_movie_intro_stays_bilingual_when_the_saved_copy_is_chinese_only(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+        $movie = $this->seedVisibleMovie($family, $child, $parent, [
+            'title_zh' => '海洋奇缘',
+            'external_id' => 'moana-1',
+            'poster_key' => 'moana-1',
+            'overview' => '旧的中文介绍',
+        ]);
+
+        $overview = $this->actingAsKid($child->fresh(['member.user']), $device, $token)
+            ->getJson('/api/v1/kid/movies')
+            ->assertOk()
+            ->json('data.0.movie.overview');
+
+        $this->assertIsString($overview);
+        $this->assertStringContainsString('莫阿娜', $overview);
+        $this->assertStringContainsString('Moana answers the ocean', $overview);
+        $this->assertStringNotContainsString('旧的中文介绍', $overview);
+        $this->assertStringContainsString('Moana answers the ocean', (string) $movie->fresh()->getRawOriginal('overview'));
+    }
+
+    public function test_parent_can_mark_a_movie_suitable_without_reentering_password(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $movie = Movie::query()->create([
+            'family_id' => $family->id,
+            'source' => 'manual',
+            'title_zh' => '手动添加',
+            'runtime_minutes' => 80,
+            'data_completeness' => 'insufficient',
+        ]);
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/movies/'.$movie->id.'/reviews', [
+                'safety_status' => MovieSafetyStatus::ApprovedSuitable->value,
+                'min_age' => 6,
+                'reason' => '家长录入',
+            ])
+            ->assertCreated();
+    }
 }

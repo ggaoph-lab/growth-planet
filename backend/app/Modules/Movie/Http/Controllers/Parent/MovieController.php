@@ -8,11 +8,11 @@ use App\Modules\Movie\Enums\MovieSafetyStatus;
 use App\Modules\Movie\Models\Movie;
 use App\Modules\Movie\Models\MovieAgeReview;
 use App\Modules\Movie\Models\MovieApproval;
-use App\Modules\Movie\Services\BuiltinMovieSuggestions;
 use App\Modules\Movie\Services\MovieCollectionService;
 use App\Modules\Movie\Services\MovieWatchService;
 use App\Modules\Movie\Services\PosterCache;
 use App\Modules\Movie\Services\SuggestionImporter;
+use App\Modules\Movie\Services\SuggestionWall;
 use App\Modules\Movie\Services\TmdbClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,6 +29,7 @@ class MovieController
         private readonly PosterCache $posters,
         private readonly SuggestionImporter $importer,
         private readonly MovieWatchService $watch,
+        private readonly SuggestionWall $wall,
     ) {}
 
     public function externalSearch(Request $request): JsonResponse
@@ -43,16 +44,15 @@ class MovieController
 
     /**
      * Poster-wall suggestions for the parent. Never shown on kid routes.
-     * Uses a built-in shelf when TMDB discover returns nothing.
+     * Curated shelf plus TMDB discover, without movies already in this family's library.
      */
     public function suggestions(): JsonResponse
     {
-        $cards = $this->tmdb->isConfigured() ? $this->tmdb->discoverFamily() : [];
-        if ($cards === []) {
-            $cards = BuiltinMovieSuggestions::cards();
-        }
+        $library = Movie::query()
+            ->where('family_id', $this->context->familyId())
+            ->get(['external_id', 'title_zh', 'original_title']);
 
-        return response()->json(['data' => $cards]);
+        return response()->json(['data' => $this->wall->cards($library)]);
     }
 
     public function suggestionPoster(string $key): BinaryFileResponse
@@ -108,6 +108,13 @@ class MovieController
             'collection_name' => ['nullable', 'string', 'max:191'],
             'collection_position_story' => ['nullable', 'integer', 'min:1'],
         ]);
+
+        if (($data['source'] ?? '') === 'tmdb' && ! empty($data['external_id'])) {
+            $data['overview'] = $this->tmdb->joinOverview(
+                $data['overview'] ?? null,
+                $this->tmdb->englishOverview((string) $data['external_id']),
+            );
+        }
 
         $movie = Movie::query()->create([
             'family_id' => $this->context->familyId(),

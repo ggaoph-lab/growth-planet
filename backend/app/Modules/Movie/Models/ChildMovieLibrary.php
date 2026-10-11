@@ -4,6 +4,7 @@ namespace App\Modules\Movie\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class ChildMovieLibrary extends Model
@@ -38,5 +39,11 @@ class ChildMovieLibrary extends Model
     public function progress(): HasOne
     {
         return $this->hasOne(MovieProgress::class, 'library_id');
+    }
+
+    /** @return HasMany<MovieViewing, $this> */
+    public function viewings(): HasMany
+    {
+        return $this->hasMany(MovieViewing::class, 'library_id')->orderBy('sequence');
     }
 }

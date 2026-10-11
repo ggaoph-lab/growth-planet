@@ -15,12 +15,16 @@ export const useSessionStore = defineStore('session', () => {
 
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
-    await ensureCsrfCookie()
     try {
+      await ensureCsrfCookie()
       me.value = await api.get<Me>('/auth/me')
     } catch (e) {
-      if (!(e instanceof ApiError) || e.status !== 401) throw e
-      me.value = null
+      // Keep the shell usable when the API is briefly down or the session expired.
+      if (e instanceof ApiError && (e.status === 401 || e.status === 0 || e.status >= 500)) {
+        me.value = null
+      } else {
+        throw e
+      }
     }
     loaded.value = true
   }

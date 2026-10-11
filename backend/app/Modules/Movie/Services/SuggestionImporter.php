@@ -94,6 +94,7 @@ class SuggestionImporter
         }
 
         $movie->poster_key = $part['key'];
+        $movie->overview = $part['overview'];
         if ($movie->data_completeness !== 'complete' || $movie->current_review_id === null) {
             $review = MovieAgeReview::query()->create([
                 'movie_id' => $movie->id,

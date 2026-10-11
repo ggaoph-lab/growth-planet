@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
     Route::get('movies/external-search', [MovieController::class, 'externalSearch']);
     Route::get('movies/suggestions', [MovieController::class, 'suggestions']);
-    Route::post('movies/suggestions/{key}/adopt', [MovieController::class, 'adoptSuggestion'])->where('key', '[a-z0-9-]+')->middleware('sudo');
+    Route::post('movies/suggestions/{key}/adopt', [MovieController::class, 'adoptSuggestion'])->where('key', '[a-z0-9-]+');
     Route::get('movie-posters/{key}', [MovieController::class, 'suggestionPoster'])->where('key', '[a-z0-9-]+');
     Route::get('movies/recommendations', [MovieCollectionController::class, 'recommendations']);
     Route::get('movies', [MovieController::class, 'index']);
@@ -19,7 +19,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::post('movies', [MovieController::class, 'store']);
     Route::put('movies/{id}', [MovieController::class, 'update'])->whereNumber('id');
     Route::delete('movies/{id}', [MovieController::class, 'destroy'])->whereNumber('id');
-    Route::post('movies/{id}/reviews', [MovieController::class, 'storeReview'])->whereNumber('id')->middleware('sudo');
+    Route::post('movies/{id}/reviews', [MovieController::class, 'storeReview'])->whereNumber('id');
     Route::put('movies/{id}/approvals/{childId}', [MovieController::class, 'upsertApproval'])->whereNumber(['id', 'childId']);
 
     Route::get('movie-collections', [MovieCollectionController::class, 'index']);
@@ -50,6 +50,9 @@ Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(funct
     Route::post('movie-library/{id}/sessions/start', [KidMovieController::class, 'startSession'])->whereNumber('id')->middleware('idempotent');
     Route::post('movie-library/{id}/sessions/stop', [KidMovieController::class, 'stopSession'])->whereNumber('id')->middleware('idempotent');
     Route::put('movie-library/{id}/progress', [KidMovieController::class, 'updateProgress'])->whereNumber('id');
+    Route::put('movie-library/{id}/viewings', [KidMovieController::class, 'updateViewing'])->whereNumber('id');
+    Route::post('movie-library/{id}/viewings', [KidMovieController::class, 'addViewing'])->whereNumber('id');
+    Route::post('movie-library/{id}/viewings/{viewingId}/complete', [KidMovieController::class, 'completeViewing'])->whereNumber(['id', 'viewingId']);
     Route::post('movie-library/{id}/complete', [KidMovieController::class, 'complete'])->whereNumber('id')->middleware('idempotent');
 
     Route::get('screen-time', [KidScreenTimeController::class, 'show']);

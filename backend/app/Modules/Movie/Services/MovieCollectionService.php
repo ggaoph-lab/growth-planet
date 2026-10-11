@@ -10,6 +10,7 @@ use App\Modules\Movie\Models\Movie;
 use App\Modules\Movie\Models\MovieCollection;
 use App\Modules\Movie\Models\MovieCollectionItem;
 use App\Modules\Movie\Models\MovieCollectionPreference;
+use App\Modules\Movie\Models\MovieViewing;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -328,6 +329,7 @@ class MovieCollectionService
      */
     public function groupForParent(Collection $movies): array
     {
+        $this->refreshOverviews($movies);
         $movieIds = $movies->pluck('id')->all();
         $items = MovieCollectionItem::query()
             ->whereIn('movie_id', $movieIds)
@@ -394,6 +396,7 @@ class MovieCollectionService
      */
     public function groupVisibleMoviesForKid(ChildProfile $child, Collection $movies): array
     {
+        $this->refreshOverviews($movies);
         $movieIds = $movies->pluck('id')->all();
         $items = MovieCollectionItem::query()
             ->whereIn('movie_id', $movieIds)
@@ -404,7 +407,7 @@ class MovieCollectionService
         $libraries = ChildMovieLibrary::query()
             ->where('child_id', $child->id)
             ->whereIn('movie_id', $movieIds)
-            ->with('progress')
+            ->with(['progress', 'viewings'])
             ->get()
             ->keyBy('movie_id');
 
@@ -482,7 +485,7 @@ class MovieCollectionService
         $libraries = ChildMovieLibrary::query()
             ->where('child_id', $child->id)
             ->whereIn('movie_id', $movies->pluck('id'))
-            ->with('progress')
+            ->with(['progress', 'viewings'])
             ->get()
             ->keyBy('movie_id');
 
@@ -617,6 +620,26 @@ class MovieCollectionService
     }
 
     /**
+     * Write the current bilingual intro onto curated movies, and fill English for TMDB rows that only stored Chinese.
+     *
+     * @param  Collection<int, Movie>  $movies
+     */
+    private function refreshOverviews(Collection $movies): void
+    {
+        foreach ($movies as $movie) {
+            $builtin = BuiltinMovieSuggestions::overviewFor($movie->external_id)
+                ?? BuiltinMovieSuggestions::overviewFor($movie->poster_key);
+            if ($builtin === null || $movie->getRawOriginal('overview') === $builtin) {
+                continue;
+            }
+            $movie->overview = $builtin;
+            $movie->save();
+        }
+
+        $this->tmdb->fillEnglishOverviews($movies);
+    }
+
+    /**
      * @param  list<Movie>  $members
      * @return array<string, mixed>
      */
@@ -730,6 +753,9 @@ class MovieCollectionService
                     'position_seconds' => $library->progress->position_seconds,
                     'status' => $library->progress->status,
                 ] : null,
+                'viewings' => $library->relationLoaded('viewings')
+                    ? $library->viewings->map(fn (MovieViewing $viewing) => $viewing->toKidArray())->values()->all()
+                    : [],
             ];
         }
 

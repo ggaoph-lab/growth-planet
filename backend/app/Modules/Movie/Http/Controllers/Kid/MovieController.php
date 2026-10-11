@@ -28,6 +28,7 @@ class MovieController
     {
         $child = $this->context->child();
         $this->watch->ensureVisibleLibrary($child);
+        $this->watch->ensureInitialViewings($child);
         $q = $request->query('q');
         $search = is_string($q) && $q !== '' ? $q : null;
 
@@ -68,9 +69,10 @@ class MovieController
     {
         $child = $this->context->child();
         $this->watch->ensureVisibleLibrary($child);
+        $this->watch->ensureInitialViewings($child);
         $items = ChildMovieLibrary::query()
             ->where('child_id', $child->id)
-            ->with(['movie', 'progress'])
+            ->with(['movie', 'progress', 'viewings'])
             ->orderByDesc('updated_at')
             ->get();
 
@@ -146,6 +148,59 @@ class MovieController
         $progress = $this->watch->updatePosition($this->context->child(), $library, $data['position_seconds']);
 
         return response()->json(['data' => $progress]);
+    }
+
+    public function updateViewing(Request $request, int $id): JsonResponse
+    {
+        $library = $this->findOwnLibrary($id);
+        $data = $request->validate([
+            'viewing_id' => ['nullable', 'integer'],
+            'position_percent' => ['required', 'integer', 'min:0', 'max:100'],
+            'language' => ['nullable', 'in:zh,en'],
+        ]);
+
+        $payload = $this->watch->saveViewing(
+            $this->context->child(),
+            $library,
+            isset($data['viewing_id']) ? (int) $data['viewing_id'] : null,
+            $data['position_percent'],
+            $data['language'] ?? null,
+        );
+
+        return response()->json(['data' => $payload]);
+    }
+
+    public function addViewing(Request $request, int $id): JsonResponse
+    {
+        $library = $this->findOwnLibrary($id);
+        $data = $request->validate([
+            'language' => ['nullable', 'in:zh,en'],
+        ]);
+
+        $payload = $this->watch->addViewing(
+            $this->context->child(),
+            $library,
+            $data['language'] ?? 'zh',
+        );
+
+        return response()->json(['data' => $payload], 201);
+    }
+
+    public function completeViewing(Request $request, int $id, int $viewingId): JsonResponse
+    {
+        $library = $this->findOwnLibrary($id);
+        $data = $request->validate([
+            'position_percent' => ['required', 'integer', 'min:0', 'max:100'],
+        ]);
+
+        $payload = $this->watch->completeViewing(
+            $this->context->child(),
+            $library,
+            $viewingId,
+            $data['position_percent'],
+        );
+
+        return response()->json(['data' => $payload]);
     }
 
     public function complete(int $id): JsonResponse

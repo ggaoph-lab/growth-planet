@@ -18,6 +18,7 @@ class RewardPolicySeeder
             ['code' => 'parent.bonus', 'xp_amount' => 0, 'coin_amount' => 0, 'requires_approval' => true, 'max_per_event' => 50],
             ['code' => 'movie.first_start', 'xp_amount' => 3, 'coin_amount' => 3, 'requires_approval' => false, 'max_per_subject' => 1],
             ['code' => 'movie.completion', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_subject' => 1],
+            ['code' => 'movie.viewing', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_subject' => 4],
             ['code' => 'movie.cross_movie', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_week' => 5],
             ['code' => 'english.log', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.active_choice', 'xp_amount' => 0, 'coin_amount' => 3, 'requires_approval' => false, 'max_per_day' => 6],
