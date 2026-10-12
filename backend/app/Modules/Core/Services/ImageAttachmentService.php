@@ -17,7 +17,7 @@ class ImageAttachmentService
 {
     public const MAX_BYTES = 1000 * 1024;
 
-    private const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+    private const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
     /** @var list<string> */
     private const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -84,7 +84,7 @@ class ImageAttachmentService
         if ($file->getSize() > self::MAX_UPLOAD_BYTES) {
             throw new ApiException(
                 'VALIDATION_FAILED',
-                BiMsg::of('图片过大，请选择 12MB 以内的图片', 'Image is too large (max 12MB)'),
+                BiMsg::of('图片过大，请选择 10MB 以内的图片', 'Image is too large (max 10MB)'),
                 422,
             );
         }

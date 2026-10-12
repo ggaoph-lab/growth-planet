@@ -30,6 +30,27 @@ function dueOf(inst: TaskInstance): string {
   return typeof due === 'string' && due ? due.slice(0, 5) : ''
 }
 
+function groupIdOf(inst: TaskInstance): number | null {
+  const raw = inst.snapshot?.group_task_id
+  const id = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function linesOf(inst: TaskInstance): { key: string; title: string }[] {
+  const related = inst.instance_steps
+  if (Array.isArray(related) && related.length > 0) {
+    return [...related]
+      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+      .filter((step) => step.title)
+      .map((step) => ({ key: `r-${step.id}`, title: step.title }))
+  }
+  const steps = inst.snapshot?.steps
+  if (!Array.isArray(steps)) return []
+  return steps
+    .filter((step) => typeof step?.title === 'string' && step.title.length > 0)
+    .map((step, index) => ({ key: `s-${step.id ?? index}`, title: step.title }))
+}
+
 interface TaskGroup {
   key: string
   title: string
@@ -41,8 +62,8 @@ const groups = computed<TaskGroup[]>(() => {
   const out: TaskGroup[] = []
   const index = new Map<string, TaskGroup>()
   for (const inst of instances.value) {
-    const groupId = inst.snapshot?.group_task_id
-    if (typeof groupId === 'number') {
+    const groupId = groupIdOf(inst)
+    if (groupId !== null) {
       const key = `g-${groupId}`
       let group = index.get(key)
       if (!group) {
@@ -137,6 +158,9 @@ onMounted(load)
         <h3 v-else>{{ dueOf(inst) ? `${dueOf(inst)} ${titleOf(inst)}` : titleOf(inst) }}</h3>
         <p class="status">{{ statusLabel(inst.status) }}</p>
         <p v-if="!group.isGroup && dueOf(inst)" class="status">{{ dueOf(inst) }}</p>
+        <ul v-if="linesOf(inst).length" class="items">
+          <li v-for="line in linesOf(inst)" :key="line.key">{{ line.title }}</li>
+        </ul>
         <p v-if="inst.snapshot?.with_parent" class="with-parent">{{ t('common.withParentTag') }}</p>
         <p v-if="inst.snapshot?.xp_reward || inst.snapshot?.coin_reward" class="reward">
           {{ t('kid.taskReward', { xp: inst.snapshot.xp_reward ?? 0, coins: inst.snapshot.coin_reward ?? 0 }) }}
@@ -165,6 +189,15 @@ onMounted(load)
   padding: 0 16px 32px;
   max-width: 560px;
   margin: 0 auto;
+}
+@media (min-width: 768px) {
+  .page {
+    max-width: 720px;
+    padding: 0 24px 40px;
+  }
+}
+@media (min-width: 1024px) {
+  .page { max-width: 960px; }
 }
 .head {
   display: flex;
@@ -227,6 +260,22 @@ onMounted(load)
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.items {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.items li {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 16px;
+  font-weight: 600;
 }
 .status {
   margin: 0 0 8px;

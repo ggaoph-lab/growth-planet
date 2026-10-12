@@ -12,7 +12,10 @@ import type {
   ParentChild,
   ParentItem,
 } from '@/shared/api/types'
+import { useIsPhone } from '@/shared/useMediaQuery'
+
 const { t } = useI18n()
+const isPhone = useIsPhone()
 const tab = ref<'items' | 'explore' | 'food'>('items')
 const children = ref<ParentChild[]>([])
 const childId = ref<number | undefined>()
@@ -178,7 +181,7 @@ onMounted(loadAll)
           </el-select>
           <el-button type="primary" @click="itemDialog = true">{{ t('common.addItem') }}</el-button>
         </div>
-        <el-table :data="items" stripe>
+        <el-table v-if="!isPhone" :data="items" stripe>
           <el-table-column prop="name" :label="t('common.name')" />
           <el-table-column :label="t('common.location')">
             <template #default="{ row }">
@@ -192,6 +195,20 @@ onMounted(loadAll)
             <template #default="{ row }">{{ row.carry_daily ? t('common.yes') : t('common.no') }}</template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="items.length === 0" />
+          <article v-for="row in items" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.name }}</div>
+              <div class="phone-meta">
+                {{ row.status }} · {{ row.carry_daily ? t('common.carryDaily') : '' }}
+              </div>
+              <el-select :model-value="row.location_id" size="small" class="phone-select" @change="(v: number) => moveItem(row, v)">
+                <el-option v-for="loc in locations" :key="loc.id" :label="loc.name" :value="loc.id" />
+              </el-select>
+            </div>
+          </article>
+        </div>
         <h3 v-if="checklists.length" class="sub">{{ t('common.todayChecklist') }}</h3>
         <el-collapse v-if="checklists.length">
           <el-collapse-item v-for="cl in checklists" :key="cl.id" :title="cl.kind === 'before_school' ? t('common.beforeSchool') : t('common.afterSchool')">
@@ -211,7 +228,7 @@ onMounted(loadAll)
           </el-select>
           <el-button type="primary" @click="exploreDialog = true">{{ t('common.newProject') }}</el-button>
         </div>
-        <el-table :data="explorations" stripe @row-click="(row: ExplorationProject) => openEvent(row)">
+        <el-table v-if="!isPhone" :data="explorations" stripe @row-click="(row: ExplorationProject) => openEvent(row)">
           <el-table-column prop="title" :label="t('common.project')" />
           <el-table-column prop="category" :label="t('common.type')" width="100" />
           <el-table-column :label="t('common.stage')" width="80">
@@ -221,6 +238,22 @@ onMounted(loadAll)
             <template #default="{ row }">{{ row.events_count ?? 0 }}</template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="explorations.length === 0" />
+          <article
+            v-for="row in explorations"
+            :key="row.id"
+            class="phone-card tap"
+            @click="openEvent(row)"
+          >
+            <div class="phone-info">
+              <div class="phone-title">{{ row.title }}</div>
+              <div class="phone-meta">
+                {{ row.category }} · {{ row.current_stage }}/5 · {{ row.events_count ?? 0 }}
+              </div>
+            </div>
+          </article>
+        </div>
         <p class="hint">{{ t('common.clickRowForEvent') }}</p>
       </el-tab-pane>
 
@@ -229,11 +262,11 @@ onMounted(loadAll)
           <el-button type="primary" @click="foodDialog = true">{{ t('common.addFood') }}</el-button>
         </div>
         <el-row :gutter="16">
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <h3 class="sub">{{ t('common.foodLibrary') }}</h3>
             <el-tag v-for="f in foods" :key="f.id" class="tag">{{ f.name }}</el-tag>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <h3 class="sub">{{ t('common.recentRecords') }}</h3>
             <ul class="lines">
               <li v-for="r in foodRecords" :key="r.id">
@@ -338,5 +371,42 @@ onMounted(loadAll)
   font-size: 13px;
   color: #888;
   margin-top: 8px;
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+.phone-card.tap {
+  cursor: pointer;
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.phone-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-select {
+  width: 100%;
+  max-width: 220px;
 }
 </style>

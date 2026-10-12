@@ -232,6 +232,10 @@ async function logout(): Promise<void> {
   padding-bottom: env(safe-area-inset-bottom);
   z-index: 20;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.bottom-nav::-webkit-scrollbar {
+  display: none;
 }
 .bottom-link {
   flex: 1 0 64px;
@@ -249,6 +253,29 @@ async function logout(): Promise<void> {
   background: transparent;
   cursor: pointer;
   padding: 0 4px;
+}
+@media (orientation: landscape) {
+  .phone .content {
+    padding: 12px 12px calc(64px + env(safe-area-inset-bottom));
+  }
+  .bottom-link {
+    min-height: 44px;
+    flex-basis: 56px;
+    min-width: 56px;
+  }
+  .bottom-link .label {
+    font-size: 9px;
+  }
+  .more-sheet {
+    align-items: center;
+    padding: 8px 12px;
+  }
+  .more-panel {
+    max-height: min(88vh, 420px);
+    overflow-y: auto;
+    border-radius: 16px;
+    padding: 12px;
+  }
 }
 .bottom-link .icon {
   font-size: 20px;

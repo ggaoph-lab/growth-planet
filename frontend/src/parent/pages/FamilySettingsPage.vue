@@ -7,8 +7,10 @@ import { ApiError, api } from '@/shared/api/client'
 import type { AiSettings, Family, ParentAccount, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
+import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
+const isPhone = useIsPhone()
 const route = useRoute()
 const session = useSessionStore()
 const tab = ref<'family' | 'accounts' | 'ai' | 'categories'>('family')
@@ -334,7 +336,7 @@ onMounted(load)
             <h3>{{ t('parent.settings.parentsList') }}</h3>
             <el-button type="primary" size="small" @click="showCreateParent = true">{{ t('parent.settings.addParent') }}</el-button>
           </div>
-          <el-table :data="parents" stripe>
+          <el-table v-if="!isPhone" :data="parents" stripe>
             <el-table-column prop="display_name" :label="t('parent.settings.displayName')" min-width="120" />
             <el-table-column prop="username" :label="t('auth.username')" width="120" />
             <el-table-column :label="t('common.status')" width="100">
@@ -356,6 +358,19 @@ onMounted(load)
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="phone-list">
+            <article v-for="row in parents" :key="row.id" class="phone-card">
+              <div class="phone-info">
+                <div class="phone-title">{{ row.display_name }}</div>
+                <div class="phone-meta">@{{ row.username }}</div>
+                <el-tag v-if="row.is_self" size="small" type="success">{{ t('parent.settings.you') }}</el-tag>
+                <span v-else class="phone-meta">{{ row.status }}</span>
+              </div>
+              <div v-if="!row.is_self" class="phone-ops">
+                <el-button size="small" type="danger" @click="deleteParent(row)">{{ t('common.delete') }}</el-button>
+              </div>
+            </article>
+          </div>
         </section>
 
         <section class="block">
@@ -395,7 +410,7 @@ onMounted(load)
           <h3>{{ t('parent.settings.tabCategories') }}</h3>
           <el-button type="primary" size="small" @click="openCreateCategory">{{ t('parent.settings.addCategory') }}</el-button>
         </div>
-        <el-table :data="categories" stripe :empty-text="t('parent.settings.noCategories')">
+        <el-table v-if="!isPhone" :data="categories" stripe :empty-text="t('parent.settings.noCategories')">
           <el-table-column prop="name" :label="t('parent.settings.categoryName')" min-width="160" />
           <el-table-column :label="t('common.actions')" width="140">
             <template #default="{ row }">
@@ -404,6 +419,18 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="categories.length === 0" :description="t('parent.settings.noCategories')" />
+          <article v-for="row in categories" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.name }}</div>
+            </div>
+            <div class="phone-ops">
+              <el-button size="small" @click="openEditCategory(row)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" type="danger" @click="deleteCategory(row)">{{ t('common.delete') }}</el-button>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane :label="t('parent.settings.tabAi')" name="ai">
@@ -541,5 +568,45 @@ onMounted(load)
   font-size: 13px;
   color: #6b6f80;
   margin: -4px 0 12px;
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #f7f8fc;
+  border-radius: 12px;
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phone-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-ops {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+@media (max-width: 767px) {
+  .settings {
+    padding: 14px 12px;
+  }
 }
 </style>

@@ -4,8 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type { Reward, RewardKind, RewardRedemption, RewardStatus, Wish, WishStatus } from '@/shared/api/types'
+import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
+const isPhone = useIsPhone()
 const rewards = ref<Reward[]>([])
 const redemptions = ref<RewardRedemption[]>([])
 const wishes = ref<Wish[]>([])
@@ -240,7 +242,7 @@ onMounted(load)
         <div class="toolbar">
           <el-button type="primary" @click="openCreate">{{ t('common.createReward') }}</el-button>
         </div>
-        <el-table :data="rewards" stripe :empty-text="t('common.noRewardsYet')">
+        <el-table v-if="!isPhone" :data="rewards" stripe :empty-text="t('common.noRewardsYet')">
           <el-table-column :label="t('common.rewardImage')" width="72">
             <template #default="{ row }">
               <img v-if="(row as Reward).image_url" class="thumb" :src="(row as Reward).image_url!" :alt="(row as Reward).name" />
@@ -269,10 +271,30 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="rewards.length === 0" :description="t('common.noRewardsYet')" />
+          <article v-for="row in rewards" :key="row.id" class="phone-card">
+            <img v-if="row.image_url" class="thumb" :src="row.image_url" :alt="row.name" />
+            <span v-else class="thumb empty">—</span>
+            <div class="phone-info">
+              <div class="phone-title">{{ row.name }}</div>
+              <div class="phone-meta">
+                {{ kindLabel(row.kind) }} · 🪙 {{ row.coin_price }} · {{ row.stock ?? t('common.unlimited') }}
+              </div>
+              <el-tag size="small" :type="row.status === 'on_shelf' ? 'success' : row.status === 'draft' ? 'info' : 'warning'">
+                {{ statusLabel(row.status) }}
+              </el-tag>
+            </div>
+            <div class="phone-ops">
+              <el-button size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" type="danger" @click="removeReward(row)">{{ t('common.delete') }}</el-button>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane :label="t('parent.shop.wishes.tab')" name="wishes">
-        <el-table :data="wishes" stripe :empty-text="t('parent.shop.wishes.empty')">
+        <el-table v-if="!isPhone" :data="wishes" stripe :empty-text="t('parent.shop.wishes.empty')">
           <el-table-column :label="t('parent.shop.wishes.child')" width="100">
             <template #default="{ row }">{{ (row as Wish).child?.nickname ?? (row as Wish).child_id }}</template>
           </el-table-column>
@@ -296,10 +318,28 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="wishes.length === 0" :description="t('parent.shop.wishes.empty')" />
+          <article v-for="row in wishes" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.name }}</div>
+              <div class="phone-meta">
+                {{ row.child?.nickname ?? row.child_id }} · {{ row.coin_price ?? '—' }}
+              </div>
+              <el-tag size="small" :type="row.status === 'converted' ? 'success' : row.status === 'rejected' ? 'info' : 'warning'">
+                {{ wishStatusLabel(row.status) }}
+              </el-tag>
+            </div>
+            <div v-if="row.status === 'pending'" class="phone-ops">
+              <el-button size="small" type="primary" @click="convertWish(row)">{{ t('parent.shop.wishes.convert') }}</el-button>
+              <el-button size="small" type="danger" @click="rejectWish(row)">{{ t('common.reject') }}</el-button>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane :label="t('common.redemptionHistory')" name="redemptions">
-        <el-table :data="redemptions" stripe :empty-text="t('common.noRedemptions')">
+        <el-table v-if="!isPhone" :data="redemptions" stripe :empty-text="t('common.noRedemptions')">
           <el-table-column :label="t('common.name')" min-width="120">
             <template #default="{ row }">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</template>
           </el-table-column>
@@ -309,6 +349,17 @@ onMounted(load)
           </el-table-column>
           <el-table-column prop="created_at" :label="t('common.time')" min-width="140" />
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="redemptions.length === 0" :description="t('common.noRedemptions')" />
+          <article v-for="row in redemptions" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</div>
+              <div class="phone-meta">
+                🪙 {{ row.coin_cost }} · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
+              </div>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -402,5 +453,42 @@ onMounted(load)
   margin: 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phone-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-ops {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 </style>

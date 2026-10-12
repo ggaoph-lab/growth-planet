@@ -79,6 +79,15 @@ onMounted(load)
   max-width: 560px;
   margin: 0 auto;
 }
+@media (min-width: 768px) {
+  .page {
+    max-width: 720px;
+    padding: 0 24px 40px;
+  }
+}
+@media (min-width: 1024px) {
+  .page { max-width: 960px; }
+}
 .head {
   display: flex;
   align-items: center;

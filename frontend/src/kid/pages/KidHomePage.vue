@@ -97,6 +97,16 @@ function open(planet: Planet): void {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+@media (orientation: landscape) and (max-width: 899px) {
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (orientation: landscape) and (min-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
 .error {
   text-align: center;
   padding: 40px 0;

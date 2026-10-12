@@ -16,10 +16,12 @@ import type {
   ScreenTimePolicyRow,
   TmdbMovieHit,
 } from '@/shared/api/types'
+import { useIsPhone } from '@/shared/useMediaQuery'
 
 const EXPAND_KEY = 'gp.parent.movies.expanded'
 
 const { t } = useI18n()
+const isPhone = useIsPhone()
 const tab = ref<'movies' | 'english' | 'screen'>('movies')
 const children = ref<ParentChild[]>([])
 const childId = ref<number | undefined>()
@@ -423,7 +425,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 
       <section v-if="tab === 'movies'">
         <h3 v-if="collections.length" style="margin: 16px 0 8px">{{ t('common.seriesList') }}</h3>
-        <el-table v-if="collections.length" :data="collections" style="margin-bottom: 12px">
+        <el-table v-if="collections.length && !isPhone" :data="collections" style="margin-bottom: 12px">
           <el-table-column prop="name" :label="t('common.seriesName')" />
           <el-table-column :label="t('common.moviesTab')" width="100">
             <template #default="{ row }">{{ row.movie_count }}</template>
@@ -434,6 +436,17 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             </template>
           </el-table-column>
         </el-table>
+        <div v-else-if="collections.length" class="phone-list" style="margin-bottom: 12px">
+          <article v-for="row in collections" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.name }}</div>
+              <div class="phone-meta">{{ row.movie_count }}</div>
+            </div>
+            <div class="phone-ops">
+              <el-button size="small" type="danger" @click="askDeleteSeriesRow(row)">{{ t('common.deleteSeries') }}</el-button>
+            </div>
+          </article>
+        </div>
 
         <h3 style="margin: 16px 0 8px">{{ t('common.systemRecommendations') }}</h3>
         <el-form class="search-row" @submit.prevent="searchCatalog">
@@ -554,7 +567,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
           </template>
         </div>
 
-        <el-table :data="movies" style="margin-top: 16px">
+        <el-table v-if="!isPhone" :data="movies" style="margin-top: 16px">
           <el-table-column prop="title_zh" :label="t('common.movieTitle')" />
           <el-table-column prop="data_completeness" :label="t('common.metadata')" width="120" />
           <el-table-column prop="runtime_minutes" :label="t('common.runtime')" width="80" />
@@ -574,21 +587,37 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             <el-button type="primary" @click="createShow">{{ t('common.addShow') }}</el-button>
           </el-form>
         </el-card>
-        <el-table :data="shows" style="margin-top: 12px">
+        <el-table v-if="!isPhone" :data="shows" style="margin-top: 12px">
           <el-table-column :label="t('common.show')"><template #default="{ row }">{{ row.emoji }} {{ row.title }}</template></el-table-column>
           <el-table-column prop="active" :label="t('common.enabled')" width="80" />
         </el-table>
+        <div v-else class="phone-list" style="margin-top: 12px">
+          <article v-for="row in shows" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.emoji }} {{ row.title }}</div>
+              <div class="phone-meta">{{ row.active ? t('common.enabled') : t('common.disabledLabel') }}</div>
+            </div>
+          </article>
+        </div>
         <h3>{{ t('common.logRecords') }}</h3>
-        <el-table :data="englishLogs">
+        <el-table v-if="!isPhone" :data="englishLogs">
           <el-table-column prop="watch_date" :label="t('common.today')" width="120" />
           <el-table-column prop="minutes" :label="t('common.minutes')" width="80" />
           <el-table-column prop="status" :label="t('common.status')" />
         </el-table>
+        <div v-else class="phone-list">
+          <article v-for="row in englishLogs" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.watch_date }}</div>
+              <div class="phone-meta">{{ row.minutes }} {{ t('common.minutes') }} · {{ row.status }}</div>
+            </div>
+          </article>
+        </div>
         <p class="hint">{{ t('common.englishLogsHint') }}</p>
       </section>
 
       <section v-else>
-        <el-table :data="policies">
+        <el-table v-if="!isPhone" :data="policies">
           <el-table-column prop="category" :label="t('common.category')" />
           <el-table-column prop="period" :label="t('common.period')" width="100" />
           <el-table-column :label="t('common.minutesLimit')">
@@ -597,6 +626,15 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <article v-for="row in policies" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <div class="phone-title">{{ row.category }}</div>
+              <div class="phone-meta">{{ row.period }}</div>
+              <el-input-number v-model="row.minutes" :min="0" :step="5" size="small" />
+            </div>
+          </article>
+        </div>
         <el-button type="primary" style="margin-top: 12px" @click="savePolicies">{{ t('common.savePolicy') }}</el-button>
       </section>
     </div>
@@ -650,8 +688,56 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .search-row .el-input { flex: 1; min-width: 200px; }
 .poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 14px;
+  }
+}
+@media (orientation: landscape) {
+  .poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 10px;
+  }
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.phone-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-ops {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .shelf { margin-top: 8px; }
 .poster-card {

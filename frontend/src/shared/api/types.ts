@@ -234,8 +234,10 @@ export interface TaskInstance {
     due_time?: string | null
     with_parent?: boolean
     group_title?: string | null
-    group_task_id?: number | null
+    group_task_id?: number | string | null
+    steps?: { id?: number; title: string; sort?: number }[]
   } & Record<string, unknown>
+  instance_steps?: { id: number; title: string; sort?: number; checked?: boolean }[]
   ready_at: string | null
   submitted_at: string | null
   completed_at: string | null

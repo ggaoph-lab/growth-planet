@@ -126,6 +126,13 @@ class ParentTaskApiTest extends TestCase
         $this->assertCount(3, $instance->snapshot['steps']);
         $this->assertSame($updated['version'], $instance->task_version);
 
+        $this->actingAsParent($parent)
+            ->getJson('/api/v1/parent/task-instances?date=2026-10-12&child_id='.$child->id)
+            ->assertOk()
+            ->assertJsonCount(3, 'data.0.instance_steps')
+            ->assertJsonPath('data.0.instance_steps.0.title', '新步骤A')
+            ->assertJsonPath('data.0.snapshot.steps.0.title', '新步骤A');
+
         $this->actingAsParent($parent)->deleteJson('/api/v1/parent/tasks/'.$created['id'])
             ->assertOk()
             ->assertJsonPath('data.deleted', true);

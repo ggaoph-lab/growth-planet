@@ -47,8 +47,8 @@ watch(childId, loadReports)
       <el-option v-for="c in children" :key="c.id" :label="c.nickname" :value="c.id" />
     </el-select>
 
-    <el-row :gutter="12" style="margin-top: 12px">
-      <el-col :span="8">
+    <el-row :gutter="12" class="report-row">
+      <el-col :xs="24" :sm="12" :md="8">
         <el-card shadow="never" :header="t('common.reportToday')">
           <ul v-if="daily">
             <li>{{ t('common.tasksCompleted') }}：{{ daily.tasks_completed }}</li>
@@ -57,7 +57,7 @@ watch(childId, loadReports)
           </ul>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :xs="24" :sm="12" :md="8">
         <el-card shadow="never" :header="t('common.reportWeek')">
           <ul v-if="weekly">
             <li>{{ t('common.tasksCompleted') }}：{{ weekly.tasks_completed }}</li>
@@ -66,7 +66,7 @@ watch(childId, loadReports)
           </ul>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :xs="24" :sm="24" :md="8">
         <el-card shadow="never" :header="t('common.reportTotal')">
           <ul v-if="growth">
             <li>{{ t('common.tasksTotal') }}：{{ growth.tasks_completed_total }}</li>
@@ -81,5 +81,11 @@ watch(childId, loadReports)
 </template>
 
 <style scoped>
+.report-row {
+  margin-top: 12px;
+}
+.report-row :deep(.el-col) {
+  margin-bottom: 12px;
+}
 .page ul { margin: 0; padding-left: 18px; line-height: 1.8; }
 </style>

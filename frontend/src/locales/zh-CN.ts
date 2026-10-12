@@ -594,6 +594,7 @@ export default {
     tasksEmpty: '今天没有任务，去玩别的星球吧！',
     habitsEmpty: '还没有习惯哦',
     shopEmpty: '商城还在补货中',
+    viewImage: '放大查看{name}',
     wishes: {
       title: '愿望清单',
       add: '新增愿望',

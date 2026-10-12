@@ -368,17 +368,32 @@ TEXT;
 
         $response->assertCreated()
             ->assertJsonPath('data.task.title', '周日数学学习任务')
-            ->assertJsonPath('data.task.kind', 'stepped')
+            ->assertJsonPath('data.task.kind', 'standard')
             ->assertJsonPath('data.task.category', '数学')
             ->assertJsonPath('data.task.with_parent', true)
             ->assertJsonPath('data.task.xp_reward', 15)
             ->assertJsonPath('data.task.coin_reward', 9)
-            ->assertJsonCount(3, 'data.task.steps')
-            ->assertJsonCount(1, 'data.instances')
-            ->assertJsonPath('data.instances.0.child_id', $child->id)
-            ->assertJsonPath('data.instances.0.status', 'pending');
+            ->assertJsonCount(3, 'data.task.children')
+            ->assertJsonCount(3, 'data.instances');
 
-        $taskDate = (string) $response->json('data.instances.0.task_date');
+        $instances = collect($response->json('data.instances'));
+        $this->assertEqualsCanonicalizing(
+            ['指读常用词：计算、得数', '读题练习', '口算卡片：2遍'],
+            $instances->pluck('snapshot.title')->all(),
+        );
+        $this->assertTrue($instances->every(
+            fn ($instance) => ($instance['snapshot']['group_title'] ?? null) === '周日数学学习任务'
+                && ($instance['snapshot']['group_task_id'] ?? null) === $response->json('data.task.id')
+                && ($instance['child_id'] ?? null) === $child->id
+                && ($instance['status'] ?? null) === 'pending',
+        ));
+        $reading = $instances->firstWhere('snapshot.title', '指读常用词：计算、得数');
+        $this->assertNotNull($reading);
+        $this->assertSame(5, $reading['snapshot']['xp_reward'] ?? null);
+        $this->assertSame(3, $reading['snapshot']['coin_reward'] ?? null);
+        $this->assertTrue((bool) ($reading['snapshot']['with_parent'] ?? false));
+
+        $taskDate = (string) $instances->first()['task_date'];
         $this->assertTrue(str_starts_with($taskDate, '2026-10-12'), 'task_date should be 2026-10-12, got '.$taskDate);
     }
 

@@ -12,7 +12,6 @@ use App\Modules\Task\Enums\TaskKind;
 use App\Modules\Task\Models\Task;
 use App\Modules\Task\Models\TaskInstance;
 use App\Modules\Task\Models\TaskSchedule;
-use App\Modules\Task\Models\TaskStep;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -47,6 +46,7 @@ class HomeworkImportService
         $description = $this->buildDescription($subject, $payload['source_text'] ?? null, $items);
 
         $result = DB::transaction(function () use ($family, $parent, $child, $payload, $items, $taskDate, $subject, $title, $description) {
+            $withParent = (bool) ($payload['with_parent'] ?? false);
             $task = Task::query()->create([
                 'family_id' => $family->id,
                 'child_id' => $child->id,
@@ -54,7 +54,7 @@ class HomeworkImportService
                 'title' => $title,
                 'icon' => null,
                 'description' => $description,
-                'kind' => TaskKind::Stepped,
+                'kind' => TaskKind::Standard,
                 'start_date' => $taskDate,
                 'end_date' => $taskDate,
                 'estimated_minutes' => null,
@@ -62,42 +62,57 @@ class HomeworkImportService
                 'coin_reward' => (int) ($payload['coin_reward'] ?? 0),
                 'requires_approval' => (bool) ($payload['requires_approval'] ?? false),
                 'requires_self_check' => (bool) ($payload['requires_self_check'] ?? false),
-                'with_parent' => (bool) ($payload['with_parent'] ?? false),
+                'with_parent' => $withParent,
                 'is_active' => true,
                 'version' => 1,
                 'created_by' => $parent->id,
             ]);
 
-            foreach (array_values($items) as $i => $item) {
-                $stepTitle = trim((string) ($item['title'] ?? ''));
-                $detail = isset($item['detail']) ? trim((string) $item['detail']) : '';
-                if ($detail !== '') {
-                    $stepTitle = $stepTitle.'：'.$detail;
+            $childIds = [];
+            foreach (array_values($items) as $item) {
+                if (! is_array($item)) {
+                    continue;
                 }
-                TaskStep::query()->create([
-                    'task_id' => $task->id,
-                    'title' => mb_substr($stepTitle, 0, 128),
-                    'is_required' => true,
-                    'is_self_check' => false,
-                    'sort' => $i,
+                $childTask = Task::query()->create([
+                    'family_id' => $family->id,
+                    'parent_id' => $task->id,
+                    'child_id' => $child->id,
+                    'category' => $subject,
+                    'title' => $this->itemTitle($item),
+                    'icon' => null,
+                    'description' => null,
+                    'kind' => TaskKind::Standard,
+                    'start_date' => $taskDate,
+                    'end_date' => $taskDate,
+                    'estimated_minutes' => null,
+                    'xp_reward' => (int) ($item['suggested_xp'] ?? 0),
+                    'coin_reward' => (int) ($item['suggested_coins'] ?? 0),
+                    'requires_approval' => (bool) ($payload['requires_approval'] ?? false),
+                    'requires_self_check' => (bool) ($payload['requires_self_check'] ?? false),
+                    'with_parent' => $withParent,
+                    'is_active' => true,
+                    'version' => 1,
+                    'created_by' => $parent->id,
                 ]);
+                TaskSchedule::query()->create([
+                    'task_id' => $childTask->id,
+                    'frequency' => ScheduleFrequency::Once,
+                    'weekdays' => null,
+                    'dates' => null,
+                    'due_time' => null,
+                ]);
+                $childIds[] = $childTask->id;
             }
 
-            TaskSchedule::query()->create([
-                'task_id' => $task->id,
-                'frequency' => ScheduleFrequency::Once,
-                'weekdays' => null,
-                'dates' => null,
-                'due_time' => null,
-            ]);
-
-            $task->load(['steps', 'schedules']);
-            $instance = $this->generator->ensureForChildOnDate($family, $child, $taskDate)
-                ->first(fn (TaskInstance $inst) => $inst->task_id === $task->id);
+            $task->load(['steps', 'schedules', 'children.schedules', 'children.steps']);
+            $childIdSet = array_fill_keys($childIds, true);
+            $instances = $this->generator->ensureForChildOnDate($family, $child, $taskDate)
+                ->filter(fn (TaskInstance $inst) => isset($childIdSet[(int) $inst->task_id]))
+                ->values();
 
             return [
                 'task' => $task,
-                'instances' => collect($instance ? [$instance] : []),
+                'instances' => $instances,
             ];
         });
 
@@ -126,5 +141,19 @@ class HomeworkImportService
         }
 
         return implode("\n\n", $parts);
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function itemTitle(array $item): string
+    {
+        $title = trim((string) ($item['title'] ?? ''));
+        $detail = isset($item['detail']) ? trim((string) $item['detail']) : '';
+        if ($detail !== '') {
+            $title = $title.'：'.$detail;
+        }
+
+        return mb_substr($title, 0, 128);
     }
 }

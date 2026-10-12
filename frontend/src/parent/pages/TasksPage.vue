@@ -18,8 +18,13 @@ import type {
   TaskSchedule,
 } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
+import { useIsPhone } from '@/shared/useMediaQuery'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const isPhone = useIsPhone()
+const taskFormLabelWidth = computed(() =>
+  String(locale.value).toLowerCase().startsWith('en') ? '188px' : '148px',
+)
 const tab = ref<'tasks' | 'instances'>('tasks')
 const tasks = ref<ParentTask[]>([])
 const categories = ref<TaskCategory[]>([])
@@ -281,8 +286,8 @@ const instanceGroups = computed<InstanceGroup[]>(() => {
   const groups: InstanceGroup[] = []
   const index = new Map<string, InstanceGroup>()
   for (const inst of instances.value) {
-    const groupId = inst.snapshot?.group_task_id
-    if (typeof groupId === 'number') {
+    const groupId = groupIdOf(inst)
+    if (groupId !== null) {
       const key = `g-${groupId}`
       let group = index.get(key)
       if (!group) {
@@ -642,6 +647,27 @@ function instanceDueTime(inst: TaskInstance): string {
   return typeof due === 'string' && due ? timeOnly(due) : ''
 }
 
+function groupIdOf(inst: TaskInstance): number | null {
+  const raw = inst.snapshot?.group_task_id
+  const id = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function linesOf(inst: TaskInstance): { key: string; title: string }[] {
+  const related = inst.instance_steps
+  if (Array.isArray(related) && related.length > 0) {
+    return [...related]
+      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+      .filter((step) => step.title)
+      .map((step) => ({ key: `r-${step.id}`, title: step.title }))
+  }
+  const steps = inst.snapshot?.steps
+  if (!Array.isArray(steps)) return []
+  return steps
+    .filter((step) => typeof step?.title === 'string' && step.title.length > 0)
+    .map((step, index) => ({ key: `s-${step.id ?? index}`, title: step.title }))
+}
+
 function onTabChange(name: string | number): void {
   if (name === 'instances') void loadInstances()
 }
@@ -660,7 +686,7 @@ onMounted(load)
             {{ t('common.filterByCategory', { name: activeCategoryName }) }}
           </el-tag>
         </div>
-        <el-table :data="visibleTasks" stripe :empty-text="t('common.noTasksYet')">
+        <el-table v-if="!isPhone" :data="visibleTasks" stripe :empty-text="t('common.noTasksYet')">
           <el-table-column :label="t('common.title')" min-width="160">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row as ParentTask)">
@@ -727,6 +753,36 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="phone-list">
+          <el-empty v-if="visibleTasks.length === 0" :description="t('common.noTasksYet')" />
+          <article v-for="row in visibleTasks" :key="row.id" class="phone-card">
+            <div class="phone-info">
+              <button type="button" class="phone-title-btn" @click="openDetail(row)">{{ row.title }}</button>
+              <div v-if="row.children?.length" class="muted">{{ t('common.subtaskCount', { n: row.children.length }) }}</div>
+              <div class="phone-meta">
+                {{
+                  row.child_id
+                    ? childMap.get(row.child_id)?.nickname ?? row.child_id
+                    : t('common.wholeFamily')
+                }}
+                · {{ taskDateLabel(row) }}
+              </div>
+              <div class="muted">{{ scheduleSummary(row) }} · {{ rewardSummary(row) }}</div>
+              <el-tag
+                v-if="row.with_parent || row.children?.some((child) => child.with_parent)"
+                size="small"
+                type="warning"
+                class="tag-inline"
+              >
+                {{ t('common.withParentTag') }}
+              </el-tag>
+            </div>
+            <div class="phone-ops">
+              <el-button size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" type="danger" @click="deleteTask(row)">{{ t('common.delete') }}</el-button>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane :label="t('common.todayInstances')" name="instances">
@@ -754,6 +810,9 @@ onMounted(load)
               <span v-if="childMap.get(inst.child_id)" class="av">{{ avatarEmoji(childMap.get(inst.child_id)!.avatar) }}</span>
               <div>
                 <div class="inst-title">{{ instanceTitle(inst) }}</div>
+                <ul v-if="linesOf(inst).length" class="step-list">
+                  <li v-for="line in linesOf(inst)" :key="line.key">{{ line.title }}</li>
+                </ul>
                 <div class="inst-meta">
                   {{ childMap.get(inst.child_id)?.nickname ?? inst.child_id }} · {{ inst.task_date }}
                   <template v-if="instanceDueTime(inst)"> · {{ instanceDueTime(inst) }}</template>
@@ -772,7 +831,7 @@ onMounted(load)
     <el-dialog
       v-model="showForm"
       :title="editingId ? t('common.editTask') : t('common.createTask')"
-      width="600px"
+      width="640px"
       destroy-on-close
       class="task-form-dialog"
     >
@@ -783,7 +842,7 @@ onMounted(load)
         maxlength="128"
         :placeholder="t('common.title')"
       />
-      <el-form label-width="100px" class="task-meta-form">
+      <el-form :label-width="taskFormLabelWidth" class="task-meta-form">
         <el-form-item :label="t('common.taskCategory')">
           <el-select
             v-model="form.category_id"
@@ -800,7 +859,7 @@ onMounted(load)
           </div>
         </el-form-item>
         <el-form-item :label="t('common.assignChild')">
-          <el-select v-model="form.child_id" clearable :placeholder="t('common.allChildrenPlaceholder')">
+          <el-select v-model="form.child_id" clearable :placeholder="t('common.allChildrenPlaceholder')" style="width: 100%">
             <el-option v-for="c in activeChildren" :key="c.id" :label="c.nickname" :value="c.id" />
           </el-select>
         </el-form-item>
@@ -823,10 +882,12 @@ onMounted(load)
             {{ t('common.delete') }}
           </el-button>
         </div>
-        <el-form label-width="100px" class="subtask-fields">
+        <el-form :label-width="taskFormLabelWidth" class="subtask-fields">
           <el-form-item :label="t('common.withParent')">
-            <el-switch v-model="sub.with_parent" />
-            <div class="hint-inline">{{ t('common.withParentHint') }}</div>
+            <div class="field-inline">
+              <el-switch v-model="sub.with_parent" />
+              <span class="hint-inline">{{ t('common.withParentHint') }}</span>
+            </div>
           </el-form-item>
           <el-form-item :label="t('common.taskStartDate')" required>
             <el-date-picker v-model="sub.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -841,8 +902,10 @@ onMounted(load)
             />
           </el-form-item>
           <el-form-item :label="t('common.recurringTask')">
-            <el-switch v-model="sub.recurring" />
-            <div class="hint-inline">{{ t('common.recurringTaskHint') }}</div>
+            <div class="field-inline">
+              <el-switch v-model="sub.recurring" />
+              <span class="hint-inline">{{ t('common.recurringTaskHint') }}</span>
+            </div>
           </el-form-item>
           <el-form-item v-if="sub.recurring" :label="t('common.taskEndDate')" required>
             <el-date-picker
@@ -1050,6 +1113,49 @@ onMounted(load)
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phone-title-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--el-color-primary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-ops {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .muted {
   font-size: 12px;
   color: #9a9db0;
@@ -1078,6 +1184,23 @@ onMounted(load)
 }
 .inst-title {
   font-weight: 600;
+}
+.step-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.step-list li {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f4f6fb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2c3142;
 }
 .inst-meta {
   font-size: 13px;
@@ -1135,6 +1258,38 @@ onMounted(load)
 .task-meta-form {
   margin-bottom: 4px;
 }
+.task-meta-form :deep(.el-form-item),
+.subtask-fields :deep(.el-form-item) {
+  align-items: flex-start;
+}
+.task-meta-form :deep(.el-form-item__label),
+.subtask-fields :deep(.el-form-item__label) {
+  white-space: nowrap;
+  height: 32px;
+  line-height: 32px;
+  align-items: center;
+}
+.task-meta-form :deep(.el-form-item__content),
+.subtask-fields :deep(.el-form-item__content) {
+  min-width: 0;
+}
+.task-meta-form :deep(.el-form-item__content) {
+  flex-direction: column;
+  align-items: stretch;
+}
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  width: 100%;
+}
+.field-inline .hint-inline {
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
+}
 .subtask-card {
   margin-bottom: 12px;
   padding: 12px;
@@ -1150,7 +1305,7 @@ onMounted(load)
   margin-bottom: 8px;
 }
 .subtask-fields {
-  margin-top: 4px;
+  margin: 4px -12px 0;
 }
 .subtask-fields :deep(.el-form-item) {
   margin-bottom: 12px;

@@ -117,12 +117,25 @@ async function switchUser(): Promise<void> {
 }
 .sheet {
   width: min(480px, 100%);
+  max-height: min(88vh, 640px);
+  overflow-y: auto;
   background: #262a66;
   border-radius: 24px 24px 0 0;
   padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+@media (orientation: landscape) {
+  .sheet-mask {
+    align-items: center;
+    padding: 8px 12px;
+  }
+  .sheet {
+    max-height: min(92vh, 480px);
+    border-radius: 20px;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
 }
 .sheet h2 {
   margin: 0 0 4px;

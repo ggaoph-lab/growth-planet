@@ -5,8 +5,10 @@ import { ElMessage } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type { ParentChild, ParentHabit } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
+import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
+const isPhone = useIsPhone()
 const habits = ref<ParentHabit[]>([])
 const children = ref<ParentChild[]>([])
 const loading = ref(true)
@@ -125,7 +127,7 @@ onMounted(load)
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">{{ t('common.createHabit') }}</el-button>
     </div>
-    <el-table :data="habits" stripe :empty-text="t('common.noHabitsYet')">
+    <el-table v-if="!isPhone" :data="habits" stripe :empty-text="t('common.noHabitsYet')">
       <el-table-column label="" width="48">
         <template #default="{ row }">{{ row.icon ?? '⭐' }}</template>
       </el-table-column>
@@ -150,6 +152,28 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+    <div v-else class="phone-list">
+      <el-empty v-if="habits.length === 0" :description="t('common.noHabitsYet')" />
+      <article v-for="row in habits" :key="row.id" class="phone-card">
+        <span class="phone-icon">{{ row.icon ?? '⭐' }}</span>
+        <div class="phone-info">
+          <div class="phone-title">{{ row.title }}</div>
+          <div class="phone-meta">
+            <template v-if="childMap.get(row.child_id)">
+              {{ avatarEmoji(childMap.get(row.child_id)!.avatar) }} {{ childMap.get(row.child_id)!.nickname }}
+            </template>
+            <template v-else>{{ row.child_id }}</template>
+            · {{ row.xp_reward }} XP · {{ row.coin_reward }} {{ t('common.coinShort') }}
+          </div>
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+            {{ row.is_active ? t('common.enabled') : t('common.disabledLabel') }}
+          </el-tag>
+        </div>
+        <div class="phone-ops">
+          <el-button size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+        </div>
+      </article>
+    </div>
 
     <el-dialog v-model="dialogOpen" :title="editing ? t('common.editHabit') : t('common.createHabit')" width="420px" destroy-on-close>
       <el-form label-width="88px">
@@ -193,5 +217,45 @@ onMounted(load)
 }
 .toolbar {
   margin-bottom: 12px;
+}
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phone-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+.phone-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+.phone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phone-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.phone-meta {
+  color: #6b6f80;
+  font-size: 13px;
+}
+.phone-ops {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 </style>

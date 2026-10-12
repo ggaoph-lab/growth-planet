@@ -594,6 +594,7 @@ export default {
     tasksEmpty: 'No tasks today — explore other planets!',
     habitsEmpty: 'No habits yet',
     shopEmpty: 'Shop is restocking',
+    viewImage: 'View {name} larger',
     wishes: {
       title: 'Wish list',
       add: 'Add a wish',

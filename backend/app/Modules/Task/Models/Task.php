@@ -71,7 +71,7 @@ class Task extends Model
             'with_parent' => $this->with_parent,
             'due_time' => $this->schedules->first()?->due_time,
             'group_title' => $this->parent?->title,
-            'group_task_id' => $this->parent_id,
+            'group_task_id' => $this->parent_id !== null ? (int) $this->parent_id : null,
             'steps' => $this->steps->map(fn ($s) => [
                 'id' => $s->id,
                 'title' => $s->title,

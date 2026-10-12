@@ -15,3 +15,13 @@ export function useMediaQuery(query: string): Ref<boolean> {
 export function useIsPhone(): Ref<boolean> {
   return useMediaQuery('(max-width: 767px)')
 }
+
+/** Tablet band: sidebar layouts, wider content (768–1023). */
+export function useIsTablet(): Ref<boolean> {
+  return useMediaQuery('(min-width: 768px) and (max-width: 1023px)')
+}
+
+/** Landscape orientation — prefer denser columns, keep vertical cards. */
+export function useIsLandscape(): Ref<boolean> {
+  return useMediaQuery('(orientation: landscape)')
+}

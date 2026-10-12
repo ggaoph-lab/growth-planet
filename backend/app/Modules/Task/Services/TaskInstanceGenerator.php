@@ -83,7 +83,7 @@ class TaskInstanceGenerator
         $key = "task:{$task->id}:child:{$child->id}:{$date}";
         $existing = TaskInstance::query()->where('generation_key', $key)->first();
         if ($existing !== null) {
-            return $existing;
+            return $this->hydrateExisting($existing, $task);
         }
 
         $snapshot = $task->instanceSnapshot();
@@ -102,7 +102,7 @@ class TaskInstanceGenerator
             ]);
         } catch (QueryException $e) {
             if (str_contains($e->getMessage(), 'Duplicate') || $e->getCode() === '23000') {
-                return TaskInstance::query()->where('generation_key', $key)->firstOrFail();
+                return $this->hydrateExisting(TaskInstance::query()->where('generation_key', $key)->firstOrFail(), $task);
             }
             throw $e;
         }
@@ -116,6 +116,54 @@ class TaskInstanceGenerator
                 'is_self_check' => $step['is_self_check'],
                 'sort' => $step['sort'],
             ]);
+        }
+
+        return $instance->load('instanceSteps');
+    }
+
+    /**
+     * Older instances were saved before group metadata or steps existed.
+     * Fill those in so the kid card can list each item.
+     */
+    private function hydrateExisting(TaskInstance $instance, Task $task): TaskInstance
+    {
+        $task->loadMissing(['steps', 'parent']);
+        $snapshot = $instance->snapshot ?? [];
+        $changed = false;
+
+        $groupId = $task->parent_id !== null ? (int) $task->parent_id : null;
+        $groupTitle = $task->parent?->title;
+        if (($snapshot['group_task_id'] ?? null) != $groupId || ($snapshot['group_title'] ?? null) !== $groupTitle) {
+            $snapshot['group_task_id'] = $groupId;
+            $snapshot['group_title'] = $groupTitle;
+            $changed = true;
+        }
+
+        $steps = $snapshot['steps'] ?? null;
+        if ($task->steps->isNotEmpty() && (! is_array($steps) || $steps === [])) {
+            $snapshot['steps'] = $task->instanceSnapshot()['steps'];
+            $changed = true;
+        }
+
+        if ($changed) {
+            $instance->snapshot = $snapshot;
+            $instance->save();
+        }
+
+        if (! $instance->instanceSteps()->exists() && is_array($snapshot['steps'] ?? null)) {
+            foreach ($snapshot['steps'] as $step) {
+                if (! is_array($step) || ! isset($step['title'])) {
+                    continue;
+                }
+                TaskInstanceStep::query()->create([
+                    'task_instance_id' => $instance->id,
+                    'task_step_id' => $step['id'] ?? null,
+                    'title' => $step['title'],
+                    'is_required' => $step['is_required'] ?? true,
+                    'is_self_check' => $step['is_self_check'] ?? false,
+                    'sort' => $step['sort'] ?? 0,
+                ]);
+            }
         }
 
         return $instance->load('instanceSteps');
