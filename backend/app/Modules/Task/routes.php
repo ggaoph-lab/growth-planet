@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Task\Http\Controllers\Kid\TaskController as KidTaskController;
+use App\Modules\Task\Http\Controllers\Parent\HomeworkController;
 use App\Modules\Task\Http\Controllers\Parent\TaskController;
 use App\Modules\Task\Http\Controllers\Parent\TaskInstanceController;
 use Illuminate\Support\Facades\Route;
@@ -10,6 +11,9 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::post('tasks', [TaskController::class, 'store']);
     Route::put('tasks/{id}', [TaskController::class, 'update'])->whereNumber('id');
     Route::delete('tasks/{id}', [TaskController::class, 'destroy'])->whereNumber('id');
+
+    Route::post('homework/parse', [HomeworkController::class, 'parse']);
+    Route::post('homework/confirm', [HomeworkController::class, 'confirm']);
 
     Route::get('task-instances', [TaskInstanceController::class, 'index']);
     Route::post('task-instances/{id}/approve', [TaskInstanceController::class, 'approve'])->whereNumber('id')->middleware('idempotent');

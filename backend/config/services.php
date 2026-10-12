@@ -39,4 +39,23 @@ return [
         'api_key' => env('TMDB_API_KEY'),
     ],
 
+    'homework_llm' => [
+        // auto = Gemini first (Singapore-friendly), then Qwen; or force gemini|qwen|rules
+        'provider' => env('HOMEWORK_LLM_PROVIDER', 'auto'),
+    ],
+
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
+        'timeout' => (int) env('GEMINI_TIMEOUT', 30),
+    ],
+
+    'qwen' => [
+        'api_key' => env('DASHSCOPE_API_KEY'),
+        'base_url' => env('DASHSCOPE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+        'model' => env('QWEN_MODEL', 'qwen-turbo'),
+        'timeout' => (int) env('QWEN_TIMEOUT', 30),
+    ],
+
 ];

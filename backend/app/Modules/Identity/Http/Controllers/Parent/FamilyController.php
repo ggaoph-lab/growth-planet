@@ -24,6 +24,7 @@ class FamilyController
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'min:1', 'max:64'],
             'timezone' => ['sometimes', 'string', Rule::in(DateTimeZone::listIdentifiers())],
+            'locale' => ['sometimes', 'string', Rule::in(['zh-CN', 'en', 'zh-en'])],
         ]);
 
         $family = $context->family();

@@ -78,6 +78,30 @@ export interface Family {
   week_starts_on: number
 }
 
+export interface ParentAccount {
+  id: number
+  user_id: number
+  display_name: string
+  username: string | null
+  email: string | null
+  status: string
+  is_self: boolean
+  last_login_at: string | null
+}
+
+export interface AiProviderStatus {
+  configured: boolean
+  source: 'family' | 'env' | 'none' | string
+  model: string
+  hint: string | null
+}
+
+export interface AiSettings {
+  provider: string
+  gemini: AiProviderStatus
+  qwen: AiProviderStatus
+}
+
 export interface KidLoginProfile {
   id: number
   nickname: string
@@ -134,6 +158,7 @@ export interface ParentTask {
   id: number
   family_id: number
   child_id: number | null
+  category?: string | null
   title: string
   icon: string | null
   description: string | null
@@ -148,6 +173,37 @@ export interface ParentTask {
   version: number
   schedules: TaskSchedule[]
   steps?: { id: number; title: string; is_required: boolean; sort: number }[]
+}
+
+export type HomeworkSubject = '语文' | '数学' | '英语' | '科学' | '道法' | '体育' | '美术' | '音乐' | '其他'
+
+export interface HomeworkItemPreview {
+  title: string
+  detail: string | null
+  suggested_coins: number
+  suggested_xp: number
+}
+
+export type HomeworkParserKind = 'gemini' | 'qwen' | 'rules'
+
+export interface HomeworkParseResult {
+  parser: HomeworkParserKind | string
+  subject: HomeworkSubject | string
+  task_date: string
+  title: string
+  items: HomeworkItemPreview[]
+  xp_reward: number
+  coin_reward: number
+  confidence: number
+  notes: string | null
+  source_text: string
+  ai_configured: boolean
+  providers_available?: string[]
+}
+
+export interface HomeworkConfirmResult {
+  task: ParentTask
+  instances: TaskInstance[]
 }
 
 export interface TaskInstance {

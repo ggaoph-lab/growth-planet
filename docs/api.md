@@ -87,7 +87,7 @@
 
 | 资源 | 家长 | 孩子 |
 |---|---|---|
-| 任务 | `GET/POST/PUT/DELETE /parent/tasks`、`/parent/task-instances?date=`、`POST /parent/task-instances/{id}/approve|return` 🔁 | `GET /kid/tasks?date=`、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit` 🔁 |
+| 任务 | `GET/POST/PUT/DELETE /parent/tasks`、`POST /parent/homework/parse`（千问/规则结构化预览）、`POST /parent/homework/confirm`（确认生成 stepped 任务+当日实例）、`/parent/task-instances?date=`、`POST /parent/task-instances/{id}/approve|return` 🔁 | `GET /kid/tasks?date=`、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit` 🔁 |
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
 | 账本 | `GET /parent/children/{id}/ledger?asset=xp|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus` 🔁🔐 | `GET /kid/wallet` |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |

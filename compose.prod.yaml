@@ -30,6 +30,13 @@ x-app-env: &app-env
   FILESYSTEM_DISK: ${FILESYSTEM_DISK:-local}
   MAIL_MAILER: ${MAIL_MAILER:-log}
   TMDB_API_KEY: ${TMDB_API_KEY:-}
+  HOMEWORK_LLM_PROVIDER: ${HOMEWORK_LLM_PROVIDER:-auto}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  QWEN_MODEL: ${QWEN_MODEL:-qwen-turbo}
 
 x-app-image: &app-image
   build:

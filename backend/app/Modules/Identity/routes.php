@@ -7,7 +7,9 @@ use App\Modules\Identity\Http\Controllers\Parent\AuditLogController;
 use App\Modules\Identity\Http\Controllers\Parent\ChildController;
 use App\Modules\Identity\Http\Controllers\Parent\DashboardController;
 use App\Modules\Identity\Http\Controllers\Parent\DeviceController;
+use App\Modules\Identity\Http\Controllers\Parent\AiSettingsController;
 use App\Modules\Identity\Http\Controllers\Parent\FamilyController;
+use App\Modules\Identity\Http\Controllers\Parent\ParentAccountController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/auth')->group(function () {
@@ -28,6 +30,15 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 
     Route::get('family', [FamilyController::class, 'show']);
     Route::patch('family', [FamilyController::class, 'update']);
+
+    Route::get('parents', [ParentAccountController::class, 'index']);
+    Route::post('parents', [ParentAccountController::class, 'store'])->middleware('sudo');
+    Route::delete('parents/{id}', [ParentAccountController::class, 'destroy'])->whereNumber('id')->middleware('sudo');
+    Route::patch('parents/me', [ParentAccountController::class, 'updateProfile']);
+    Route::put('parents/me/password', [ParentAccountController::class, 'updatePassword'])->middleware('sudo');
+
+    Route::get('ai-settings', [AiSettingsController::class, 'show']);
+    Route::put('ai-settings', [AiSettingsController::class, 'update'])->middleware('sudo');
 
     Route::get('children', [ChildController::class, 'index']);
     Route::post('children', [ChildController::class, 'store']);
