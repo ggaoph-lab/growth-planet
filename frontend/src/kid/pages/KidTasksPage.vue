@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
@@ -24,6 +24,49 @@ function titleOf(inst: TaskInstance): string {
   const title = inst.snapshot?.title
   return typeof title === 'string' && title ? title : t('common.taskDefault')
 }
+
+function dueOf(inst: TaskInstance): string {
+  const due = inst.snapshot?.due_time
+  return typeof due === 'string' && due ? due.slice(0, 5) : ''
+}
+
+interface TaskGroup {
+  key: string
+  title: string
+  isGroup: boolean
+  items: TaskInstance[]
+}
+
+const groups = computed<TaskGroup[]>(() => {
+  const out: TaskGroup[] = []
+  const index = new Map<string, TaskGroup>()
+  for (const inst of instances.value) {
+    const groupId = inst.snapshot?.group_task_id
+    if (typeof groupId === 'number') {
+      const key = `g-${groupId}`
+      let group = index.get(key)
+      if (!group) {
+        const title = inst.snapshot?.group_title
+        group = {
+          key,
+          title: typeof title === 'string' && title ? title : t('common.taskDefault'),
+          isGroup: true,
+          items: [],
+        }
+        index.set(key, group)
+        out.push(group)
+      }
+      group.items.push(inst)
+    } else {
+      out.push({ key: `i-${inst.id}`, title: '', isGroup: false, items: [inst] })
+    }
+  }
+  for (const group of out) {
+    if (!group.isGroup) continue
+    group.items.sort((a, b) => dueOf(a).localeCompare(dueOf(b)))
+  }
+  return out
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -84,26 +127,34 @@ onMounted(load)
 
     <el-empty v-if="!loading && instances.length === 0" :description="t('kid.tasksEmpty')" />
 
-    <article v-for="inst in instances" :key="inst.id" class="card">
-      <h2>{{ titleOf(inst) }}</h2>
-      <p class="status">{{ statusLabel(inst.status) }}</p>
-      <p v-if="inst.snapshot?.with_parent" class="with-parent">{{ t('common.withParentTag') }}</p>
-      <p v-if="inst.snapshot?.xp_reward || inst.snapshot?.coin_reward" class="reward">
-        {{ t('kid.taskReward', { xp: inst.snapshot.xp_reward ?? 0, coins: inst.snapshot.coin_reward ?? 0 }) }}
-      </p>
-      <div class="actions">
-        <button
-          v-if="inst.status === 'pending' || inst.status === 'returned'"
-          type="button"
-          class="big primary"
-          :disabled="busy === inst.id"
-          @click="ready(inst)"
-        >
-          {{ inst.status === 'returned' ? t('kid.taskActions.restart') : t('kid.taskActions.start') }}
-        </button>
-        <button v-if="inst.status === 'in_progress'" type="button" class="big sun" :disabled="busy === inst.id" @click="submit(inst)">
-          {{ t('kid.taskActions.done') }}
-        </button>
+    <article v-for="group in groups" :key="group.key" class="card">
+      <header v-if="group.isGroup" class="group-head">
+        <h2>{{ group.title }}</h2>
+        <p class="status">{{ t('common.subtaskCount', { n: group.items.length }) }}</p>
+      </header>
+      <div v-for="inst in group.items" :key="inst.id" class="sub" :class="{ nested: group.isGroup }">
+        <h2 v-if="!group.isGroup">{{ titleOf(inst) }}</h2>
+        <h3 v-else>{{ dueOf(inst) ? `${dueOf(inst)} ${titleOf(inst)}` : titleOf(inst) }}</h3>
+        <p class="status">{{ statusLabel(inst.status) }}</p>
+        <p v-if="!group.isGroup && dueOf(inst)" class="status">{{ dueOf(inst) }}</p>
+        <p v-if="inst.snapshot?.with_parent" class="with-parent">{{ t('common.withParentTag') }}</p>
+        <p v-if="inst.snapshot?.xp_reward || inst.snapshot?.coin_reward" class="reward">
+          {{ t('kid.taskReward', { xp: inst.snapshot.xp_reward ?? 0, coins: inst.snapshot.coin_reward ?? 0 }) }}
+        </p>
+        <div class="actions">
+          <button
+            v-if="inst.status === 'pending' || inst.status === 'returned'"
+            type="button"
+            class="big primary"
+            :disabled="busy === inst.id"
+            @click="ready(inst)"
+          >
+            {{ inst.status === 'returned' ? t('kid.taskActions.restart') : t('kid.taskActions.start') }}
+          </button>
+          <button v-if="inst.status === 'in_progress'" type="button" class="big sun" :disabled="busy === inst.id" @click="submit(inst)">
+            {{ t('kid.taskActions.done') }}
+          </button>
+        </div>
       </div>
     </article>
   </main>
@@ -149,6 +200,33 @@ onMounted(load)
 .card h2 {
   margin: 0 0 8px;
   font-size: 20px;
+}
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.group-head {
+  margin-bottom: 4px;
+}
+.group-head h2 {
+  margin-bottom: 4px;
+}
+.group-head .status {
+  margin-bottom: 0;
+}
+.sub.nested {
+  margin-top: 14px;
+  padding: 14px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.sub.nested + .sub.nested {
+  margin-top: 10px;
+}
+.sub:not(.nested) + .sub:not(.nested) {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 .status {
   margin: 0 0 8px;

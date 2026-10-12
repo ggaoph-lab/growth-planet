@@ -3,6 +3,7 @@
 namespace Tests\Feature\Growth;
 
 use App\Modules\Task\Enums\TaskInstanceStatus;
+use App\Modules\Task\Models\TaskCategory;
 use App\Modules\Task\Models\TaskInstance;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -130,5 +131,153 @@ class ParentTaskApiTest extends TestCase
             ->assertJsonPath('data.deleted', true);
 
         $this->assertSoftDeleted('tasks', ['id' => $created['id']]);
+    }
+
+    public function test_subtasks_fold_under_one_title_and_keep_their_own_times(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+
+        $categoryId = $this->actingAsParent($parent)->postJson('/api/v1/parent/task-categories', [
+            'name' => '学习',
+        ])->assertCreated()->json('data.id');
+
+        $created = $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '下午安排',
+            'kind' => 'standard',
+            'start_date' => '2026-10-12',
+            'end_date' => '2026-10-12',
+            'child_id' => $child->id,
+            'category_id' => $categoryId,
+            'xp_reward' => 6,
+            'coin_reward' => 2,
+            'subtasks' => [
+                ['title' => '练琴', 'due_time' => '14:00'],
+                ['title' => '阅读', 'due_time' => '15:30'],
+            ],
+            'schedules' => [['frequency' => 'once', 'due_time' => '14:00']],
+        ])->assertCreated()
+            ->assertJsonPath('data.title', '下午安排')
+            ->assertJsonPath('data.category_id', $categoryId)
+            ->assertJsonPath('data.task_category.name', '学习')
+            ->assertJsonCount(2, 'data.children')
+            ->json('data');
+
+        $this->actingAsParent($parent)->getJson('/api/v1/parent/tasks')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.title', '下午安排')
+            ->assertJsonPath('data.0.children.0.title', '练琴');
+
+        $this->actingAsParent($parent)
+            ->getJson('/api/v1/parent/task-instances?date=2026-10-12&child_id='.$child->id)
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+
+        $instances = TaskInstance::query()->orderBy('id')->get();
+        $this->assertCount(2, $instances);
+        $this->assertFalse($instances->contains('task_id', $created['id']));
+        $titles = $instances->map(fn ($instance) => $instance->snapshot['title'])->sort()->values()->all();
+        $this->assertSame(['练琴', '阅读'], $titles);
+        $this->assertTrue($instances->every(fn ($instance) => ($instance->snapshot['group_title'] ?? null) === '下午安排'));
+        $this->assertTrue($instances->every(fn ($instance) => ($instance->snapshot['group_task_id'] ?? null) === $created['id']));
+
+        $piano = collect($created['children'])->firstWhere('title', '练琴');
+        $reading = collect($created['children'])->firstWhere('title', '阅读');
+
+        $this->actingAsParent($parent)->putJson('/api/v1/parent/tasks/'.$created['id'], [
+            'title' => '放学后',
+            'category_id' => $categoryId,
+            'subtasks' => [
+                ['id' => $reading['id'], 'title' => '阅读', 'due_time' => '16:00'],
+                ['title' => '运动', 'due_time' => '17:00'],
+            ],
+            'schedules' => [['frequency' => 'once']],
+        ])->assertOk()
+            ->assertJsonPath('data.title', '放学后')
+            ->assertJsonCount(2, 'data.children');
+
+        $this->assertSoftDeleted('tasks', ['id' => $piano['id']]);
+
+        $readingInstance = TaskInstance::query()->where('task_id', $reading['id'])->first();
+        $this->assertNotNull($readingInstance);
+        $this->assertSame(TaskInstanceStatus::Pending, $readingInstance->status);
+        $this->assertSame('阅读', $readingInstance->snapshot['title']);
+        $this->assertSame('放学后', $readingInstance->snapshot['group_title']);
+        $this->assertTrue(str_starts_with((string) $readingInstance->snapshot['due_time'], '16:00'));
+
+        $this->actingAsParent($parent)->deleteJson('/api/v1/parent/tasks/'.$created['id'])->assertOk();
+        $this->assertSoftDeleted('tasks', ['id' => $created['id']]);
+        $this->assertSoftDeleted('tasks', ['id' => $reading['id']]);
+    }
+
+    public function test_task_categories_can_be_renamed_and_deleted(): void
+    {
+        ['parent' => $parent] = $this->makeFamily('mama_cat');
+
+        $id = $this->actingAsParent($parent)->postJson('/api/v1/parent/task-categories', [
+            'name' => '家务',
+        ])->assertCreated()
+            ->assertJsonPath('data.name', '家务')
+            ->json('data.id');
+
+        $this->actingAsParent($parent)->putJson('/api/v1/parent/task-categories/'.$id, [
+            'name' => '劳动',
+        ])->assertOk()->assertJsonPath('data.name', '劳动');
+
+        $this->actingAsParent($parent)->postJson('/api/v1/parent/task-categories', [
+            'name' => '劳动',
+        ])->assertStatus(422);
+
+        $this->actingAsParent($parent)->getJson('/api/v1/parent/task-categories')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+
+        $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '扫地',
+            'kind' => 'standard',
+            'start_date' => '2026-10-12',
+            'category_id' => $id,
+            'schedules' => [['frequency' => 'once']],
+        ])->assertCreated()->assertJsonPath('data.task_category.name', '劳动');
+
+        $this->actingAsParent($parent)->deleteJson('/api/v1/parent/task-categories/'.$id)
+            ->assertOk()
+            ->assertJsonPath('data.deleted', true);
+
+        $this->actingAsParent($parent)->getJson('/api/v1/parent/tasks')
+            ->assertOk()
+            ->assertJsonPath('data.0.category_id', null)
+            ->assertJsonPath('data.0.task_category', null);
+
+        $this->assertDatabaseMissing('task_categories', ['id' => $id]);
+    }
+
+    public function test_another_family_cannot_use_a_task_category(): void
+    {
+        ['family' => $familyA] = $this->makeFamily('mama_cat_a');
+        ['parent' => $parentB] = $this->makeFamily('mama_cat_b');
+
+        $category = TaskCategory::query()->create([
+            'family_id' => $familyA->id,
+            'name' => '家务',
+            'sort' => 1,
+        ]);
+
+        $this->actingAsParent($parentB)->getJson('/api/v1/parent/task-categories')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->actingAsParent($parentB)->putJson('/api/v1/parent/task-categories/'.$category->id, [
+            'name' => '偷看',
+        ])->assertNotFound();
+
+        $this->actingAsParent($parentB)->postJson('/api/v1/parent/tasks', [
+            'title' => '越权',
+            'kind' => 'standard',
+            'start_date' => '2026-10-12',
+            'category_id' => $category->id,
+            'schedules' => [['frequency' => 'once']],
+        ])->assertStatus(422);
     }
 }

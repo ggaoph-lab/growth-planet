@@ -156,11 +156,21 @@ export interface TaskSchedule {
   due_time?: string | null
 }
 
+export interface TaskCategory {
+  id: number
+  family_id: number
+  name: string
+  sort: number
+}
+
 export interface ParentTask {
   id: number
   family_id: number
+  parent_id?: number | null
   child_id: number | null
   category?: string | null
+  category_id?: number | null
+  task_category?: TaskCategory | null
   title: string
   icon: string | null
   description: string | null
@@ -176,6 +186,7 @@ export interface ParentTask {
   version: number
   schedules: TaskSchedule[]
   steps?: { id: number; title: string; is_required: boolean; sort: number }[]
+  children?: ParentTask[]
 }
 
 export type HomeworkSubject = '语文' | '数学' | '英语' | '科学' | '道法' | '体育' | '美术' | '音乐' | '其他'
@@ -222,6 +233,8 @@ export interface TaskInstance {
     coin_reward?: number
     due_time?: string | null
     with_parent?: boolean
+    group_title?: string | null
+    group_task_id?: number | null
   } & Record<string, unknown>
   ready_at: string | null
   submitted_at: string | null

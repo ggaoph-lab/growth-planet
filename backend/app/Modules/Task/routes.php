@@ -2,11 +2,17 @@
 
 use App\Modules\Task\Http\Controllers\Kid\TaskController as KidTaskController;
 use App\Modules\Task\Http\Controllers\Parent\HomeworkController;
+use App\Modules\Task\Http\Controllers\Parent\TaskCategoryController;
 use App\Modules\Task\Http\Controllers\Parent\TaskController;
 use App\Modules\Task\Http\Controllers\Parent\TaskInstanceController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
+    Route::get('task-categories', [TaskCategoryController::class, 'index']);
+    Route::post('task-categories', [TaskCategoryController::class, 'store']);
+    Route::put('task-categories/{id}', [TaskCategoryController::class, 'update'])->whereNumber('id');
+    Route::delete('task-categories/{id}', [TaskCategoryController::class, 'destroy'])->whereNumber('id');
+
     Route::get('tasks', [TaskController::class, 'index']);
     Route::post('tasks', [TaskController::class, 'store']);
     Route::put('tasks/{id}', [TaskController::class, 'update'])->whereNumber('id');

@@ -1,21 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
-import type { AiSettings, Family, ParentAccount } from '@/shared/api/types'
+import type { AiSettings, Family, ParentAccount, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
+const route = useRoute()
 const session = useSessionStore()
-const tab = ref<'family' | 'accounts' | 'ai'>('family')
+const tab = ref<'family' | 'accounts' | 'ai' | 'categories'>('family')
 const loading = ref(true)
 const savingFamily = ref(false)
 const savingPassword = ref(false)
 const savingProfile = ref(false)
 const savingAi = ref(false)
 const creatingParent = ref(false)
+const savingCategory = ref(false)
+const categories = ref<TaskCategory[]>([])
+const showCategoryForm = ref(false)
+const editingCategoryId = ref<number | null>(null)
+const categoryName = ref('')
 
 const timezones = Intl.supportedValuesOf('timeZone')
 const localeOptions = computed(() => [
@@ -76,14 +83,78 @@ async function loadAi(): Promise<void> {
   aiForm.clear_qwen_api_key = false
 }
 
+async function loadCategories(): Promise<void> {
+  categories.value = await api.get<TaskCategory[]>('/parent/task-categories')
+}
+
+function syncTabFromRoute(): void {
+  if (route.query.tab === 'categories') tab.value = 'categories'
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
-    await Promise.all([loadFamily(), loadParents(), loadAi()])
+    syncTabFromRoute()
+    await Promise.all([loadFamily(), loadParents(), loadAi(), loadCategories()])
   } catch (e) {
     reportError(e)
   } finally {
     loading.value = false
+  }
+}
+
+function openCreateCategory(): void {
+  editingCategoryId.value = null
+  categoryName.value = ''
+  showCategoryForm.value = true
+}
+
+function openEditCategory(row: TaskCategory): void {
+  editingCategoryId.value = row.id
+  categoryName.value = row.name
+  showCategoryForm.value = true
+}
+
+async function saveCategory(): Promise<void> {
+  const name = categoryName.value.trim()
+  if (!name) {
+    ElMessage.warning(t('parent.settings.categoryNameRequired'))
+    return
+  }
+  savingCategory.value = true
+  try {
+    if (editingCategoryId.value) {
+      await api.put<TaskCategory>(`/parent/task-categories/${editingCategoryId.value}`, { name })
+      ElMessage.success(t('parent.settings.categoryUpdated'))
+    } else {
+      await api.post<TaskCategory>('/parent/task-categories', { name })
+      ElMessage.success(t('parent.settings.categoryCreated'))
+    }
+    showCategoryForm.value = false
+    await loadCategories()
+  } catch (e) {
+    reportError(e)
+  } finally {
+    savingCategory.value = false
+  }
+}
+
+async function deleteCategory(row: TaskCategory): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('parent.settings.deleteCategoryConfirm', { name: row.name }),
+      t('common.delete'),
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/parent/task-categories/${row.id}`)
+    await loadCategories()
+    ElMessage.success(t('parent.settings.categoryDeleted'))
+  } catch (e) {
+    reportError(e)
   }
 }
 
@@ -228,6 +299,8 @@ function sourceLabel(source: string): string {
   return t('parent.settings.aiSourceNone')
 }
 
+watch(() => route.query.tab, syncTabFromRoute)
+
 onMounted(load)
 </script>
 
@@ -316,6 +389,23 @@ onMounted(load)
         </section>
       </el-tab-pane>
 
+      <el-tab-pane :label="t('parent.settings.tabCategories')" name="categories">
+        <p class="hint top">{{ t('parent.settings.categoriesHint') }}</p>
+        <div class="block-head">
+          <h3>{{ t('parent.settings.tabCategories') }}</h3>
+          <el-button type="primary" size="small" @click="openCreateCategory">{{ t('parent.settings.addCategory') }}</el-button>
+        </div>
+        <el-table :data="categories" stripe :empty-text="t('parent.settings.noCategories')">
+          <el-table-column prop="name" :label="t('parent.settings.categoryName')" min-width="160" />
+          <el-table-column :label="t('common.actions')" width="140">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEditCategory(row as TaskCategory)">{{ t('common.edit') }}</el-button>
+              <el-button link type="danger" @click="deleteCategory(row as TaskCategory)">{{ t('common.delete') }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane :label="t('parent.settings.tabAi')" name="ai">
         <p class="hint top">{{ t('parent.settings.aiHint') }}</p>
         <el-form label-position="top" @submit.prevent="saveAi">
@@ -375,6 +465,23 @@ onMounted(load)
         </el-form>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="showCategoryForm"
+      :title="editingCategoryId ? t('parent.settings.editCategory') : t('parent.settings.addCategory')"
+      width="420px"
+      destroy-on-close
+    >
+      <el-form label-position="top" @submit.prevent="saveCategory">
+        <el-form-item :label="t('parent.settings.categoryName')" required>
+          <el-input v-model="categoryName" maxlength="32" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCategoryForm = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="savingCategory" @click="saveCategory">{{ t('common.save') }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="showCreateParent" :title="t('parent.settings.addParent')" width="420px" destroy-on-close>
       <el-form label-position="top">

@@ -4,6 +4,7 @@ import App from './App.vue'
 import { router } from './router'
 import { i18n } from './i18n'
 import './styles/base.css'
+import './styles/element-plus-services'
 
 createApp(App).use(createPinia()).use(router).use(i18n).mount('#app')
 

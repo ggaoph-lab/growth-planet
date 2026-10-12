@@ -10,6 +10,7 @@ use App\Modules\Task\Enums\TaskInstanceStatus;
 use App\Modules\Task\Models\Task;
 use App\Modules\Task\Models\TaskInstance;
 use App\Modules\Task\Models\TaskInstanceStep;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 
@@ -23,9 +24,10 @@ class TaskInstanceGenerator
     public function ensureForChildOnDate(Family $family, ChildProfile $child, string $date): Collection
     {
         $tasks = Task::query()
-            ->with(['steps', 'schedules'])
+            ->with(['steps', 'schedules', 'parent'])
             ->where('family_id', $family->id)
             ->where('is_active', true)
+            ->whereDoesntHave('children')
             ->where(function ($q) use ($child) {
                 $q->whereNull('child_id')->orWhere('child_id', $child->id);
             })
@@ -66,7 +68,7 @@ class TaskInstanceGenerator
                 return in_array($date, $dates, true);
             }
             if ($schedule->frequency === ScheduleFrequency::Weekly) {
-                $weekday = (int) \Carbon\CarbonImmutable::createFromFormat('!Y-m-d', $date, $family->timezone)->dayOfWeekIso();
+                $weekday = (int) CarbonImmutable::createFromFormat('!Y-m-d', $date, $family->timezone)->dayOfWeekIso();
                 $weekdays = $schedule->weekdays ?? [];
 
                 return in_array($weekday, $weekdays, true);
@@ -84,23 +86,7 @@ class TaskInstanceGenerator
             return $existing;
         }
 
-        $snapshot = [
-            'title' => $task->title,
-            'icon' => $task->icon,
-            'xp_reward' => $task->xp_reward,
-            'coin_reward' => $task->coin_reward,
-            'requires_approval' => $task->requires_approval,
-            'requires_self_check' => $task->requires_self_check,
-            'with_parent' => $task->with_parent,
-            'due_time' => $task->schedules->first()?->due_time,
-            'steps' => $task->steps->map(fn ($s) => [
-                'id' => $s->id,
-                'title' => $s->title,
-                'is_required' => $s->is_required,
-                'is_self_check' => $s->is_self_check,
-                'sort' => $s->sort,
-            ])->values()->all(),
-        ];
+        $snapshot = $task->instanceSnapshot();
 
         try {
             $instance = TaskInstance::query()->create([

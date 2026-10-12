@@ -23,8 +23,9 @@ class TaskController
     public function index(): JsonResponse
     {
         $tasks = Task::query()
-            ->with(['steps', 'schedules'])
+            ->with(['steps', 'schedules', 'taskCategory', 'children.schedules', 'children.steps'])
             ->where('family_id', $this->context->familyId())
+            ->whereNull('parent_id')
             ->orderByDesc('id')
             ->get();
 
@@ -39,6 +40,7 @@ class TaskController
                 'family_id' => $this->context->familyId(),
                 'child_id' => $data['child_id'] ?? null,
                 'category' => $data['category'] ?? null,
+                'category_id' => $data['category_id'] ?? null,
                 'title' => $data['title'],
                 'icon' => $data['icon'] ?? null,
                 'description' => $data['description'] ?? null,
@@ -58,8 +60,9 @@ class TaskController
 
             $this->syncSteps($task, $data['steps'] ?? []);
             $this->syncSchedules($task, $data['schedules'] ?? [['frequency' => 'daily']]);
+            $this->syncSubtasks($task, $data['subtasks'] ?? []);
 
-            return $task->load(['steps', 'schedules']);
+            return $this->present($task);
         });
 
         return response()->json(['data' => $task], 201);
@@ -71,7 +74,7 @@ class TaskController
         $data = $this->validateTask($request, partial: true);
 
         $task = DB::transaction(function () use ($task, $data) {
-            $task->fill(collect($data)->except(['steps', 'schedules'])->all());
+            $task->fill(collect($data)->except(['steps', 'schedules', 'subtasks'])->all());
             $task->version++;
             $task->save();
 
@@ -81,11 +84,22 @@ class TaskController
             if (array_key_exists('schedules', $data)) {
                 $this->syncSchedules($task, $data['schedules'] ?? []);
             }
+            if (array_key_exists('subtasks', $data) && $task->parent_id === null) {
+                $this->syncSubtasks($task, $data['subtasks'] ?? []);
+            } elseif ($task->parent_id === null) {
+                $this->propagateToChildren($task);
+            }
 
-            $task->load(['steps', 'schedules']);
-            $this->refreshPendingInstances($task);
+            if ($task->children()->exists()) {
+                TaskInstance::query()
+                    ->where('task_id', $task->id)
+                    ->where('status', TaskInstanceStatus::Pending)
+                    ->delete();
+            } else {
+                $this->refreshPendingInstances($task);
+            }
 
-            return $task;
+            return $this->present($task);
         });
 
         return response()->json(['data' => $task]);
@@ -93,8 +107,15 @@ class TaskController
 
     public function destroy(int $id): JsonResponse
     {
-        $task = Task::query()->where('family_id', $this->context->familyId())->findOrFail($id);
-        $task->delete();
+        $task = Task::query()
+            ->where('family_id', $this->context->familyId())
+            ->whereNull('parent_id')
+            ->findOrFail($id);
+
+        DB::transaction(function () use ($task) {
+            Task::query()->where('parent_id', $task->id)->delete();
+            $task->delete();
+        });
 
         return response()->json(['data' => ['deleted' => true]]);
     }
@@ -104,9 +125,16 @@ class TaskController
      */
     private function validateTask(Request $request, bool $partial = false): array
     {
+        $familyId = $this->context->familyId();
+
         return $request->validate([
             'child_id' => ['nullable', 'integer'],
             'category' => ['nullable', 'string', 'max:32'],
+            'category_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('task_categories', 'id')->where('family_id', $familyId),
+            ],
             'title' => [$partial ? 'sometimes' : 'required', 'string', 'max:128'],
             'icon' => ['nullable', 'string', 'max:32'],
             'description' => ['nullable', 'string'],
@@ -131,6 +159,10 @@ class TaskController
             'schedules.*.dates' => ['nullable', 'array'],
             'schedules.*.dates.*' => ['date'],
             'schedules.*.due_time' => ['nullable', 'date_format:H:i'],
+            'subtasks' => ['nullable', 'array'],
+            'subtasks.*.id' => ['nullable', 'integer'],
+            'subtasks.*.title' => ['required', 'string', 'max:128'],
+            'subtasks.*.due_time' => ['nullable', 'date_format:H:i'],
         ]);
     }
 
@@ -170,28 +202,121 @@ class TaskController
                 'due_time' => $dueTime,
             ]);
         }
+        $task->unsetRelation('schedules');
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $subtasks
+     */
+    private function syncSubtasks(Task $parent, array $subtasks): void
+    {
+        $keptIds = [];
+        foreach (array_values($subtasks) as $sub) {
+            $child = null;
+            if (! empty($sub['id'])) {
+                $child = Task::query()
+                    ->where('family_id', $parent->family_id)
+                    ->where('parent_id', $parent->id)
+                    ->whereKey($sub['id'])
+                    ->first();
+            }
+
+            if ($child === null) {
+                $child = Task::query()->create([
+                    ...$this->inheritedAttributes($parent),
+                    'family_id' => $parent->family_id,
+                    'parent_id' => $parent->id,
+                    'title' => $sub['title'],
+                    'version' => 1,
+                    'created_by' => $parent->created_by,
+                ]);
+            } else {
+                $child->fill([
+                    ...$this->inheritedAttributes($parent),
+                    'title' => $sub['title'],
+                ]);
+                $child->version++;
+                $child->save();
+            }
+
+            $this->syncSchedules($child, $this->schedulesForSubtask($parent, $sub['due_time'] ?? null));
+            $this->refreshPendingInstances($child);
+            $keptIds[] = $child->id;
+        }
+
+        Task::query()
+            ->where('parent_id', $parent->id)
+            ->when($keptIds !== [], fn ($q) => $q->whereNotIn('id', $keptIds))
+            ->delete();
+    }
+
+    private function propagateToChildren(Task $parent): void
+    {
+        $children = Task::query()->where('parent_id', $parent->id)->get();
+        foreach ($children as $child) {
+            $child->fill($this->inheritedAttributes($parent));
+            $child->version++;
+            $child->save();
+            $this->syncSchedules($child, $this->schedulesForSubtask($parent, $child->schedules()->value('due_time')));
+            $this->refreshPendingInstances($child);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function inheritedAttributes(Task $parent): array
+    {
+        return [
+            'child_id' => $parent->child_id,
+            'category' => $parent->category,
+            'category_id' => $parent->category_id,
+            'kind' => TaskKind::Standard,
+            'start_date' => $parent->start_date,
+            'end_date' => $parent->end_date,
+            'xp_reward' => $parent->xp_reward,
+            'coin_reward' => $parent->coin_reward,
+            'requires_approval' => $parent->requires_approval,
+            'requires_self_check' => $parent->requires_self_check,
+            'with_parent' => $parent->with_parent,
+            'is_active' => $parent->is_active,
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function schedulesForSubtask(Task $parent, mixed $dueTime): array
+    {
+        $parent->load('schedules');
+        $base = $parent->schedules->first();
+        $frequency = $base?->frequency?->value ?? ScheduleFrequency::Once->value;
+
+        if (is_string($dueTime) && strlen($dueTime) >= 5) {
+            $dueTime = substr($dueTime, 0, 5);
+        } else {
+            $dueTime = null;
+        }
+
+        return [[
+            'frequency' => $frequency,
+            'weekdays' => $base?->weekdays,
+            'dates' => $base?->dates,
+            'due_time' => $dueTime,
+        ]];
+    }
+
+    private function present(Task $task): Task
+    {
+        return $task->load(['steps', 'schedules', 'taskCategory', 'children.schedules', 'children.steps']);
     }
 
     private function refreshPendingInstances(Task $task): void
     {
-        $dueTime = $task->schedules->first()?->due_time;
-        $snapshot = [
-            'title' => $task->title,
-            'icon' => $task->icon,
-            'xp_reward' => $task->xp_reward,
-            'coin_reward' => $task->coin_reward,
-            'requires_approval' => $task->requires_approval,
-            'requires_self_check' => $task->requires_self_check,
-            'with_parent' => $task->with_parent,
-            'due_time' => $dueTime,
-            'steps' => $task->steps->map(fn ($s) => [
-                'id' => $s->id,
-                'title' => $s->title,
-                'is_required' => $s->is_required,
-                'is_self_check' => $s->is_self_check,
-                'sort' => $s->sort,
-            ])->values()->all(),
-        ];
+        $task->unsetRelation('schedules');
+        $task->unsetRelation('steps');
+        $task->unsetRelation('parent');
+        $snapshot = $task->instanceSnapshot();
 
         $instances = TaskInstance::query()
             ->where('task_id', $task->id)

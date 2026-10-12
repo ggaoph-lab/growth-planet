@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
@@ -12,6 +13,7 @@ import type {
   HomeworkSubject,
   ParentChild,
   ParentTask,
+  TaskCategory,
   TaskInstance,
   TaskSchedule,
 } from '@/shared/api/types'
@@ -20,8 +22,12 @@ import { avatarEmoji } from '@/shared/avatars'
 const { t } = useI18n()
 const tab = ref<'tasks' | 'instances'>('tasks')
 const tasks = ref<ParentTask[]>([])
+const categories = ref<TaskCategory[]>([])
 const instances = ref<TaskInstance[]>([])
 const children = ref<ParentChild[]>([])
+const categoryFilterId = ref<number | null>(null)
+const detailTask = ref<ParentTask | null>(null)
+const openInstanceGroups = ref<Record<string, boolean>>({})
 const loading = ref(true)
 const saving = ref(false)
 const instanceDate = ref('')
@@ -36,6 +42,7 @@ const subjects: HomeworkSubject[] = ['语文', '数学', '英语', '科学', '�
 type TaskForm = {
   title: string
   child_id: number | undefined
+  category_id: number | null
   start_date: string
   due_time: string | null
   recurring: boolean
@@ -44,6 +51,7 @@ type TaskForm = {
   coin_reward: number
   with_parent: boolean
   steps: { title: string }[]
+  subtasks: { id?: number; title: string; due_time: string | null }[]
   kind: ParentTask['kind']
 }
 
@@ -65,6 +73,8 @@ function blankForm(): TaskForm {
     coin_reward: 5,
     with_parent: false,
     steps: [],
+    subtasks: [],
+    category_id: null,
     kind: 'standard',
   }
 }
@@ -169,7 +179,20 @@ function buildSchedules(f: TaskForm): TaskSchedule[] {
   ]
 }
 
+function subtaskTimes(task: ParentTask): string[] {
+  const times = (task.children ?? [])
+    .map((child) => timeOnly(child.schedules?.[0]?.due_time ?? undefined))
+    .filter((time) => time.length > 0)
+  return [...new Set(times)].sort()
+}
+
 function scheduleSummary(task: ParentTask): string {
+  const children = task.children ?? []
+  if (children.length > 0) {
+    const times = subtaskTimes(task)
+    const timePart = times.length ? ` ${times.join('、')}` : ''
+    return `${t('common.subtaskCount', { n: children.length })}${timePart}`
+  }
   const schedule = task.schedules?.[0]
   const time = timeOnly(schedule?.due_time ?? undefined)
   const timePart = time ? ` ${time}` : ''
@@ -182,6 +205,14 @@ function scheduleSummary(task: ParentTask): string {
   return `${t('common.scheduleOnce')}${timePart}`
 }
 
+function detailSubtasks(task: ParentTask): ParentTask[] {
+  return [...(task.children ?? [])].sort((a, b) => {
+    const left = timeOnly(a.schedules?.[0]?.due_time ?? undefined) || '99:99'
+    const right = timeOnly(b.schedules?.[0]?.due_time ?? undefined) || '99:99'
+    return left.localeCompare(right) || a.id - b.id
+  })
+}
+
 function taskDateLabel(task: ParentTask): string {
   const start = dateOnly(task.start_date)
   const end = dateOnly(task.end_date)
@@ -189,8 +220,89 @@ function taskDateLabel(task: ParentTask): string {
   return start || '—'
 }
 
+const visibleTasks = computed(() => {
+  if (categoryFilterId.value == null) return tasks.value
+  return tasks.value.filter((task) => task.category_id === categoryFilterId.value)
+})
+
+const activeCategoryName = computed(() => {
+  if (categoryFilterId.value == null) return ''
+  return (
+    categories.value.find((category) => category.id === categoryFilterId.value)?.name ??
+    tasks.value.find((task) => task.category_id === categoryFilterId.value)?.task_category?.name ??
+    ''
+  )
+})
+
+interface InstanceGroup {
+  key: string
+  title: string
+  folded: boolean
+  items: TaskInstance[]
+}
+
+const instanceGroups = computed<InstanceGroup[]>(() => {
+  const groups: InstanceGroup[] = []
+  const index = new Map<string, InstanceGroup>()
+  for (const inst of instances.value) {
+    const groupId = inst.snapshot?.group_task_id
+    if (typeof groupId === 'number') {
+      const key = `g-${groupId}`
+      let group = index.get(key)
+      if (!group) {
+        const title = inst.snapshot?.group_title
+        group = {
+          key,
+          title: typeof title === 'string' && title ? title : t('common.taskDefault'),
+          folded: true,
+          items: [],
+        }
+        index.set(key, group)
+        groups.push(group)
+      }
+      group.items.push(inst)
+    } else {
+      groups.push({ key: `i-${inst.id}`, title: '', folded: false, items: [inst] })
+    }
+  }
+  for (const group of groups) {
+    if (!group.folded) continue
+    group.items.sort((a, b) => instanceDueTime(a).localeCompare(instanceDueTime(b)))
+  }
+  return groups
+})
+
+function toggleCategory(task: ParentTask): void {
+  const id = task.category_id
+  if (id == null) return
+  categoryFilterId.value = categoryFilterId.value === id ? null : id
+}
+
+function openDetail(task: ParentTask): void {
+  detailTask.value = task
+}
+
+function editFromDetail(): void {
+  const task = detailTask.value
+  if (!task) return
+  detailTask.value = null
+  openEdit(task)
+}
+
+function isInstanceGroupOpen(key: string): boolean {
+  return openInstanceGroups.value[key] ?? false
+}
+
+function toggleInstanceGroup(key: string): void {
+  openInstanceGroups.value = { ...openInstanceGroups.value, [key]: !isInstanceGroupOpen(key) }
+}
+
 async function loadTasks(): Promise<void> {
   tasks.value = await api.get<ParentTask[]>('/parent/tasks')
+}
+
+async function loadCategories(): Promise<void> {
+  categories.value = await api.get<TaskCategory[]>('/parent/task-categories')
 }
 
 async function loadInstances(): Promise<void> {
@@ -202,7 +314,7 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     children.value = await api.get<ParentChild[]>('/parent/children')
-    await Promise.all([loadTasks(), loadInstances()])
+    await Promise.all([loadTasks(), loadCategories(), loadInstances()])
   } finally {
     loading.value = false
   }
@@ -233,6 +345,12 @@ function openEdit(task: ParentTask): void {
     coin_reward: task.coin_reward,
     with_parent: !!task.with_parent,
     steps: (task.steps ?? []).map((s) => ({ title: s.title })),
+    subtasks: (task.children ?? []).map((child) => ({
+      id: child.id,
+      title: child.title,
+      due_time: timeOnly(child.schedules?.[0]?.due_time ?? undefined) || null,
+    })),
+    category_id: task.category_id ?? null,
     kind: task.kind,
   }
   showForm.value = true
@@ -249,6 +367,10 @@ function validateForm(): boolean {
   }
   if (form.value.recurring && !form.value.end_date) {
     ElMessage.warning(t('common.fillTaskEndDate'))
+    return false
+  }
+  if (form.value.subtasks.some((sub) => !sub.title.trim())) {
+    ElMessage.warning(t('common.fillSubtaskTitle'))
     return false
   }
   return true
@@ -270,6 +392,12 @@ async function saveTask(): Promise<void> {
       with_parent: form.value.with_parent,
       schedules: buildSchedules(form.value),
       child_id: form.value.child_id ?? null,
+      category_id: form.value.category_id ?? null,
+      subtasks: form.value.subtasks.map((sub) => ({
+        ...(sub.id ? { id: sub.id } : {}),
+        title: sub.title.trim(),
+        due_time: sub.due_time || null,
+      })),
       ...(form.value.kind === 'stepped'
         ? { steps: form.value.steps.filter((s) => s.title.trim()).map((s) => ({ title: s.title.trim() })) }
         : {}),
@@ -313,6 +441,14 @@ async function deleteTask(task: ParentTask): Promise<void> {
   } catch (e) {
     reportError(e)
   }
+}
+
+function addSubtask(): void {
+  form.value.subtasks.push({ title: '', due_time: null })
+}
+
+function removeSubtask(index: number): void {
+  form.value.subtasks.splice(index, 1)
 }
 
 function addStep(): void {
@@ -477,9 +613,34 @@ onMounted(load)
         <div class="toolbar">
           <el-button type="primary" @click="openCreate">{{ t('common.createTask') }}</el-button>
           <el-button @click="openHomework">{{ t('common.importHomework') }}</el-button>
+          <el-tag v-if="activeCategoryName" closable @close="categoryFilterId = null">
+            {{ t('common.filterByCategory', { name: activeCategoryName }) }}
+          </el-tag>
         </div>
-        <el-table :data="tasks" stripe :empty-text="t('common.noTasksYet')">
-          <el-table-column prop="title" :label="t('common.title')" min-width="140" />
+        <el-table :data="visibleTasks" stripe :empty-text="t('common.noTasksYet')">
+          <el-table-column :label="t('common.title')" min-width="160">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row as ParentTask)">
+                {{ (row as ParentTask).title }}
+              </el-button>
+              <div v-if="(row as ParentTask).children?.length" class="muted">
+                {{ t('common.subtaskCount', { n: (row as ParentTask).children!.length }) }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('common.taskCategory')" width="110">
+            <template #default="{ row }">
+              <el-button
+                v-if="(row as ParentTask).task_category"
+                link
+                :type="categoryFilterId === (row as ParentTask).category_id ? 'primary' : 'info'"
+                @click="toggleCategory(row as ParentTask)"
+              >
+                {{ (row as ParentTask).task_category!.name }}
+              </el-button>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="t('common.homeworkSubject')" width="88">
             <template #default="{ row }">{{ row.category || '—' }}</template>
           </el-table-column>
@@ -503,9 +664,10 @@ onMounted(load)
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('growth.coins')" width="120">
+          <el-table-column :label="t('growth.coins')" width="150">
             <template #default="{ row }">
               {{ (row as ParentTask).xp_reward }} XP · {{ (row as ParentTask).coin_reward }} {{ t('common.coinShort') }}
+              <span v-if="(row as ParentTask).children?.length"> {{ t('common.rewardEach') }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('common.actions')" width="140" fixed="right">
@@ -524,19 +686,33 @@ onMounted(load)
           <el-button @click="openHomework">{{ t('common.importHomework') }}</el-button>
         </div>
         <div v-if="instances.length === 0" class="empty">{{ t('common.noInstancesOnDate') }}</div>
-        <el-card v-for="inst in instances" :key="inst.id" shadow="never" class="inst">
-          <div class="inst-head">
-            <span v-if="childMap.get(inst.child_id)" class="av">{{ avatarEmoji(childMap.get(inst.child_id)!.avatar) }}</span>
-            <div>
-              <div class="inst-title">{{ instanceTitle(inst) }}</div>
-              <div class="inst-meta">
-                {{ childMap.get(inst.child_id)?.nickname ?? inst.child_id }} · {{ inst.task_date }}
-                <template v-if="instanceDueTime(inst)"> · {{ instanceDueTime(inst) }}</template>
+        <el-card v-for="group in instanceGroups" :key="group.key" shadow="never" class="inst">
+          <button
+            v-if="group.folded"
+            type="button"
+            class="group-toggle"
+            @click="toggleInstanceGroup(group.key)"
+          >
+            <span class="inst-title">{{ group.title }}</span>
+            <span class="inst-meta">{{ t('common.subtaskCount', { n: group.items.length }) }}</span>
+            <span class="group-action">
+              {{ isInstanceGroupOpen(group.key) ? t('common.hideDetail') : t('common.viewDetail') }}
+            </span>
+          </button>
+          <div v-if="!group.folded || isInstanceGroupOpen(group.key)" :class="{ 'group-items': group.folded }">
+            <div v-for="inst in group.items" :key="inst.id" class="inst-head" :class="{ nested: group.folded }">
+              <span v-if="childMap.get(inst.child_id)" class="av">{{ avatarEmoji(childMap.get(inst.child_id)!.avatar) }}</span>
+              <div>
+                <div class="inst-title">{{ instanceTitle(inst) }}</div>
+                <div class="inst-meta">
+                  {{ childMap.get(inst.child_id)?.nickname ?? inst.child_id }} · {{ inst.task_date }}
+                  <template v-if="instanceDueTime(inst)"> · {{ instanceDueTime(inst) }}</template>
+                </div>
               </div>
-            </div>
-            <div class="inst-tags">
-              <el-tag v-if="inst.snapshot?.with_parent" size="small" type="warning">{{ t('common.withParentTag') }}</el-tag>
-              <el-tag size="small">{{ taskStatusLabel(inst.status) }}</el-tag>
+              <div class="inst-tags">
+                <el-tag v-if="inst.snapshot?.with_parent" size="small" type="warning">{{ t('common.withParentTag') }}</el-tag>
+                <el-tag size="small">{{ taskStatusLabel(inst.status) }}</el-tag>
+              </div>
             </div>
           </div>
         </el-card>
@@ -546,12 +722,27 @@ onMounted(load)
     <el-dialog
       v-model="showForm"
       :title="editingId ? t('common.editTask') : t('common.createTask')"
-      width="480px"
+      width="560px"
       destroy-on-close
     >
       <el-form label-width="100px">
         <el-form-item :label="t('common.title')" required>
           <el-input v-model="form.title" maxlength="128" />
+        </el-form-item>
+        <el-form-item :label="t('common.taskCategory')">
+          <el-select
+            v-model="form.category_id"
+            clearable
+            :placeholder="t('common.taskCategoryPlaceholder')"
+            style="width: 100%"
+          >
+            <el-option v-for="category in categories" :key="category.id" :label="category.name" :value="category.id" />
+          </el-select>
+          <div class="hint-inline">
+            <RouterLink class="settings-link" :to="{ name: 'parent-family', query: { tab: 'categories' } }">
+              {{ t('common.manageCategories') }}
+            </RouterLink>
+          </div>
         </el-form-item>
         <el-form-item :label="t('common.assignChild')">
           <el-select v-model="form.child_id" clearable :placeholder="t('common.allChildrenPlaceholder')">
@@ -565,7 +756,7 @@ onMounted(load)
         <el-form-item :label="t('common.taskStartDate')" required>
           <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
         </el-form-item>
-        <el-form-item :label="t('common.taskTime')">
+        <el-form-item v-if="form.subtasks.length === 0" :label="t('common.taskTime')">
           <el-time-picker
             v-model="form.due_time"
             format="HH:mm"
@@ -594,6 +785,17 @@ onMounted(load)
           <el-input-number v-model="form.coin_reward" :min="0" />
         </el-form-item>
 
+        <div class="hw-items-head">
+          <strong>{{ t('common.subtasks') }}</strong>
+          <el-button size="small" @click="addSubtask">{{ t('common.addSubtask') }}</el-button>
+        </div>
+        <p class="hint">{{ t('common.subtaskHint') }}</p>
+        <div v-for="(sub, index) in form.subtasks" :key="sub.id ?? `new-${index}`" class="subtask-row">
+          <el-input v-model="sub.title" :placeholder="t('common.subtaskTitle')" maxlength="128" />
+          <el-time-picker v-model="sub.due_time" format="HH:mm" value-format="HH:mm" clearable />
+          <el-button link type="danger" @click="removeSubtask(index)">{{ t('common.delete') }}</el-button>
+        </div>
+
         <template v-if="form.kind === 'stepped'">
           <div class="hw-items-head">
             <strong>{{ t('common.homeworkItems') }}</strong>
@@ -610,6 +812,58 @@ onMounted(load)
         <el-button type="primary" :loading="saving" @click="saveTask">
           {{ editingId ? t('common.save') : t('common.create') }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      :model-value="detailTask !== null"
+      :title="detailTask?.title || t('common.viewDetail')"
+      width="480px"
+      @update:model-value="(open: boolean) => { if (!open) detailTask = null }"
+    >
+      <template v-if="detailTask">
+        <dl class="detail-list">
+          <div>
+            <dt>{{ t('common.taskCategory') }}</dt>
+            <dd>{{ detailTask.task_category?.name || '—' }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('common.taskDate') }}</dt>
+            <dd>{{ taskDateLabel(detailTask) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('common.taskTime') }}</dt>
+            <dd>{{ scheduleSummary(detailTask) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('parent.dashboard.children') }}</dt>
+            <dd>
+              {{
+                detailTask.child_id
+                  ? childMap.get(detailTask.child_id)?.nickname ?? detailTask.child_id
+                  : t('common.wholeFamily')
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('growth.coins') }}</dt>
+            <dd>
+              {{ detailTask.xp_reward }} XP · {{ detailTask.coin_reward }} {{ t('common.coinShort') }}
+              <template v-if="detailTask.children?.length"> {{ t('common.rewardEach') }}</template>
+            </dd>
+          </div>
+        </dl>
+        <div v-if="detailSubtasks(detailTask).length" class="detail-subs">
+          <strong>{{ t('common.subtasks') }}</strong>
+          <div v-for="sub in detailSubtasks(detailTask)" :key="sub.id" class="detail-sub">
+            <span>{{ timeOnly(sub.schedules?.[0]?.due_time ?? undefined) || '—' }}</span>
+            <span>{{ sub.title }}</span>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="detailTask = null">{{ t('common.close') }}</el-button>
+        <el-button type="primary" @click="editFromDetail">{{ t('common.edit') }}</el-button>
       </template>
     </el-dialog>
 
@@ -802,5 +1056,71 @@ onMounted(load)
   gap: 8px;
   font-size: 13px;
   color: #6b6f85;
+}
+.settings-link {
+  color: #5b8def;
+  text-decoration: none;
+}
+.subtask-row {
+  display: grid;
+  grid-template-columns: 1fr 130px auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.group-action {
+  margin-left: auto;
+  color: #5b8def;
+  font-size: 13px;
+}
+.group-items {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+.inst-head.nested {
+  padding-top: 8px;
+  border-top: 1px solid #eef0f5;
+}
+.detail-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.detail-list div {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+}
+.detail-list dt {
+  margin: 0;
+  color: #9a9db0;
+}
+.detail-list dd {
+  margin: 0;
+}
+.detail-subs {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+.detail-sub {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f7f8fb;
 }
 </style>
