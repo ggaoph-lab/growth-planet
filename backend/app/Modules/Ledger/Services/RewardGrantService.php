@@ -16,6 +16,7 @@ use App\Modules\Ledger\Models\RewardPolicy;
 use App\Modules\Ledger\Models\XpAccount;
 use App\Modules\Ledger\Models\XpLedgerEntry;
 use Illuminate\Database\QueryException;
+
 class RewardGrantService
 {
     public function __construct(

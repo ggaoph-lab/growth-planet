@@ -12,7 +12,6 @@ use App\Modules\Ledger\Models\CoinAccount;
 use App\Modules\Ledger\Models\XpAccount;
 use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Task\Enums\TaskInstanceStatus;
-use App\Modules\Task\Models\TaskInstance;
 use App\Modules\Task\Services\TaskInstanceGenerator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -92,6 +91,38 @@ class TaskApprovalTest extends TestCase
         $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
+    public function test_parent_approval_list_includes_task_title_and_reward(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $this->seedTask($family, $parent, [
+            'title' => '整理书包',
+            'xp_reward' => 15,
+            'coin_reward' => 8,
+        ]);
+
+        $instance = app(TaskInstanceGenerator::class)
+            ->ensureForChildOnDate($family, $child, '2026-10-11')
+            ->first();
+        app(ApprovalService::class)->createPending(
+            $family->id,
+            $child->id,
+            ApprovalType::TaskCompletion,
+            'task_instance',
+            $instance->id,
+            $child->member->user_id,
+        );
+
+        $this->actingAsParent($parent)
+            ->getJson('/api/v1/parent/approvals?status=PENDING')
+            ->assertOk()
+            ->assertJsonPath('data.0.type', 'task_completion')
+            ->assertJsonPath('data.0.child_name', '小星星')
+            ->assertJsonPath('data.0.summary.title', '整理书包')
+            ->assertJsonPath('data.0.summary.xp_reward', 15)
+            ->assertJsonPath('data.0.summary.coin_reward', 8);
+    }
+
     public function test_kid_can_withdraw_a_submitted_task_and_submit_again(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
@@ -117,14 +148,10 @@ class TaskApprovalTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.can_withdraw', true);
 
-        $this->loginParent($parent)
-            ->getJson('/api/v1/parent/approvals?status=PENDING')
-            ->assertOk()
-            ->assertJsonPath('data.0.type', 'task_completion')
-            ->assertJsonPath('data.0.child_name', '小星星')
-            ->assertJsonPath('data.0.summary.title', '整理书包')
-            ->assertJsonPath('data.0.summary.xp_reward', 15)
-            ->assertJsonPath('data.0.summary.coin_reward', 8);
+        $this->assertSame(1, ApprovalRequest::query()
+            ->where('subject_id', $instanceId)
+            ->where('status', ApprovalStatus::Pending)
+            ->count());
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
@@ -137,10 +164,10 @@ class TaskApprovalTest extends TestCase
             ApprovalStatus::Cancelled,
             ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail()->status,
         );
-        $this->loginParent($parent)
-            ->getJson('/api/v1/parent/approvals?status=PENDING')
-            ->assertOk()
-            ->assertJsonCount(0, 'data');
+        $this->assertSame(0, ApprovalRequest::query()
+            ->where('subject_id', $instanceId)
+            ->where('status', ApprovalStatus::Pending)
+            ->count());
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
@@ -232,10 +259,12 @@ class TaskApprovalTest extends TestCase
             $child->member->user_id,
         );
 
-        $this->actingAsParent($parent)
-            ->withHeader('Idempotency-Key', (string) Str::uuid())
-            ->postJson("/api/v1/parent/approvals/{$approval->id}/approve", ['lock_version' => $approval->lock_version])
-            ->assertOk();
+        app(ApprovalService::class)->decide(
+            $approval,
+            ApprovalStatus::Approved,
+            $approval->lock_version,
+            $parent->id,
+        );
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())

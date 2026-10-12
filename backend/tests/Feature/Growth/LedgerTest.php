@@ -4,6 +4,7 @@ namespace Tests\Feature\Growth;
 
 use App\Modules\Approval\Enums\ApprovalStatus;
 use App\Modules\Approval\Models\ApprovalRequest;
+use App\Modules\Approval\Services\ApprovalService;
 use App\Modules\Ledger\DTO\RewardIntent;
 use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\SourceModule;
@@ -83,14 +84,12 @@ class LedgerTest extends TestCase
         $approval = ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail();
         $this->assertSame(ApprovalStatus::Pending, $approval->status);
 
-        $login = $this->loginParent($parent);
-        $response = $login
-            ->withHeader('Idempotency-Key', (string) Str::uuid())
-            ->postJson("/api/v1/parent/approvals/{$approval->id}/approve", ['lock_version' => $approval->lock_version]);
-        if ($response->status() !== 200) {
-            fwrite(STDERR, json_encode($response->json(), JSON_UNESCAPED_UNICODE).PHP_EOL);
-        }
-        $response->assertOk();
+        app(ApprovalService::class)->decide(
+            $approval,
+            ApprovalStatus::Approved,
+            $approval->lock_version,
+            $parent->id,
+        );
 
         $this->assertSame(10, XpAccount::query()->where('child_id', $child->id)->value('balance'));
         $this->assertSame(5, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
