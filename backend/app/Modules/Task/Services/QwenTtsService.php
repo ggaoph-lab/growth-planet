@@ -2,6 +2,7 @@
 
 namespace App\Modules\Task\Services;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -33,43 +34,183 @@ class QwenTtsService
             return null;
         }
 
-        $cacheKey = 'tts:v6:'.hash('sha256', $text);
-        $cached = Cache::get($cacheKey);
-        if (is_array($cached) && isset($cached['audio_base64'], $cached['mime'], $cached['provider'])) {
-            // Drop cached Piper samples after removing that provider.
-            if (($cached['provider'] ?? '') === 'piper') {
-                Cache::forget($cacheKey);
-            } else {
+        $cacheKey = $this->cacheKey($text);
+        $cached = $this->readCache($cacheKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $lock = Cache::lock($cacheKey.':lock', 25);
+        try {
+            $lock->block(12);
+        } catch (LockTimeoutException) {
+            return $this->readCache($cacheKey);
+        }
+
+        try {
+            $cached = $this->readCache($cacheKey);
+            if ($cached !== null) {
                 return $cached;
+            }
+
+            $cfg = $this->ai->resolve($familyId);
+            $apiKey = trim($cfg['qwen_api_key']);
+
+            $result = $this->synthesizeEdge($text);
+
+            if ($result === null && $apiKey !== '') {
+                $result = $this->synthesizeQwenTts($text, $apiKey)
+                    ?? $this->synthesizeCosyVoice($text, $apiKey);
+            }
+
+            $result ??= $this->synthesizeGoogleTranslate($text)
+                ?? $this->synthesizeYoudao($text)
+                ?? $this->synthesizeBaiduTranslate($text);
+
+            if ($result === null) {
+                return null;
+            }
+
+            $this->storeCache($cacheKey, $result);
+            Log::info('tts.ready', ['provider' => $result['provider']]);
+
+            return $result;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Fill the read-aloud cache for the tasks on screen, one Edge connection for the batch.
+     *
+     * @param  list<string>  $texts
+     * @return list<array{text: string, audio_base64: string|null, mime: string|null, provider: string|null}>
+     */
+    public function warm(array $texts): array
+    {
+        $ordered = [];
+        $aliases = [];
+        foreach ($texts as $raw) {
+            $raw = trim((string) $raw);
+            $text = $this->normalizeText($raw);
+            if ($text === '') {
+                continue;
+            }
+            $aliases[$text][] = $raw;
+            if (isset($ordered[$text])) {
+                continue;
+            }
+            $ordered[$text] = [
+                'text' => $raw,
+                'audio_base64' => null,
+                'mime' => null,
+                'provider' => null,
+            ];
+            if (count($ordered) >= 8) {
+                break;
             }
         }
 
-        $cfg = $this->ai->resolve($familyId);
-        $apiKey = trim($cfg['qwen_api_key']);
+        $pending = [];
+        $locks = [];
+        foreach (array_keys($ordered) as $text) {
+            $cacheKey = $this->cacheKey($text);
+            $cached = $this->readCache($cacheKey);
+            if ($cached !== null) {
+                $ordered[$text] = array_merge($ordered[$text], $cached);
 
-        $result = $this->synthesizeEdge($text);
+                continue;
+            }
 
-        if ($result === null && $apiKey !== '') {
-            $result = $this->synthesizeQwenTts($text, $apiKey)
-                ?? $this->synthesizeCosyVoice($text, $apiKey);
+            $lock = Cache::lock($cacheKey.':lock', 25);
+            try {
+                $lock->block(8);
+            } catch (LockTimeoutException) {
+                $cached = $this->readCache($cacheKey);
+                if ($cached !== null) {
+                    $ordered[$text] = array_merge($ordered[$text], $cached);
+                }
+
+                continue;
+            }
+
+            $cached = $this->readCache($cacheKey);
+            if ($cached !== null) {
+                $lock->release();
+                $ordered[$text] = array_merge($ordered[$text], $cached);
+
+                continue;
+            }
+
+            $pending[] = $text;
+            $locks[$text] = $lock;
         }
 
-        $result ??= $this->synthesizeGoogleTranslate($text)
-            ?? $this->synthesizeYoudao($text)
-            ?? $this->synthesizeBaiduTranslate($text);
+        if ($pending !== []) {
+            $voice = (string) config('services.tts.edge_voice', 'zh-CN-XiaoxiaoNeural');
+            try {
+                $this->edge->synthesizeMany($pending, $voice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks): void {
+                    $text = $pending[$index];
+                    if ($audio !== null) {
+                        $this->storeCache($this->cacheKey($text), $audio);
+                        $ordered[$text] = array_merge($ordered[$text], $audio);
+                        Log::info('tts.ready', ['provider' => $audio['provider']]);
+                    }
+                    if (isset($locks[$text])) {
+                        $locks[$text]->release();
+                        unset($locks[$text]);
+                    }
+                });
+            } finally {
+                foreach ($locks as $lock) {
+                    $lock->release();
+                }
+            }
+        }
 
-        if ($result === null) {
+        $out = [];
+        foreach ($ordered as $text => $row) {
+            foreach (array_unique($aliases[$text] ?? [$row['text']]) as $raw) {
+                $out[] = array_merge($row, ['text' => $raw]);
+            }
+        }
+
+        return $out;
+    }
+
+    private function cacheKey(string $text): string
+    {
+        return 'tts:v6:'.hash('sha256', $text);
+    }
+
+    /**
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    private function readCache(string $cacheKey): ?array
+    {
+        $cached = Cache::get($cacheKey);
+        if (! is_array($cached) || ! isset($cached['audio_base64'], $cached['mime'], $cached['provider'])) {
+            return null;
+        }
+        if (($cached['provider'] ?? '') === 'piper') {
+            Cache::forget($cacheKey);
+
             return null;
         }
 
-        // Keep neural audio. Do not pin a public-proxy sample after a transient Edge failure.
-        if (in_array($result['provider'], ['edge_tts', 'qwen', 'cosyvoice'], true)) {
-            Cache::put($cacheKey, $result, now()->addMinutes(30));
+        return $cached;
+    }
+
+    /**
+     * @param  array{audio_base64: string, mime: string, provider: string}  $result
+     */
+    private function storeCache(string $cacheKey, array $result): void
+    {
+        if (! in_array($result['provider'], ['edge_tts', 'qwen', 'cosyvoice'], true)) {
+            return;
         }
 
-        Log::info('tts.ready', ['provider' => $result['provider']]);
-
-        return $result;
+        Cache::put($cacheKey, $result, now()->addMinutes(30));
     }
 
     public function qwenConfigured(int $familyId): bool
@@ -477,6 +618,7 @@ class QwenTtsService
         if (strlen($body) < 4) {
             return false;
         }
+
         // ID3 tag or MPEG frame sync.
         return str_starts_with($body, 'ID3') || (ord($body[0]) === 0xFF && (ord($body[1]) & 0xE0) === 0xE0);
     }

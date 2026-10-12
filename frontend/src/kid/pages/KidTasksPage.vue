@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
 import type { TaskInstance } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
-import { canSpeak, speakTask, stopSpeaking } from '@/shared/speak'
+import { canSpeak, speakTask, stopSpeaking, taskPhrase, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 const { t, locale } = useI18n()
@@ -183,6 +183,12 @@ async function load(): Promise<void> {
   error.value = ''
   try {
     instances.value = await api.get<TaskInstance[]>('/kid/tasks')
+    const phrases: string[] = []
+    for (const inst of instances.value) {
+      phrases.push(taskPhrase(titleOf(inst), descriptionOf(inst)))
+      for (const step of stepsOf(inst)) phrases.push(taskPhrase(step.title))
+    }
+    warmPhrases(phrases)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.loadFailed')
   } finally {

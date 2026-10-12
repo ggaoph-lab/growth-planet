@@ -51,11 +51,34 @@ export function stopSpeaking(): void {
   haltPlayback()
 }
 
-function buildPhrase(title: string, description?: string | null): string {
+export function taskPhrase(title: string, description?: string | null): string {
   const parts = [title.trim()]
   const detail = typeof description === 'string' ? description.trim() : ''
   if (detail) parts.push(detail)
   return parts.filter(Boolean).join('。')
+}
+
+const preparedAudio = new Map<string, { base64: string; mime: string }>()
+
+function rememberAudio(text: string, base64: string, mime: string): void {
+  if (!text || !base64) return
+  preparedAudio.set(text, { base64, mime })
+}
+
+/** Generate task lines in the background so a tap can play without waiting on Edge. */
+export function warmPhrases(phrases: string[]): void {
+  const texts = [...new Set(phrases.map((phrase) => phrase.trim()).filter(Boolean))].filter((phrase) => !preparedAudio.has(phrase)).slice(0, 8)
+  if (!texts.length) return
+  void api
+    .post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', { texts })
+    .then((data) => {
+      for (const item of data.items ?? []) {
+        if (item.text && item.audio_base64 && item.mime) rememberAudio(item.text, item.audio_base64, item.mime)
+      }
+    })
+    .catch(() => {
+      /* a tap still calls /kid/tts */
+    })
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
@@ -187,12 +210,19 @@ async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
  * Browser speech only when the API has no audio.
  */
 export async function speakTask(title: string, description?: string | null, lang = 'zh-CN'): Promise<void> {
-  const text = buildPhrase(title, description)
+  const text = taskPhrase(title, description)
   if (!text) return
 
   speakEpoch += 1
   const epoch = speakEpoch
   haltPlayback()
+
+  const ready = preparedAudio.get(text)
+  if (ready) {
+    const mime = ready.mime.split(';')[0]?.trim() || 'audio/mpeg'
+    await playBlob(base64ToBlob(ready.base64, mime), epoch)
+    return
+  }
 
   try {
     const result = await api.post<{
@@ -205,6 +235,7 @@ export async function speakTask(title: string, description?: string | null, lang
     if (epoch !== speakEpoch) return
 
     if (result.available && result.audio_base64 && result.mime) {
+      rememberAudio(text, result.audio_base64, result.mime)
       const mime = result.mime.split(';')[0]?.trim() || 'audio/mpeg'
       const blob = base64ToBlob(result.audio_base64, mime)
       const ok = await playBlob(blob, epoch)

@@ -56,4 +56,27 @@ class TtsController
             ],
         ]);
     }
+
+    public function warm(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'texts' => ['required', 'array', 'max:8'],
+            'texts.*' => ['required', 'string', 'max:500'],
+        ]);
+
+        $child = $this->context->child();
+        $throttleKey = 'kid-tts:'.$child->id;
+        if (RateLimiter::tooManyAttempts($throttleKey, 40)) {
+            throw ApiException::tooManyAttempts(RateLimiter::availableIn($throttleKey));
+        }
+        RateLimiter::hit($throttleKey, 60);
+
+        $items = $this->tts->warm($data['texts']);
+
+        return response()->json([
+            'data' => [
+                'items' => $items,
+            ],
+        ]);
+    }
 }

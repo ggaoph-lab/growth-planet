@@ -87,7 +87,7 @@
 
 | 资源 | 家长 | 孩子 |
 |---|---|---|
-| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`、`due_time`、`end_date`、`with_parent`；更新可同步 steps/schedules 并刷新 pending 实例快照）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`，默认无需审核）、`/parent/task-instances?date=`、`POST /parent/task-instances/{id}/approve|return` 🔁（仍可用，任务页已去掉审核入口） | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit` 🔁 |
+| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`、`due_time`、`end_date`、`with_parent`；更新可同步 steps/schedules 并刷新 pending 实例快照）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`，默认无需审核）、`/parent/task-instances?date=`、`POST /parent/task-instances/{id}/approve|return` 🔁（仍可用，任务页已去掉审核入口） | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，同一条 Edge 连接）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit` 🔁 |
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
 | 账本 | `GET /parent/children/{id}/ledger?asset=xp|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus` 🔁🔐 | `GET /kid/wallet` |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |

@@ -43,18 +43,42 @@ class EdgeTtsClient
      */
     public function synthesize(string $text, string $voice = 'zh-CN-XiaoxiaoNeural'): ?array
     {
-        $text = trim($text);
-        if ($text === '') {
-            return null;
+        $batch = $this->synthesizeMany([$text], $voice);
+
+        return $batch[0] ?? null;
+    }
+
+    /**
+     * Several lines on one WebSocket. The handshake is the slow part, so a
+     * page of tasks should not open a new connection per sentence.
+     *
+     * @param  list<string>  $texts
+     * @param  (callable(int, array{audio_base64: string, mime: string, provider: string}|null): void)|null  $onAudio
+     * @return list<array{audio_base64: string, mime: string, provider: string}|null>
+     */
+    public function synthesizeMany(array $texts, string $voice = 'zh-CN-XiaoxiaoNeural', ?callable $onAudio = null): array
+    {
+        $texts = array_values(array_filter(array_map(static fn ($text) => trim((string) $text), $texts), static fn ($text) => $text !== ''));
+        $results = array_fill(0, count($texts), null);
+        if ($texts === []) {
+            return [];
         }
 
         foreach (self::ENDPOINTS as $endpoint) {
+            $pending = [];
+            foreach ($results as $i => $done) {
+                if ($done === null) {
+                    $pending[] = $i;
+                }
+            }
+            if ($pending === []) {
+                break;
+            }
+
             $tokenBefore = null;
             $connectFailed = false;
             foreach ([1, 2] as $attempt) {
                 $tokenNow = $this->generateSecMsGec();
-                // A 403 that did not move the 5-minute token is not clock skew.
-                // Connect/DNS failures still get one retry.
                 if ($attempt === 2 && $tokenBefore === $tokenNow && ! $connectFailed) {
                     break;
                 }
@@ -62,21 +86,18 @@ class EdgeTtsClient
                 $connectFailed = false;
 
                 try {
-                    $audio = $this->synthesizeOnce($text, $voice, $endpoint);
-                    if ($audio !== null && strlen($audio) >= 64 && $this->looksLikeMp3($audio)) {
-                        return [
-                            'audio_base64' => base64_encode($audio),
-                            'mime' => 'audio/mpeg',
-                            'provider' => 'edge_tts',
-                        ];
-                    }
-                    Log::warning('tts.edge_empty', [
-                        'host' => $endpoint['host'],
-                        'bytes' => is_string($audio) ? strlen($audio) : 0,
-                        'head' => is_string($audio) ? bin2hex(substr($audio, 0, 24)) : '',
-                    ]);
+                    $this->synthesizeManyOnce(
+                        $endpoint,
+                        $voice,
+                        $pending,
+                        $texts,
+                        $results,
+                        $onAudio,
+                    );
+                    break;
                 } catch (\Throwable $e) {
-                    $connectFailed = str_contains($e->getMessage(), 'edge_tts_connect');
+                    $connectFailed = str_contains($e->getMessage(), 'edge_tts_connect')
+                        || str_contains($e->getMessage(), 'edge_tts_handshake');
                     Log::warning($attempt === 1 ? 'tts.edge_failed' : 'tts.edge_retry_failed', [
                         'host' => $endpoint['host'],
                         'error' => $e->getMessage(),
@@ -89,13 +110,17 @@ class EdgeTtsClient
             }
         }
 
-        return null;
+        return $results;
     }
 
     /**
      * @param  array{host: string, path: string, key_param: string}  $endpoint
+     * @param  list<int>  $pending
+     * @param  list<string>  $texts
+     * @param  list<array{audio_base64: string, mime: string, provider: string}|null>  $results
+     * @param  (callable(int, array{audio_base64: string, mime: string, provider: string}|null): void)|null  $onAudio
      */
-    private function synthesizeOnce(string $text, string $voice, array $endpoint): ?string
+    private function synthesizeManyOnce(array $endpoint, string $voice, array $pending, array $texts, array &$results, ?callable $onAudio): void
     {
         $connectionId = bin2hex(random_bytes(16));
         $secMsGec = $this->generateSecMsGec();
@@ -134,7 +159,7 @@ class EdgeTtsClient
             ."Sec-CH-UA: \"Microsoft Edge\";v=\"{$major}\", \"Chromium\";v=\"{$major}\", \"Not A(Brand\";v=\"24\"\r\n"
             ."Sec-CH-UA-Mobile: ?0\r\n"
             ."Sec-CH-UA-Platform: \"Windows\"\r\n"
-            ."Sec-CH-UA-Full-Version: \"".self::CHROMIUM_FULL_VERSION."\"\r\n"
+            .'Sec-CH-UA-Full-Version: "'.self::CHROMIUM_FULL_VERSION."\"\r\n"
             ."Cookie: muid={$muid};\r\n"
             ."\r\n";
 
@@ -166,18 +191,60 @@ class EdgeTtsClient
 
         $this->writeTextFrame($fp, $configMsg);
 
-        $ssml = $this->buildSsml($text, $voice);
+        try {
+            foreach ($pending as $index) {
+                if (($results[$index] ?? null) !== null) {
+                    continue;
+                }
+                $audio = $this->readTurn($fp, $this->ssmlMessage($texts[$index], $voice, bin2hex(random_bytes(16))));
+                $packed = null;
+                if ($audio !== null && strlen($audio) >= 64 && $this->looksLikeMp3($audio)) {
+                    $packed = [
+                        'audio_base64' => base64_encode($audio),
+                        'mime' => 'audio/mpeg',
+                        'provider' => 'edge_tts',
+                    ];
+                    $results[$index] = $packed;
+                } else {
+                    Log::warning('tts.edge_empty', [
+                        'host' => $endpoint['host'],
+                        'bytes' => is_string($audio) ? strlen($audio) : 0,
+                        'head' => is_string($audio) ? bin2hex(substr((string) $audio, 0, 24)) : '',
+                    ]);
+                }
+                if ($onAudio !== null) {
+                    $onAudio($index, $packed);
+                }
+                if ($packed === null) {
+                    break;
+                }
+            }
+        } finally {
+            fclose($fp);
+        }
+    }
+
+    private function ssmlMessage(string $text, string $voice, string $connectionId): string
+    {
+        $ts = $this->dateToString();
         // Trailing Z after timestamp is intentional (Edge service quirk; see edge-tts).
-        $ssmlMsg = "X-RequestId:{$connectionId}\r\n"
+
+        return "X-RequestId:{$connectionId}\r\n"
             ."Content-Type:application/ssml+xml\r\n"
             ."X-Timestamp:{$ts}Z\r\n"
             ."Path:ssml\r\n\r\n"
-            .$ssml;
+            .$this->buildSsml($text, $voice);
+    }
 
+    /**
+     * @return string|null raw mp3 bytes
+     */
+    private function readTurn($fp, string $ssmlMsg): ?string
+    {
         $this->writeTextFrame($fp, $ssmlMsg);
 
         $chunks = [];
-        $deadline = microtime(true) + 30.0;
+        $deadline = microtime(true) + 12.0;
 
         while (microtime(true) < $deadline) {
             $frame = $this->readFrame($fp);
@@ -195,6 +262,7 @@ class EdgeTtsClient
                 if (str_contains($payload, 'Path:turn.end')) {
                     break;
                 }
+
                 continue;
             }
 
@@ -228,8 +296,6 @@ class EdgeTtsClient
                 }
             }
         }
-
-        fclose($fp);
 
         if ($chunks === []) {
             return null;
