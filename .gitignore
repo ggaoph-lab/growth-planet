@@ -37,3 +37,9 @@ backups/
 *.sql.gz
 *.age
 .tools/
+
+# Cursor frontend auto-preview hook state
+.cursor/.frontend-dirty
+.cursor/.frontend-preview.log
+.cursor/.frontend-preview-mounted
+.cursor/.frontend-build-stamp

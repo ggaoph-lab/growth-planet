@@ -3,6 +3,7 @@
 namespace App\Modules\Task\Services;
 
 use App\Modules\Task\Contracts\HomeworkLlmClient;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -72,10 +73,17 @@ class GeminiClient implements HomeworkLlmClient
             ];
         }
 
-        $response = Http::timeout($timeout)
-            ->withHeaders(['x-goog-api-key' => $apiKey])
-            ->acceptJson()
-            ->post($url, $payload);
+        try {
+            $response = Http::timeout($timeout)
+                ->withHeaders(['x-goog-api-key' => $apiKey])
+                ->acceptJson()
+                ->post($url, $payload);
+        } catch (ConnectionException $e) {
+            HomeworkLlmTimeoutException::throwIfTimeout($this->name(), $e);
+            Log::warning('gemini.connection_failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
 
         if (! $response->successful()) {
             Log::warning('gemini.chat_failed', [

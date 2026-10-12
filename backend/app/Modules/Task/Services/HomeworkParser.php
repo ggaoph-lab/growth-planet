@@ -7,7 +7,8 @@ use Carbon\CarbonImmutable;
 
 /**
  * Turns messy teacher homework text into a structured preview.
- * Tries Gemini/Qwen when configured; falls back to numbered-list rules.
+ * Uses the selected engine, switches to the other only on connection timeout,
+ * then falls back to numbered-list rules.
  */
 class HomeworkParser
 {
@@ -49,14 +50,58 @@ class HomeworkParser
             return $this->emptyResult($text, $todayDate, '原文为空', $familyId);
         }
 
-        foreach ($this->llm->clientsFor($provider, $familyId) as $entry) {
-            $ai = $this->parseWithClient($entry['client'], $entry['config'], $text, $todayDate, $familyId);
+        [$primary, $fallback] = $this->llm->attemptsFor($provider, $familyId);
+        if ($primary === null) {
+            $requested = strtolower(trim((string) $provider));
+            $choice = $this->llm->chosenProvider($provider, $familyId);
+            $note = null;
+            if (in_array($choice, ['gemini', 'qwen'], true)) {
+                $note = in_array($requested, ['gemini', 'qwen'], true)
+                    ? '所选解析引擎未配置密钥，已使用规则解析，请仔细核对'
+                    : '默认解析引擎未配置密钥，已使用规则解析，请仔细核对';
+            }
+
+            return $this->parseWithRules($text, $todayDate, $familyId, $note);
+        }
+
+        try {
+            $ai = $this->parseWithClient($primary['client'], $primary['config'], $text, $todayDate, $familyId);
             if ($ai !== null) {
                 return $ai;
             }
+        } catch (HomeworkLlmTimeoutException $timeout) {
+            if ($fallback !== null) {
+                try {
+                    $ai = $this->parseWithClient($fallback['client'], $fallback['config'], $text, $todayDate, $familyId);
+                    if ($ai !== null) {
+                        return $this->annotateTimeoutFallback($ai, $timeout->provider, $fallback['client']->name());
+                    }
+                } catch (HomeworkLlmTimeoutException) {
+                    return $this->parseWithRules($text, $todayDate, $familyId, '连接超时，已使用规则解析，请仔细核对');
+                }
+            }
+
+            return $this->parseWithRules($text, $todayDate, $familyId, '连接超时，已使用规则解析，请仔细核对');
         }
 
-        return $this->parseWithRules($text, $todayDate, $familyId);
+        $label = $primary['client']->name() === 'qwen' ? '千问' : 'Gemini';
+
+        return $this->parseWithRules($text, $todayDate, $familyId, $label.' 解析失败，已使用规则解析，请仔细核对');
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    private function annotateTimeoutFallback(array $result, string $from, string $to): array
+    {
+        $fromLabel = $from === 'qwen' ? '千问' : 'Gemini';
+        $toLabel = $to === 'qwen' ? '千问' : 'Gemini';
+        $extra = $fromLabel.' 连接超时，已改用'.$toLabel;
+        $notes = trim((string) ($result['notes'] ?? ''));
+        $result['notes'] = mb_substr($notes === '' ? $extra : $notes.' '.$extra, 0, 500);
+
+        return $result;
     }
 
     /**
@@ -99,7 +144,7 @@ PROMPT;
     /**
      * @return array<string, mixed>
      */
-    private function parseWithRules(string $text, string $todayDate, ?int $familyId = null): array
+    private function parseWithRules(string $text, string $todayDate, ?int $familyId = null, ?string $failureNote = null): array
     {
         $lines = preg_split("/\n+/", $text) ?: [];
         $lines = array_values(array_filter(array_map('trim', $lines), fn ($l) => $l !== ''));
@@ -129,13 +174,13 @@ PROMPT;
 
         $items = array_slice($items, 0, self::MAX_ITEMS);
         if ($items === []) {
-            return $this->emptyResult($text, $todayDate, '未能识别出作业条目，请手动编辑', $familyId);
+            return $this->emptyResult($text, $todayDate, $failureNote ?? '未能识别出作业条目，请手动编辑', $familyId);
         }
 
         $available = $this->llm->configuredProviders($familyId);
-        $notes = $available === []
+        $notes = $failureNote ?? ($available === []
             ? '未配置 Gemini / 千问密钥，已使用规则解析，请仔细核对'
-            : 'AI 解析失败，已使用规则解析，请仔细核对';
+            : 'AI 解析失败，已使用规则解析，请仔细核对');
 
         $payload = [
             'subject' => $subject,

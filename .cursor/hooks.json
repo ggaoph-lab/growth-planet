@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/frontend-preview.sh debounce",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": ".cursor/hooks/frontend-preview.sh now",
+        "timeout": 120
+      }
+    ]
+  }
+}

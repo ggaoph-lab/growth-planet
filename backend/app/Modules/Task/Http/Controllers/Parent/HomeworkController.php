@@ -58,6 +58,7 @@ class HomeworkController
             'coin_reward' => ['required', 'integer', 'min:0', 'max:50'],
             'requires_approval' => ['nullable', 'boolean'],
             'requires_self_check' => ['nullable', 'boolean'],
+            'with_parent' => ['nullable', 'boolean'],
             'source_text' => ['nullable', 'string', 'max:8000'],
         ]);
 

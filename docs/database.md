@@ -249,7 +249,7 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 ## 6. 任务与习惯（第二阶段）
 
 ### `tasks`（任务定义）
-`id`、`family_id`、`child_id NULL`（NULL=全部孩子）、`category`、`title`、`icon`、`description`、`kind`（`standard`/`stepped`/`long_term`）、`start_date`、`end_date NULL`、`estimated_minutes NULL`、`xp_reward`、`coin_reward`、`requires_approval`、`requires_self_check`、`is_active`、`version`、`created_by`、timestamps、deleted_at。
+`id`、`family_id`、`child_id NULL`（NULL=全部孩子）、`category`、`title`、`icon`、`description`、`kind`（`standard`/`stepped`/`long_term`）、`start_date`、`end_date NULL`、`estimated_minutes NULL`、`xp_reward`、`coin_reward`、`requires_approval`、`requires_self_check`、`with_parent`（与家长协作完成）、`is_active`、`version`、`created_by`、timestamps、deleted_at。
 
 ### `task_steps`
 `id`、`task_id`、`title`、`is_required`、`is_self_check`（如"检查有没有漏题"）、`sort`。

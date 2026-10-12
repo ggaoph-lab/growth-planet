@@ -23,7 +23,17 @@ make frontend-install
 make frontend-build    # 构建到 frontend/dist，由 nginx 提供
 ```
 
-打开 <http://localhost:8088>。
+**预览地址固定为** <http://localhost:8088>（不要用 5173）。
+
+如果你在跑生产 compose（`compose.prod.yaml`），前端默认打在镜像里。本地预览固定：
+
+**http://localhost:8088**
+
+Agent 改完 `frontend/` 后会经 Cursor hooks 自动构建并挂到 nginx；你只需刷新 8088。也可手动：
+
+```bash
+make preview         # 构建 dist + 挂到 nginx
+```
 
 创建家庭与首位家长（交互式输入密码，至少 10 位，系统不内置任何默认密码）：
 
@@ -37,13 +47,10 @@ make family
 make seed-demo
 ```
 
-前端开发热更新：`make frontend-dev`，访问 <http://localhost:5173>（`/api`、`/sanctum` 代理到 8088）。
-
 | 端口 | 用途 |
 |---|---|
-| 8088 | Nginx（SPA + API），可在 `.env` 的 `HTTP_PORT` 修改 |
+| **8088** | **唯一预览入口**（Nginx：SPA + API），可在 `.env` / `.env.prod` 的 `HTTP_PORT` 修改 |
 | 33061 | MySQL，仅绑定 127.0.0.1，可在 `MYSQL_HOST_PORT` 修改 |
-| 5173 | Vite 开发服务器（可选） |
 
 > 无法访问 Docker Hub 时，可先从镜像源拉取 `mysql:8.4`、`php:8.4-fpm-bookworm` 并 `docker tag` 为原名；PHP 基础镜像也可通过 `.env` 的 `PHP_BASE` 指定。
 

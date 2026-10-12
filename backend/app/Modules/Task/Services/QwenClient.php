@@ -3,6 +3,7 @@
 namespace App\Modules\Task\Services;
 
 use App\Modules\Task\Contracts\HomeworkLlmClient;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -33,15 +34,22 @@ class QwenClient implements HomeworkLlmClient
         $model = (string) ($config['model'] ?? config('services.qwen.model', 'qwen-turbo'));
         $timeout = max(5, (int) ($config['timeout'] ?? config('services.qwen.timeout', 30)));
 
-        $response = Http::timeout($timeout)
-            ->withToken($apiKey)
-            ->acceptJson()
-            ->post($baseUrl.'/chat/completions', [
-                'model' => $model,
-                'messages' => $messages,
-                'temperature' => 0.2,
-                'response_format' => ['type' => 'json_object'],
-            ]);
+        try {
+            $response = Http::timeout($timeout)
+                ->withToken($apiKey)
+                ->acceptJson()
+                ->post($baseUrl.'/chat/completions', [
+                    'model' => $model,
+                    'messages' => $messages,
+                    'temperature' => 0.2,
+                    'response_format' => ['type' => 'json_object'],
+                ]);
+        } catch (ConnectionException $e) {
+            HomeworkLlmTimeoutException::throwIfTimeout($this->name(), $e);
+            Log::warning('qwen.connection_failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
 
         if (! $response->successful()) {
             Log::warning('qwen.chat_failed', [

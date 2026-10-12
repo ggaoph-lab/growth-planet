@@ -87,6 +87,7 @@ onMounted(load)
     <article v-for="inst in instances" :key="inst.id" class="card">
       <h2>{{ titleOf(inst) }}</h2>
       <p class="status">{{ statusLabel(inst.status) }}</p>
+      <p v-if="inst.snapshot?.with_parent" class="with-parent">{{ t('common.withParentTag') }}</p>
       <p v-if="inst.snapshot?.xp_reward || inst.snapshot?.coin_reward" class="reward">
         {{ t('kid.taskReward', { xp: inst.snapshot.xp_reward ?? 0, coins: inst.snapshot.coin_reward ?? 0 }) }}
       </p>
@@ -152,6 +153,16 @@ onMounted(load)
 .status {
   margin: 0 0 8px;
   opacity: 0.85;
+}
+.with-parent {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 196, 86, 0.25);
+  color: #ffe7a8;
+  font-size: 13px;
+  font-weight: 600;
 }
 .reward {
   margin: 0 0 16px;

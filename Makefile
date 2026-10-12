@@ -1,11 +1,13 @@
 COMPOSE      := docker compose
 COMPOSE_PROD := docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod
+# Local preview: prod stack + bind-mount host frontend/dist so 8088 picks up rebuilds.
+COMPOSE_PREVIEW := $(COMPOSE_PROD) -f compose.preview.yaml
 APP          := $(COMPOSE) exec app
 RUN_APP      := $(COMPOSE) run --rm --no-deps app
 PROD_APP     := $(COMPOSE_PROD) exec app
 
 .PHONY: help init up down build ps logs shell composer artisan key migrate fresh seed-demo \
-        test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev family \
+        test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev preview family \
         prod-init prod-check prod-build prod-up prod-down prod-ps prod-logs prod-migrate prod-artisan \
         prod-preflight prod-family prod-backup
 
@@ -18,6 +20,8 @@ help:
 	@echo "  make family          交互式创建家庭与首位家长"
 	@echo "  make test            运行后端与前端全部测试"
 	@echo "  make frontend-build  构建前端到 frontend/dist"
+	@echo "  make preview         构建前端并把 dist 挂到 nginx（预览固定 http://localhost:8088）"
+	@echo "  make frontend-dev    监听前端改动并写入 dist（需先 make preview）"
 	@echo ""
 	@echo "Production (Oracle Cloud ARM / compose.prod.yaml)"
 	@echo "  make prod-init       生成 deploy/compose/.env.prod"
@@ -92,6 +96,14 @@ frontend-install:
 frontend-build:
 	cd frontend && npm run build
 
+# Build SPA and mount ./frontend/dist into the running nginx (fixes prod-image-baked frontend).
+# After this, http://localhost:8088 always serves your local dist.
+# Cursor hooks also call .cursor/hooks/frontend-preview.sh after frontend edits.
+preview:
+	FORCE=1 .cursor/hooks/frontend-preview.sh now force
+	@echo "Preview ready: http://localhost:8088"
+
+# Watch-rebuild into frontend/dist. Run `make preview` once first so nginx mounts dist.
 frontend-dev:
 	cd frontend && npm run dev
 

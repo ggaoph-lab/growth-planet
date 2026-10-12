@@ -40,7 +40,7 @@ return [
     ],
 
     'homework_llm' => [
-        // auto = Gemini first (Singapore-friendly), then Qwen; or force gemini|qwen|rules
+        // auto = Gemini when configured, else Qwen. The other engine is used only on connection timeout.
         'provider' => env('HOMEWORK_LLM_PROVIDER', 'auto'),
     ],
 

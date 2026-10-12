@@ -145,10 +145,12 @@ export interface ApprovalRequest {
 export type TaskKind = 'standard' | 'stepped' | 'long_term'
 export type TaskInstanceStatus = 'pending' | 'in_progress' | 'submitted' | 'returned' | 'completed' | 'cancelled'
 
+export type ScheduleFrequency = 'daily' | 'weekly' | 'dates' | 'once'
+
 export interface TaskSchedule {
   id?: number
   task_id?: number
-  frequency: string
+  frequency: ScheduleFrequency | string
   weekdays?: number[] | null
   dates?: string[] | null
   due_time?: string | null
@@ -169,6 +171,7 @@ export interface ParentTask {
   coin_reward: number
   requires_approval: boolean
   requires_self_check: boolean
+  with_parent: boolean
   is_active: boolean
   version: number
   schedules: TaskSchedule[]
@@ -213,7 +216,13 @@ export interface TaskInstance {
   task_date: string
   status: TaskInstanceStatus
   lock_version: number
-  snapshot: { title?: string; xp_reward?: number; coin_reward?: number } & Record<string, unknown>
+  snapshot: {
+    title?: string
+    xp_reward?: number
+    coin_reward?: number
+    due_time?: string | null
+    with_parent?: boolean
+  } & Record<string, unknown>
   ready_at: string | null
   submitted_at: string | null
   completed_at: string | null

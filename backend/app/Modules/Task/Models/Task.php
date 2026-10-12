@@ -21,6 +21,7 @@ class Task extends Model
             'end_date' => 'date',
             'requires_approval' => 'boolean',
             'requires_self_check' => 'boolean',
+            'with_parent' => 'boolean',
             'is_active' => 'boolean',
         ];
     }

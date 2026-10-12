@@ -91,6 +91,8 @@ class TaskInstanceGenerator
             'coin_reward' => $task->coin_reward,
             'requires_approval' => $task->requires_approval,
             'requires_self_check' => $task->requires_self_check,
+            'with_parent' => $task->with_parent,
+            'due_time' => $task->schedules->first()?->due_time,
             'steps' => $task->steps->map(fn ($s) => [
                 'id' => $s->id,
                 'title' => $s->title,

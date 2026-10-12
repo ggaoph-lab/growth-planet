@@ -276,7 +276,7 @@ onMounted(load)
                   v-if="!row.is_self"
                   link
                   type="danger"
-                  @click="deleteParent(row)"
+                  @click="deleteParent(row as ParentAccount)"
                 >
                   {{ t('common.delete') }}
                 </el-button>
@@ -321,11 +321,12 @@ onMounted(load)
         <el-form label-position="top" @submit.prevent="saveAi">
           <el-form-item :label="t('parent.settings.aiProvider')">
             <el-select v-model="aiForm.provider" style="width: 100%">
-              <el-option :label="t('common.homeworkProviderAuto')" value="auto" />
+              <el-option :label="t('parent.settings.aiProviderAuto')" value="auto" />
               <el-option label="Gemini" value="gemini" />
               <el-option :label="t('common.homeworkParserQwen')" value="qwen" />
               <el-option :label="t('common.homeworkParserRules')" value="rules" />
             </el-select>
+            <div class="hint">{{ t('parent.settings.aiProviderHint') }}</div>
           </el-form-item>
 
           <el-divider content-position="left">Gemini</el-divider>

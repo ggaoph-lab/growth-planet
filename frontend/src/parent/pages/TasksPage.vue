@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type {
-  ApprovalRequest,
+  AiSettings,
   HomeworkConfirmResult,
   HomeworkItemPreview,
   HomeworkParseResult,
@@ -13,6 +13,7 @@ import type {
   ParentChild,
   ParentTask,
   TaskInstance,
+  TaskSchedule,
 } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
 
@@ -21,37 +22,61 @@ const tab = ref<'tasks' | 'instances'>('tasks')
 const tasks = ref<ParentTask[]>([])
 const instances = ref<TaskInstance[]>([])
 const children = ref<ParentChild[]>([])
-const pendingApprovals = ref<ApprovalRequest[]>([])
 const loading = ref(true)
-const creating = ref(false)
+const saving = ref(false)
 const instanceDate = ref('')
-const showCreate = ref(false)
+const showForm = ref(false)
+const editingId = ref<number | null>(null)
 const showHomework = ref(false)
 
 const childMap = computed(() => new Map(children.value.map((c) => [c.id, c])))
-const approvalByInstance = computed(() => {
-  const m = new Map<number, ApprovalRequest>()
-  for (const a of pendingApprovals.value) {
-    if (a.subject_type === 'task_instance') m.set(a.subject_id, a)
-  }
-  return m
-})
 
 const subjects: HomeworkSubject[] = ['语文', '数学', '英语', '科学', '道法', '体育', '美术', '音乐', '其他']
 
-const form = ref({
-  title: '',
-  child_id: undefined as number | undefined,
-  xp_reward: 10,
-  coin_reward: 5,
-  requires_approval: true,
-})
+type TaskForm = {
+  title: string
+  child_id: number | undefined
+  start_date: string
+  due_time: string | null
+  recurring: boolean
+  end_date: string
+  xp_reward: number
+  coin_reward: number
+  with_parent: boolean
+  steps: { title: string }[]
+  kind: ParentTask['kind']
+}
+
+const activeChildren = computed(() => children.value.filter((c) => c.status === 'active'))
+
+function soleActiveChildId(): number | undefined {
+  return activeChildren.value.length === 1 ? activeChildren.value[0]?.id : undefined
+}
+
+function blankForm(): TaskForm {
+  return {
+    title: '',
+    child_id: soleActiveChildId(),
+    start_date: todayIso(),
+    due_time: '13:20',
+    recurring: false,
+    end_date: '',
+    xp_reward: 10,
+    coin_reward: 5,
+    with_parent: false,
+    steps: [],
+    kind: 'standard',
+  }
+}
+
+const form = ref<TaskForm>(blankForm())
 
 const homeworkRaw = ref('')
 const homeworkParsing = ref(false)
 const homeworkConfirming = ref(false)
 const homeworkPreview = ref<HomeworkParseResult | null>(null)
 const homeworkChildId = ref<number | undefined>(undefined)
+const homeworkWithParent = ref(false)
 const homeworkProvider = ref<'auto' | 'gemini' | 'qwen' | 'rules'>('auto')
 const homeworkDraft = ref({
   subject: '其他' as HomeworkSubject | string,
@@ -60,7 +85,6 @@ const homeworkDraft = ref({
   items: [] as HomeworkItemPreview[],
   xp_reward: 0,
   coin_reward: 0,
-  requires_approval: true,
   notes: null as string | null,
   parser: 'rules' as HomeworkParserKind | string,
   ai_configured: false,
@@ -99,7 +123,70 @@ function taskStatusLabel(status: string): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function dateOnly(value: string | null | undefined): string {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
+
+function timeOnly(value: string | null | undefined): string {
+  if (!value) return ''
+  return value.slice(0, 5)
+}
+
+/** ISO weekday: 1=Mon … 7=Sun */
+function isoWeekday(dateStr: string): number {
+  const parts = dateStr.split('-').map((x) => Number(x))
+  const y = parts[0] ?? 0
+  const m = parts[1] ?? 1
+  const d = parts[2] ?? 1
+  const day = new Date(y, m - 1, d).getDay()
+  return day === 0 ? 7 : day
+}
+
+function buildSchedules(f: TaskForm): TaskSchedule[] {
+  const due = f.due_time || null
+  if (f.recurring) {
+    return [
+      {
+        frequency: 'weekly',
+        weekdays: [isoWeekday(f.start_date)],
+        due_time: due,
+      },
+    ]
+  }
+  return [
+    {
+      frequency: 'once',
+      due_time: due,
+    },
+  ]
+}
+
+function scheduleSummary(task: ParentTask): string {
+  const schedule = task.schedules?.[0]
+  const time = timeOnly(schedule?.due_time ?? undefined)
+  const timePart = time ? ` ${time}` : ''
+  if (schedule?.frequency === 'weekly') {
+    return `${t('common.scheduleWeekly')}${timePart}`
+  }
+  if (schedule?.frequency === 'daily') {
+    return `${t('common.daily')}${timePart}`
+  }
+  return `${t('common.scheduleOnce')}${timePart}`
+}
+
+function taskDateLabel(task: ParentTask): string {
+  const start = dateOnly(task.start_date)
+  const end = dateOnly(task.end_date)
+  if (end && end !== start) return `${start} → ${end}`
+  return start || '—'
 }
 
 async function loadTasks(): Promise<void> {
@@ -108,12 +195,7 @@ async function loadTasks(): Promise<void> {
 
 async function loadInstances(): Promise<void> {
   if (!instanceDate.value) instanceDate.value = todayIso()
-  const [inst, approvals] = await Promise.all([
-    api.get<TaskInstance[]>('/parent/task-instances', { date: instanceDate.value }),
-    api.get<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' }),
-  ])
-  instances.value = inst
-  pendingApprovals.value = approvals
+  instances.value = await api.get<TaskInstance[]>('/parent/task-instances', { date: instanceDate.value })
 }
 
 async function load(): Promise<void> {
@@ -131,40 +213,130 @@ function reportError(e: unknown): void {
   if (e instanceof ApiError) ElMessage.error(Object.values(e.fieldErrors)[0]?.[0] ?? e.message)
 }
 
-async function createTask(): Promise<void> {
+function openCreate(): void {
+  editingId.value = null
+  form.value = blankForm()
+  showForm.value = true
+}
+
+function openEdit(task: ParentTask): void {
+  const schedule = task.schedules?.[0]
+  editingId.value = task.id
+  form.value = {
+    title: task.title,
+    child_id: task.child_id ?? undefined,
+    start_date: dateOnly(task.start_date) || todayIso(),
+    due_time: timeOnly(schedule?.due_time ?? undefined) || '13:20',
+    recurring: schedule?.frequency === 'weekly',
+    end_date: dateOnly(task.end_date),
+    xp_reward: task.xp_reward,
+    coin_reward: task.coin_reward,
+    with_parent: !!task.with_parent,
+    steps: (task.steps ?? []).map((s) => ({ title: s.title })),
+    kind: task.kind,
+  }
+  showForm.value = true
+}
+
+function validateForm(): boolean {
   if (!form.value.title.trim()) {
     ElMessage.warning(t('common.fillTaskTitle'))
-    return
+    return false
   }
-  creating.value = true
+  if (!form.value.start_date) {
+    ElMessage.warning(t('common.fillTaskDate'))
+    return false
+  }
+  if (form.value.recurring && !form.value.end_date) {
+    ElMessage.warning(t('common.fillTaskEndDate'))
+    return false
+  }
+  return true
+}
+
+async function saveTask(): Promise<void> {
+  if (!validateForm()) return
+  saving.value = true
   try {
-    const created = await api.post<ParentTask>('/parent/tasks', {
+    const endDate = form.value.recurring ? form.value.end_date : form.value.start_date
+    const payload = {
       title: form.value.title.trim(),
-      kind: 'standard',
-      start_date: todayIso(),
+      kind: form.value.kind,
+      start_date: form.value.start_date,
+      end_date: endDate,
       xp_reward: form.value.xp_reward,
       coin_reward: form.value.coin_reward,
-      requires_approval: form.value.requires_approval,
-      schedules: [{ frequency: 'daily' }],
+      requires_approval: false,
+      with_parent: form.value.with_parent,
+      schedules: buildSchedules(form.value),
       child_id: form.value.child_id ?? null,
-    })
-    tasks.value.unshift(created)
-    showCreate.value = false
-    form.value.title = ''
-    ElMessage.success(t('common.taskCreated'))
+      ...(form.value.kind === 'stepped'
+        ? { steps: form.value.steps.filter((s) => s.title.trim()).map((s) => ({ title: s.title.trim() })) }
+        : {}),
+    }
+
+    if (editingId.value) {
+      const updated = await api.put<ParentTask>(`/parent/tasks/${editingId.value}`, payload)
+      const idx = tasks.value.findIndex((x) => x.id === updated.id)
+      if (idx >= 0) tasks.value[idx] = updated
+      else tasks.value.unshift(updated)
+      ElMessage.success(t('common.taskUpdated'))
+    } else {
+      const created = await api.post<ParentTask>('/parent/tasks', payload)
+      tasks.value.unshift(created)
+      ElMessage.success(t('common.taskCreated'))
+    }
+    showForm.value = false
     await loadInstances()
   } catch (e) {
     reportError(e)
   } finally {
-    creating.value = false
+    saving.value = false
   }
 }
 
-function openHomework(): void {
+async function deleteTask(task: ParentTask): Promise<void> {
+  try {
+    await ElMessageBox.confirm(t('common.confirmDeleteTask', { title: task.title }), t('common.delete'), {
+      type: 'warning',
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/parent/tasks/${task.id}`)
+    tasks.value = tasks.value.filter((x) => x.id !== task.id)
+    ElMessage.success(t('common.taskDeleted'))
+    await loadInstances()
+  } catch (e) {
+    reportError(e)
+  }
+}
+
+function addStep(): void {
+  form.value.steps.push({ title: '' })
+}
+
+function removeStep(index: number): void {
+  form.value.steps.splice(index, 1)
+}
+
+async function openHomework(): Promise<void> {
   homeworkRaw.value = ''
   homeworkPreview.value = null
+  homeworkWithParent.value = false
   homeworkProvider.value = 'auto'
-  homeworkChildId.value = children.value.find((c) => c.status === 'active')?.id
+  try {
+    const settings = await api.get<AiSettings>('/parent/ai-settings')
+    if (settings.provider === 'gemini' || settings.provider === 'qwen' || settings.provider === 'rules' || settings.provider === 'auto') {
+      homeworkProvider.value = settings.provider
+    }
+  } catch {
+    homeworkProvider.value = 'auto'
+  }
+  homeworkChildId.value = soleActiveChildId()
   homeworkDraft.value = {
     subject: '其他',
     task_date: instanceDate.value || todayIso(),
@@ -172,7 +344,6 @@ function openHomework(): void {
     items: [],
     xp_reward: 0,
     coin_reward: 0,
-    requires_approval: true,
     notes: null,
     parser: 'rules',
     ai_configured: false,
@@ -193,7 +364,6 @@ function applyPreview(preview: HomeworkParseResult): void {
     })),
     xp_reward: preview.xp_reward,
     coin_reward: preview.coin_reward,
-    requires_approval: true,
     notes: preview.notes,
     parser: preview.parser,
     ai_configured: preview.ai_configured,
@@ -266,7 +436,8 @@ async function confirmHomework(): Promise<void> {
       items,
       xp_reward: homeworkDraft.value.xp_reward,
       coin_reward: homeworkDraft.value.coin_reward,
-      requires_approval: homeworkDraft.value.requires_approval,
+      requires_approval: false,
+      with_parent: homeworkWithParent.value,
       source_text: homeworkDraft.value.source_text || homeworkRaw.value.trim(),
     })
     tasks.value.unshift(result.task)
@@ -282,42 +453,14 @@ async function confirmHomework(): Promise<void> {
   }
 }
 
-async function approveInstance(inst: TaskInstance): Promise<void> {
-  const approval = approvalByInstance.value.get(inst.id)
-  if (!approval) {
-    ElMessage.warning(t('common.approvalNotFound'))
-    return
-  }
-  try {
-    await api.postIdempotent(`/parent/task-instances/${inst.id}/approve`, { lock_version: approval.lock_version })
-    ElMessage.success(t('growth.approved'))
-    await loadInstances()
-  } catch (e) {
-    reportError(e)
-  }
-}
-
-async function returnInstance(inst: TaskInstance): Promise<void> {
-  const approval = approvalByInstance.value.get(inst.id)
-  if (!approval) {
-    ElMessage.warning(t('common.approvalNotFound'))
-    return
-  }
-  try {
-    await api.postIdempotent(`/parent/task-instances/${inst.id}/return`, {
-      lock_version: approval.lock_version,
-      note: t('common.returnNoteDefault'),
-    })
-    ElMessage.success(t('growth.returned'))
-    await loadInstances()
-  } catch (e) {
-    reportError(e)
-  }
-}
-
 function instanceTitle(inst: TaskInstance): string {
   const title = inst.snapshot?.title
   return typeof title === 'string' && title ? title : t('common.taskNumber', { id: inst.task_id })
+}
+
+function instanceDueTime(inst: TaskInstance): string {
+  const due = inst.snapshot?.due_time
+  return typeof due === 'string' && due ? timeOnly(due) : ''
 }
 
 function onTabChange(name: string | number): void {
@@ -332,7 +475,7 @@ onMounted(load)
     <el-tabs v-model="tab" @tab-change="onTabChange">
       <el-tab-pane :label="t('common.taskTemplates')" name="tasks">
         <div class="toolbar">
-          <el-button type="primary" @click="showCreate = true">{{ t('common.createTask') }}</el-button>
+          <el-button type="primary" @click="openCreate">{{ t('common.createTask') }}</el-button>
           <el-button @click="openHomework">{{ t('common.importHomework') }}</el-button>
         </div>
         <el-table :data="tasks" stripe :empty-text="t('common.noTasksYet')">
@@ -340,19 +483,35 @@ onMounted(load)
           <el-table-column :label="t('common.homeworkSubject')" width="88">
             <template #default="{ row }">{{ row.category || '—' }}</template>
           </el-table-column>
-          <el-table-column :label="t('parent.dashboard.children')" width="100">
+          <el-table-column :label="t('common.taskDate')" min-width="160">
             <template #default="{ row }">
-              {{ row.child_id ? childMap.get(row.child_id)?.nickname ?? row.child_id : t('common.wholeFamily') }}
+              <div>{{ taskDateLabel(row as ParentTask) }}</div>
+              <div class="muted">{{ scheduleSummary(row as ParentTask) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('parent.dashboard.children')" width="120">
+            <template #default="{ row }">
+              <div>
+                {{
+                  (row as ParentTask).child_id
+                    ? childMap.get((row as ParentTask).child_id!)?.nickname ?? (row as ParentTask).child_id
+                    : t('common.wholeFamily')
+                }}
+              </div>
+              <el-tag v-if="(row as ParentTask).with_parent" size="small" type="warning" class="tag-inline">
+                {{ t('common.withParentTag') }}
+              </el-tag>
             </template>
           </el-table-column>
           <el-table-column :label="t('growth.coins')" width="120">
-            <template #default="{ row }">{{ row.xp_reward }} XP · {{ row.coin_reward }} {{ t('common.coinShort') }}</template>
-          </el-table-column>
-          <el-table-column :label="t('common.status')" width="80">
             <template #default="{ row }">
-              <el-tag :type="row.requires_approval ? 'warning' : 'success'" size="small">
-                {{ row.requires_approval ? t('common.needsApproval') : t('common.auto') }}
-              </el-tag>
+              {{ (row as ParentTask).xp_reward }} XP · {{ (row as ParentTask).coin_reward }} {{ t('common.coinShort') }}
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('common.actions')" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEdit(row as ParentTask)">{{ t('common.edit') }}</el-button>
+              <el-button link type="danger" @click="deleteTask(row as ParentTask)">{{ t('common.delete') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -370,27 +529,63 @@ onMounted(load)
             <span v-if="childMap.get(inst.child_id)" class="av">{{ avatarEmoji(childMap.get(inst.child_id)!.avatar) }}</span>
             <div>
               <div class="inst-title">{{ instanceTitle(inst) }}</div>
-              <div class="inst-meta">{{ childMap.get(inst.child_id)?.nickname ?? inst.child_id }} · {{ inst.task_date }}</div>
+              <div class="inst-meta">
+                {{ childMap.get(inst.child_id)?.nickname ?? inst.child_id }} · {{ inst.task_date }}
+                <template v-if="instanceDueTime(inst)"> · {{ instanceDueTime(inst) }}</template>
+              </div>
             </div>
-            <el-tag size="small">{{ taskStatusLabel(inst.status) }}</el-tag>
-          </div>
-          <div v-if="inst.status === 'submitted'" class="inst-actions">
-            <el-button type="success" size="small" @click="approveInstance(inst)">{{ t('common.approve') }}</el-button>
-            <el-button type="warning" size="small" plain @click="returnInstance(inst)">{{ t('common.return') }}</el-button>
+            <div class="inst-tags">
+              <el-tag v-if="inst.snapshot?.with_parent" size="small" type="warning">{{ t('common.withParentTag') }}</el-tag>
+              <el-tag size="small">{{ taskStatusLabel(inst.status) }}</el-tag>
+            </div>
           </div>
         </el-card>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="showCreate" :title="t('common.createTask')" width="420px" destroy-on-close>
-      <el-form label-width="88px">
+    <el-dialog
+      v-model="showForm"
+      :title="editingId ? t('common.editTask') : t('common.createTask')"
+      width="480px"
+      destroy-on-close
+    >
+      <el-form label-width="100px">
         <el-form-item :label="t('common.title')" required>
           <el-input v-model="form.title" maxlength="128" />
         </el-form-item>
         <el-form-item :label="t('common.assignChild')">
           <el-select v-model="form.child_id" clearable :placeholder="t('common.allChildrenPlaceholder')">
-            <el-option v-for="c in children.filter((x) => x.status === 'active')" :key="c.id" :label="c.nickname" :value="c.id" />
+            <el-option v-for="c in activeChildren" :key="c.id" :label="c.nickname" :value="c.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item :label="t('common.withParent')">
+          <el-switch v-model="form.with_parent" />
+          <div class="hint-inline">{{ t('common.withParentHint') }}</div>
+        </el-form-item>
+        <el-form-item :label="t('common.taskStartDate')" required>
+          <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        </el-form-item>
+        <el-form-item :label="t('common.taskTime')">
+          <el-time-picker
+            v-model="form.due_time"
+            format="HH:mm"
+            value-format="HH:mm"
+            clearable
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item :label="t('common.recurringTask')">
+          <el-switch v-model="form.recurring" />
+          <div class="hint-inline">{{ t('common.recurringTaskHint') }}</div>
+        </el-form-item>
+        <el-form-item v-if="form.recurring" :label="t('common.taskEndDate')" required>
+          <el-date-picker
+            v-model="form.end_date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            :disabled-date="(d: Date) => form.start_date ? d < new Date(form.start_date + 'T00:00:00') : false"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item :label="t('common.xpLabel')">
           <el-input-number v-model="form.xp_reward" :min="0" />
@@ -398,13 +593,23 @@ onMounted(load)
         <el-form-item :label="t('common.growthCoin')">
           <el-input-number v-model="form.coin_reward" :min="0" />
         </el-form-item>
-        <el-form-item :label="t('common.needsApproval')">
-          <el-switch v-model="form.requires_approval" />
-        </el-form-item>
+
+        <template v-if="form.kind === 'stepped'">
+          <div class="hw-items-head">
+            <strong>{{ t('common.homeworkItems') }}</strong>
+            <el-button size="small" @click="addStep">{{ t('common.homeworkAddItem') }}</el-button>
+          </div>
+          <div v-for="(step, index) in form.steps" :key="index" class="hw-item">
+            <el-input v-model="step.title" :placeholder="t('common.homeworkItemTitle')" maxlength="128" />
+            <el-button link type="danger" @click="removeStep(index)">{{ t('common.homeworkRemoveItem') }}</el-button>
+          </div>
+        </template>
       </el-form>
       <template #footer>
-        <el-button @click="showCreate = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="creating" @click="createTask">{{ t('common.create') }}</el-button>
+        <el-button @click="showForm = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="saveTask">
+          {{ editingId ? t('common.save') : t('common.create') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -428,6 +633,7 @@ onMounted(load)
             <el-option :label="t('common.homeworkParserQwen')" value="qwen" />
             <el-option :label="t('common.homeworkParserRules')" value="rules" />
           </el-select>
+          <div class="hint-inline">{{ t('common.homeworkProviderHint') }}</div>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="homeworkParsing" @click="parseHomework">{{ t('common.homeworkParse') }}</el-button>
@@ -451,12 +657,16 @@ onMounted(load)
           <el-form-item :label="t('common.assignChild')" required>
             <el-select v-model="homeworkChildId" :placeholder="t('common.homeworkNeedChild')">
               <el-option
-                v-for="c in children.filter((x) => x.status === 'active')"
+                v-for="c in activeChildren"
                 :key="c.id"
                 :label="c.nickname"
                 :value="c.id"
               />
             </el-select>
+          </el-form-item>
+          <el-form-item :label="t('common.withParent')">
+            <el-switch v-model="homeworkWithParent" />
+            <div class="hint-inline">{{ t('common.withParentHint') }}</div>
           </el-form-item>
           <el-form-item :label="t('common.homeworkSubject')" required>
             <el-select v-model="homeworkDraft.subject">
@@ -474,9 +684,6 @@ onMounted(load)
           </el-form-item>
           <el-form-item :label="t('common.growthCoin')">
             <el-input-number v-model="homeworkDraft.coin_reward" :min="0" :max="50" />
-          </el-form-item>
-          <el-form-item :label="t('common.needsApproval')">
-            <el-switch v-model="homeworkDraft.requires_approval" />
           </el-form-item>
 
           <div class="hw-items-head">
@@ -513,13 +720,18 @@ onMounted(load)
 
 <style scoped>
 .page {
-  max-width: 960px;
+  max-width: 1080px;
 }
 .toolbar {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+.muted {
+  font-size: 12px;
+  color: #9a9db0;
+  margin-top: 2px;
 }
 .inst {
   margin-bottom: 10px;
@@ -529,6 +741,15 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.inst-tags {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.tag-inline {
+  margin-top: 4px;
 }
 .av {
   font-size: 28px;
@@ -540,11 +761,6 @@ onMounted(load)
   font-size: 13px;
   color: #9a9db0;
 }
-.inst-actions {
-  margin-top: 12px;
-  display: flex;
-  gap: 8px;
-}
 .empty {
   color: #9a9db0;
   padding: 24px 0;
@@ -555,6 +771,12 @@ onMounted(load)
   color: #6b6f85;
   font-size: 13px;
   line-height: 1.5;
+}
+.hint-inline {
+  margin-top: 6px;
+  color: #6b6f85;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .hw-alert {
   margin-bottom: 16px;

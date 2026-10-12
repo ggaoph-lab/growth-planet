@@ -1,0 +1,17 @@
+---
+description: After frontend edits, auto-publish to http://localhost:8088
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Frontend preview (fixed port)
+
+- Preview URL is always **http://localhost:8088** (never 5173).
+- Project hooks rebuild `frontend/dist` after frontend edits and on agent stop.
+- If hooks did not run or 8088 looks stale, execute:
+
+```bash
+make preview
+```
+
+- Do not ask the user to switch ports or manually rebuild unless `make preview` failed.
