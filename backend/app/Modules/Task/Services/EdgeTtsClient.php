@@ -7,7 +7,10 @@ use Illuminate\Support\Facades\Log;
 /**
  * Free Microsoft Edge online neural TTS (no API key).
  *
- * Protocol mirrors the open-source `rany2/edge-tts` client.
+ * Protocol mirrors the open-source `rany2/edge-tts` client. Synthesis moved to
+ * api.msedgeservices.com; the old bing host now answers 403. The new host still
+ * accepts the legacy Sec-MS-GEC token and version `1-143` — claiming version 2
+ * without a v2 token is rejected.
  */
 class EdgeTtsClient
 {
@@ -15,9 +18,21 @@ class EdgeTtsClient
 
     private const CHROMIUM_FULL_VERSION = '143.0.3650.75';
 
-    private const WSS_HOST = 'speech.platform.bing.com';
-
-    private const WSS_PATH = '/consumer/speech/synthesize/readaloud/edge/v1';
+    /**
+     * @var list<array{host: string, path: string, key_param: string}>
+     */
+    private const ENDPOINTS = [
+        [
+            'host' => 'api.msedgeservices.com',
+            'path' => '/tts/cognitiveservices/websocket/v1',
+            'key_param' => 'Ocp-Apim-Subscription-Key',
+        ],
+        [
+            'host' => 'speech.platform.bing.com',
+            'path' => '/consumer/speech/synthesize/readaloud/edge/v1',
+            'key_param' => 'TrustedClientToken',
+        ],
+    ];
 
     private const WIN_EPOCH = 11644473600;
 
@@ -33,73 +48,83 @@ class EdgeTtsClient
             return null;
         }
 
-        foreach ([1, 2] as $attempt) {
-            try {
-                $audio = $this->synthesizeOnce($text, $voice);
-                if ($audio !== null && strlen($audio) >= 64) {
-                    return [
-                        'audio_base64' => base64_encode($audio),
-                        'mime' => 'audio/mpeg',
-                        'provider' => 'edge_tts',
-                    ];
+        foreach (self::ENDPOINTS as $endpoint) {
+            $tokenBefore = null;
+            $connectFailed = false;
+            foreach ([1, 2] as $attempt) {
+                $tokenNow = $this->generateSecMsGec();
+                // A 403 that did not move the 5-minute token is not clock skew.
+                // Connect/DNS failures still get one retry.
+                if ($attempt === 2 && $tokenBefore === $tokenNow && ! $connectFailed) {
+                    break;
                 }
-            } catch (\Throwable $e) {
-                Log::warning($attempt === 1 ? 'tts.edge_failed' : 'tts.edge_retry_failed', [
-                    'error' => $e->getMessage(),
-                    'skew' => self::$clockSkewSeconds,
-                ]);
+                $tokenBefore = $tokenNow;
+                $connectFailed = false;
+
+                try {
+                    $audio = $this->synthesizeOnce($text, $voice, $endpoint);
+                    if ($audio !== null && strlen($audio) >= 64 && $this->looksLikeMp3($audio)) {
+                        return [
+                            'audio_base64' => base64_encode($audio),
+                            'mime' => 'audio/mpeg',
+                            'provider' => 'edge_tts',
+                        ];
+                    }
+                    Log::warning('tts.edge_empty', [
+                        'host' => $endpoint['host'],
+                        'bytes' => is_string($audio) ? strlen($audio) : 0,
+                        'head' => is_string($audio) ? bin2hex(substr($audio, 0, 24)) : '',
+                    ]);
+                } catch (\Throwable $e) {
+                    $connectFailed = str_contains($e->getMessage(), 'edge_tts_connect');
+                    Log::warning($attempt === 1 ? 'tts.edge_failed' : 'tts.edge_retry_failed', [
+                        'host' => $endpoint['host'],
+                        'error' => $e->getMessage(),
+                        'skew' => self::$clockSkewSeconds,
+                    ]);
+                    if ($connectFailed && $attempt === 1) {
+                        usleep(250_000);
+                    }
+                }
             }
         }
 
         return null;
     }
 
-    private function synthesizeOnce(string $text, string $voice): ?string
+    /**
+     * @param  array{host: string, path: string, key_param: string}  $endpoint
+     */
+    private function synthesizeOnce(string $text, string $voice, array $endpoint): ?string
     {
         $connectionId = bin2hex(random_bytes(16));
         $secMsGec = $this->generateSecMsGec();
         $secMsGecVersion = '1-'.self::CHROMIUM_FULL_VERSION;
         $muid = strtoupper(bin2hex(random_bytes(16)));
+        $host = $endpoint['host'];
 
         // Match edge-tts query encoding (do not over-encode Sec-MS-GEC-Version).
-        $path = self::WSS_PATH
-            .'?TrustedClientToken='.self::TRUSTED_CLIENT_TOKEN
+        $path = $endpoint['path']
+            .'?'.$endpoint['key_param'].'='.self::TRUSTED_CLIENT_TOKEN
             .'&ConnectionId='.$connectionId
             .'&Sec-MS-GEC='.$secMsGec
             .'&Sec-MS-GEC-Version='.$secMsGecVersion;
         $key = base64_encode(random_bytes(16));
         $ua = $this->userAgent();
 
-        $fp = @stream_socket_client(
-            'ssl://'.self::WSS_HOST.':443',
-            $errno,
-            $errstr,
-            20,
-            STREAM_CLIENT_CONNECT,
-            stream_context_create([
-                'ssl' => [
-                    'verify_peer' => true,
-                    'verify_peer_name' => true,
-                    'peer_name' => self::WSS_HOST,
-                ],
-            ])
-        );
-
-        if ($fp === false) {
-            throw new \RuntimeException("edge_tts_connect: {$errstr} ({$errno})");
-        }
+        $fp = $this->connect($host);
 
         stream_set_timeout($fp, 30);
 
         $major = explode('.', self::CHROMIUM_FULL_VERSION)[0];
+        // No permessage-deflate: this client cannot inflate frames.
+        // No "synthesize" subprotocol: the current Edge client does not send one.
         $handshake = "GET {$path} HTTP/1.1\r\n"
-            ."Host: ".self::WSS_HOST."\r\n"
+            ."Host: {$host}\r\n"
             ."Upgrade: websocket\r\n"
             ."Connection: Upgrade\r\n"
             ."Sec-WebSocket-Key: {$key}\r\n"
             ."Sec-WebSocket-Version: 13\r\n"
-            ."Sec-WebSocket-Protocol: synthesize\r\n"
-            ."Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
             ."Origin: chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold\r\n"
             ."User-Agent: {$ua}\r\n"
             ."Pragma: no-cache\r\n"
@@ -178,21 +203,13 @@ class EdgeTtsClient
                     continue;
                 }
                 $headerLength = unpack('n', substr($payload, 0, 2))[1];
-                if ($headerLength > strlen($payload)) {
+                if ($headerLength + 2 > strlen($payload)) {
                     continue;
                 }
-                $headerBlob = substr($payload, 2, $headerLength);
-                $audio = substr($payload, 2 + $headerLength);
-                // Headers are followed by \r\n in the length accounting used by edge-tts:
-                // get_headers_and_data uses header_length then +2 for CRLF.
-                // Binary layout: [u16 header_len][headers][\r\n][audio]
-                // Some clients include CRLF inside header_length; edge-tts does:
-                //   parameters, data = get_headers_and_data(data, header_length)
-                //   where data = received[2:], and data[header_length+2:] is audio
-                // So audio starts at offset 2 + header_length + 2.
-                if (strlen($payload) >= 2 + $headerLength + 2) {
-                    $audio = substr($payload, 2 + $headerLength + 2);
-                }
+                // Same split as edge-tts get_headers_and_data(data, header_length):
+                // headers occupy data[:header_length], audio starts at header_length + 2.
+                $headerBlob = substr($payload, 0, $headerLength);
+                $audio = substr($payload, $headerLength + 2);
 
                 $path = null;
                 foreach (explode("\r\n", $headerBlob) as $line) {
@@ -397,5 +414,85 @@ class EdgeTtsClient
         }
 
         return $buf;
+    }
+
+    /**
+     * Docker's resolver sometimes hands back an unreachable IPv6 address.
+     * Pin the socket to IPv4 and keep the TLS name on the original host.
+     *
+     * @return resource
+     */
+    private function connect(string $host)
+    {
+        $ips = $this->resolveIpv4($host);
+        if ($ips === []) {
+            throw new \RuntimeException("edge_tts_connect: php_network_getaddresses: getaddrinfo for {$host} failed");
+        }
+
+        $context = stream_context_create([
+            'socket' => [
+                'bindto' => '0.0.0.0:0',
+            ],
+            'ssl' => [
+                'verify_peer' => true,
+                'verify_peer_name' => true,
+                'peer_name' => $host,
+                'SNI_enabled' => true,
+                'SNI_server_name' => $host,
+            ],
+        ]);
+
+        $errno = 0;
+        $errstr = 'connect failed';
+        foreach ($ips as $ip) {
+            $fp = @stream_socket_client(
+                'ssl://'.$ip.':443',
+                $errno,
+                $errstr,
+                8,
+                STREAM_CLIENT_CONNECT,
+                $context
+            );
+            if ($fp !== false) {
+                return $fp;
+            }
+        }
+
+        throw new \RuntimeException("edge_tts_connect: {$errstr} ({$errno})");
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function resolveIpv4(string $host): array
+    {
+        $ips = [];
+        $records = @dns_get_record($host, DNS_A);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                $ip = $record['ip'] ?? null;
+                if (is_string($ip) && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $ips[] = $ip;
+                }
+            }
+        }
+
+        if ($ips === []) {
+            $ip = gethostbyname($host);
+            if ($ip !== $host && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $ips[] = $ip;
+            }
+        }
+
+        return array_values(array_unique($ips));
+    }
+
+    private function looksLikeMp3(string $body): bool
+    {
+        if (strlen($body) < 4) {
+            return false;
+        }
+
+        return str_starts_with($body, 'ID3') || (ord($body[0]) === 0xFF && (ord($body[1]) & 0xE0) === 0xE0);
     }
 }

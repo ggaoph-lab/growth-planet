@@ -65,7 +65,7 @@ return [
         'tts_timeout' => (int) env('QWEN_TTS_TIMEOUT', 25),
     ],
 
-    // Kid read-aloud TTS (Qwen/CosyVoice when DASHSCOPE_API_KEY is set; else Edge / online fallbacks).
+    // Kid read-aloud: Edge neural first, then Qwen/CosyVoice, then public fallbacks.
     'tts' => [
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
     ],

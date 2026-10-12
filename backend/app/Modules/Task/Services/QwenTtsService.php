@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\Log;
  * Kid read-aloud TTS.
  *
  * Priority:
- * 1) Qwen-TTS / CosyVoice when DashScope key is configured (family setting or DASHSCOPE_API_KEY)
- * 2) Microsoft Edge neural (free; may 403 on some cloud IPs)
+ * 1) Microsoft Edge neural (free, low latency from Singapore)
+ * 2) Qwen-TTS / CosyVoice when a DashScope key is configured
  * 3) Google / Youdao / Baidu public proxies
  *
  * Always returns base64 audio so the kid browser never depends on third-party CORS/URL expiry.
@@ -33,7 +33,7 @@ class QwenTtsService
             return null;
         }
 
-        $cacheKey = 'tts:v4:'.hash('sha256', $text);
+        $cacheKey = 'tts:v6:'.hash('sha256', $text);
         $cached = Cache::get($cacheKey);
         if (is_array($cached) && isset($cached['audio_base64'], $cached['mime'], $cached['provider'])) {
             // Drop cached Piper samples after removing that provider.
@@ -47,14 +47,14 @@ class QwenTtsService
         $cfg = $this->ai->resolve($familyId);
         $apiKey = trim($cfg['qwen_api_key']);
 
-        $result = null;
-        if ($apiKey !== '') {
+        $result = $this->synthesizeEdge($text);
+
+        if ($result === null && $apiKey !== '') {
             $result = $this->synthesizeQwenTts($text, $apiKey)
                 ?? $this->synthesizeCosyVoice($text, $apiKey);
         }
 
-        $result ??= $this->synthesizeEdge($text)
-            ?? $this->synthesizeGoogleTranslate($text)
+        $result ??= $this->synthesizeGoogleTranslate($text)
             ?? $this->synthesizeYoudao($text)
             ?? $this->synthesizeBaiduTranslate($text);
 
@@ -62,7 +62,12 @@ class QwenTtsService
             return null;
         }
 
-        Cache::put($cacheKey, $result, now()->addMinutes(30));
+        // Keep neural audio. Do not pin a public-proxy sample after a transient Edge failure.
+        if (in_array($result['provider'], ['edge_tts', 'qwen', 'cosyvoice'], true)) {
+            Cache::put($cacheKey, $result, now()->addMinutes(30));
+        }
+
+        Log::info('tts.ready', ['provider' => $result['provider']]);
 
         return $result;
     }
