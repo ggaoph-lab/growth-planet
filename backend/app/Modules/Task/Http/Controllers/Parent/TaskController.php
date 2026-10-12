@@ -50,7 +50,7 @@ class TaskController
                 'estimated_minutes' => $data['estimated_minutes'] ?? null,
                 'xp_reward' => $data['xp_reward'] ?? 0,
                 'coin_reward' => $data['coin_reward'] ?? 0,
-                'requires_approval' => $data['requires_approval'] ?? false,
+                'requires_approval' => $data['requires_approval'] ?? true,
                 'requires_self_check' => $data['requires_self_check'] ?? false,
                 'with_parent' => $data['with_parent'] ?? false,
                 'is_active' => true,

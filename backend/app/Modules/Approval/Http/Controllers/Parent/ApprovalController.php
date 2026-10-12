@@ -8,9 +8,12 @@ use App\Modules\English\Models\EnglishWatchLog;
 use App\Modules\Approval\Models\ApprovalEvent;
 use App\Modules\Approval\Models\ApprovalRequest;
 use App\Modules\Approval\Services\ApprovalService;
+use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Support\CurrentContext;
+use App\Modules\Task\Models\TaskInstance;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class ApprovalController
@@ -31,7 +34,7 @@ class ApprovalController
             $query->where('status', $status);
         }
 
-        return response()->json(['data' => $query->limit(100)->get()]);
+        return response()->json(['data' => $this->presentMany($query->limit(100)->get())]);
     }
 
     public function show(int $id): JsonResponse
@@ -40,7 +43,7 @@ class ApprovalController
             ->where('family_id', $this->context->familyId())
             ->findOrFail($id);
 
-        return response()->json(['data' => $item]);
+        return response()->json(['data' => $this->presentMany(collect([$item]))->first()]);
     }
 
     public function events(int $id): JsonResponse
@@ -100,5 +103,51 @@ class ApprovalController
         ));
 
         return response()->json(['data' => $result]);
+    }
+
+    /**
+     * @param  Collection<int, ApprovalRequest>  $items
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function presentMany(Collection $items): Collection
+    {
+        $familyId = $this->context->familyId();
+        $childNames = ChildProfile::query()
+            ->where('family_id', $familyId)
+            ->whereIn('id', $items->pluck('child_id')->unique()->all())
+            ->pluck('nickname', 'id');
+
+        $taskIds = $items
+            ->filter(fn (ApprovalRequest $item) => $item->type === ApprovalType::TaskCompletion && $item->subject_type === 'task_instance')
+            ->pluck('subject_id')
+            ->unique()
+            ->all();
+        $tasks = $taskIds === []
+            ? collect()
+            : TaskInstance::query()
+                ->where('family_id', $familyId)
+                ->whereIn('id', $taskIds)
+                ->get()
+                ->keyBy('id');
+
+        return $items->map(function (ApprovalRequest $item) use ($childNames, $tasks) {
+            $data = $item->toArray();
+            $data['child_name'] = $childNames[$item->child_id] ?? null;
+            $data['summary'] = null;
+
+            if ($item->type === ApprovalType::TaskCompletion) {
+                $instance = $tasks->get($item->subject_id);
+                $snapshot = is_array($instance?->snapshot) ? $instance->snapshot : [];
+                $data['summary'] = [
+                    'title' => $snapshot['title'] ?? null,
+                    'group_title' => $snapshot['group_title'] ?? null,
+                    'description' => $snapshot['description'] ?? null,
+                    'xp_reward' => (int) ($snapshot['xp_reward'] ?? 0),
+                    'coin_reward' => (int) ($snapshot['coin_reward'] ?? 0),
+                ];
+            }
+
+            return $data;
+        })->values();
     }
 }

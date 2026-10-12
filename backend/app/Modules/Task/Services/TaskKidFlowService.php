@@ -2,19 +2,23 @@
 
 namespace App\Modules\Task\Services;
 
+use App\Modules\Approval\Enums\ApprovalStatus;
 use App\Modules\Approval\Enums\ApprovalType;
+use App\Modules\Approval\Models\ApprovalRequest;
 use App\Modules\Approval\Services\ApprovalService;
 use App\Modules\Core\Exceptions\ApiException;
 use App\Modules\Core\Support\BiMsg;
 use App\Modules\Core\Support\Clock;
 use App\Modules\Identity\Models\ChildProfile;
+use App\Modules\Ledger\Enums\RewardGrantStatus;
+use App\Modules\Ledger\Models\RewardGrant;
+use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Task\Enums\TaskInstanceStatus;
 use App\Modules\Task\Models\TaskInstance;
 use App\Modules\Task\Models\TaskInstanceStep;
-use App\Modules\Ledger\DTO\RewardIntent;
-use App\Modules\Ledger\Enums\SourceModule;
-use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Task\Models\TaskSubmission;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class TaskKidFlowService
 {
@@ -102,37 +106,128 @@ class TaskKidFlowService
 
         $instance->status = TaskInstanceStatus::Submitted;
         $instance->submitted_at = $this->clock->now();
+        $instance->completed_at = null;
         $instance->save();
 
-        if ($snapshot['requires_approval'] ?? true) {
-            $this->approvals->createPending(
-                $instance->family_id,
-                $instance->child_id,
-                ApprovalType::TaskCompletion,
-                'task_instance',
-                $instance->id,
-                $child->member->user_id,
-            );
-        } else {
-            $this->rewards->grant(new RewardIntent(
-                familyId: $instance->family_id,
-                childId: $instance->child_id,
-                policyCode: 'task.complete',
-                grantKey: 'task:instance:'.$instance->id.':complete',
-                sourceModule: SourceModule::Task,
-                sourceType: 'task_instance',
-                sourceId: $instance->id,
-                occurredAt: $this->clock->now(),
-                xpAmount: (int) ($snapshot['xp_reward'] ?? 0),
-                coinAmount: (int) ($snapshot['coin_reward'] ?? 0),
-                postImmediately: true,
-            ));
-            $instance->status = TaskInstanceStatus::Completed;
-            $instance->completed_at = $this->clock->now();
-            $instance->save();
-        }
+        // Rewards wait for a parent decision in the approval center.
+        $this->approvals->createPending(
+            $instance->family_id,
+            $instance->child_id,
+            ApprovalType::TaskCompletion,
+            'task_instance',
+            $instance->id,
+            $child->member->user_id,
+        );
 
         return $instance;
+    }
+
+    /**
+     * Kid undoes a completion that the parent has not approved yet.
+     * Legacy rows that were paid immediately (no approval) are reversed.
+     */
+    public function withdraw(TaskInstance $instance, ChildProfile $child, int $actorUserId): TaskInstance
+    {
+        return DB::transaction(function () use ($instance, $child, $actorUserId) {
+            $pending = ApprovalRequest::query()
+                ->where('type', ApprovalType::TaskCompletion)
+                ->where('subject_type', 'task_instance')
+                ->where('subject_id', $instance->id)
+                ->where('status', ApprovalStatus::Pending)
+                ->lockForUpdate()
+                ->first();
+
+            $locked = TaskInstance::query()->whereKey($instance->id)->lockForUpdate()->firstOrFail();
+            $this->assertChildInstance($locked, $child);
+
+            if ($locked->status === TaskInstanceStatus::Submitted) {
+                if ($pending !== null) {
+                    $this->approvals->cancel($pending, $actorUserId);
+                }
+            } elseif ($locked->status === TaskInstanceStatus::Completed && ! $this->hasApprovedCompletion($locked)) {
+                $this->reverseOpenGrants($locked, $actorUserId);
+            } else {
+                throw new ApiException('INVALID_STATE', BiMsg::of('只能取消还没通过审核的完成', 'Only a completion still waiting for review can be undone'), 409);
+            }
+
+            $locked->status = TaskInstanceStatus::Pending;
+            $locked->ready_at = null;
+            $locked->first_step_at = null;
+            $locked->submitted_at = null;
+            $locked->completed_at = null;
+            $locked->self_checked = false;
+            $locked->save();
+
+            return $locked;
+        });
+    }
+
+    public function canWithdraw(TaskInstance $instance): bool
+    {
+        if ($instance->status === TaskInstanceStatus::Submitted) {
+            return true;
+        }
+
+        return $instance->status === TaskInstanceStatus::Completed && ! $this->hasApprovedCompletion($instance);
+    }
+
+    /**
+     * @param  Collection<int, TaskInstance>  $instances
+     * @return Collection<int, int>
+     */
+    public function withdrawableIds(Collection $instances): Collection
+    {
+        $completedIds = $instances
+            ->filter(fn (TaskInstance $instance) => $instance->status === TaskInstanceStatus::Completed)
+            ->pluck('id');
+
+        $approved = $completedIds->isEmpty()
+            ? collect()
+            : ApprovalRequest::query()
+                ->where('type', ApprovalType::TaskCompletion)
+                ->where('subject_type', 'task_instance')
+                ->whereIn('subject_id', $completedIds)
+                ->where('status', ApprovalStatus::Approved)
+                ->pluck('subject_id');
+
+        return $instances
+            ->filter(function (TaskInstance $instance) use ($approved) {
+                if ($instance->status === TaskInstanceStatus::Submitted) {
+                    return true;
+                }
+                if ($instance->status === TaskInstanceStatus::Completed) {
+                    return ! $approved->contains($instance->id);
+                }
+
+                return false;
+            })
+            ->pluck('id')
+            ->values();
+    }
+
+    private function hasApprovedCompletion(TaskInstance $instance): bool
+    {
+        return ApprovalRequest::query()
+            ->where('type', ApprovalType::TaskCompletion)
+            ->where('subject_type', 'task_instance')
+            ->where('subject_id', $instance->id)
+            ->where('status', ApprovalStatus::Approved)
+            ->exists();
+    }
+
+    private function reverseOpenGrants(TaskInstance $instance, int $actorUserId): void
+    {
+        $grants = RewardGrant::query()
+            ->where('source_type', 'task_instance')
+            ->where('source_id', $instance->id)
+            ->where('policy_code', 'task.complete')
+            ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($grants as $grant) {
+            $this->rewards->reversePosted($grant, $actorUserId);
+        }
     }
 
     private function assertChildInstance(TaskInstance $instance, ChildProfile $child): void

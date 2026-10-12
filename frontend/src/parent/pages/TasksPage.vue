@@ -434,7 +434,7 @@ async function saveTask(): Promise<void> {
       end_date: endDates[endDates.length - 1] ?? startDates[0] ?? todayIso(),
       xp_reward: 0,
       coin_reward: 0,
-      requires_approval: false,
+      requires_approval: true,
       with_parent: false,
       schedules: [{ frequency: 'once' as const }],
       child_id: form.value.child_id ?? null,
@@ -624,7 +624,7 @@ async function confirmHomework(): Promise<void> {
       items,
       xp_reward: homeworkDraft.value.xp_reward,
       coin_reward: homeworkDraft.value.coin_reward,
-      requires_approval: false,
+      requires_approval: true,
       with_parent: homeworkWithParent.value,
       source_text: homeworkDraft.value.source_text || homeworkRaw.value.trim(),
     })

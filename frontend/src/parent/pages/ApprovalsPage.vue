@@ -15,6 +15,19 @@ function typeLabel(type: ApprovalType): string {
   return t(key)
 }
 
+function taskHeading(item: ApprovalRequest): string {
+  const summary = item.summary
+  if (!summary?.title) return ''
+  return summary.group_title ? `${summary.group_title} · ${summary.title}` : summary.title
+}
+
+function rewardLine(item: ApprovalRequest): string {
+  const xp = item.summary?.xp_reward ?? 0
+  const coins = item.summary?.coin_reward ?? 0
+  if (!xp && !coins) return ''
+  return t('parent.approvals.rewardAfter', { xp, coins })
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -43,8 +56,13 @@ async function decide(item: ApprovalRequest, action: 'approve' | 'reject' | 'ret
       return
     }
   } else {
+    const xp = item.summary?.xp_reward ?? 0
+    const coins = item.summary?.coin_reward ?? 0
+    const message = item.type === 'task_completion' && (xp || coins)
+      ? t('parent.approvals.approveTask', { xp, coins })
+      : t('common.approvalConfirm')
     try {
-      await ElMessageBox.confirm(t('common.approvalConfirm'), t('common.approveTitle'), {
+      await ElMessageBox.confirm(message, t('common.approveTitle'), {
         confirmButtonText: t('common.approve'),
         cancelButtonText: t('common.cancel'),
       })
@@ -79,9 +97,12 @@ onMounted(load)
       <div class="head">
         <el-tag type="warning" size="small">{{ t('growth.pending') }}</el-tag>
         <span class="type">{{ typeLabel(item.type) }}</span>
-        <span class="meta">#{{ item.id }} · {{ t('common.childId') }} {{ item.child_id }}</span>
+        <span class="meta">{{ item.child_name || t('common.childId') + ' ' + item.child_id }}</span>
       </div>
-      <p class="sub">{{ t('common.subjectLink', { type: item.subject_type, id: item.subject_id }) }}</p>
+      <p v-if="taskHeading(item)" class="title">{{ taskHeading(item) }}</p>
+      <p v-if="item.summary?.description" class="sub">{{ item.summary.description }}</p>
+      <p v-if="rewardLine(item)" class="sub">{{ rewardLine(item) }}</p>
+      <p v-else-if="!taskHeading(item)" class="sub">{{ t('common.subjectLink', { type: item.subject_type, id: item.subject_id }) }}</p>
       <div class="actions">
         <el-button type="success" :loading="acting === item.id" @click="decide(item, 'approve')">{{ t('common.approve') }}</el-button>
         <el-button type="warning" :loading="acting === item.id" @click="decide(item, 'return')">{{ t('common.return') }}</el-button>
@@ -108,8 +129,12 @@ onMounted(load)
   gap: 8px;
   margin-bottom: 8px;
 }
-.type {
+.type,
+.title {
   font-weight: 600;
+}
+.title {
+  margin: 0 0 6px;
 }
 .meta {
   color: #9a9db0;

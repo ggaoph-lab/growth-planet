@@ -90,7 +90,8 @@ function rewardOf(inst: TaskInstance): string | null {
   const xp = inst.snapshot?.xp_reward ?? 0
   const coins = inst.snapshot?.coin_reward ?? 0
   if (!xp && !coins) return null
-  return t('kid.taskReward', { xp, coins })
+  if (inst.status === 'completed') return t('kid.taskReward', { xp, coins })
+  return t('kid.taskRewardPending', { xp, coins })
 }
 
 function groupIdOf(inst: TaskInstance): number | null {
@@ -134,6 +135,11 @@ function allRequiredStepsChecked(inst: TaskInstance): boolean {
 
 function canActOn(inst: TaskInstance): boolean {
   return inst.status === 'pending' || inst.status === 'returned' || inst.status === 'in_progress'
+}
+
+function canWithdraw(inst: TaskInstance): boolean {
+  if (typeof inst.can_withdraw === 'boolean') return inst.can_withdraw
+  return inst.status === 'submitted' || inst.status === 'completed'
 }
 
 function isDoneStatus(status: string): boolean {
@@ -220,6 +226,38 @@ async function submit(inst: TaskInstance): Promise<TaskInstance | null> {
     error.value = e instanceof ApiError ? e.message : t('common.submitFailed')
     return null
   }
+}
+
+async function withdraw(inst: TaskInstance): Promise<TaskInstance | null> {
+  try {
+    const updated = await api.postIdempotent<TaskInstance>(`/kid/task-instances/${inst.id}/withdraw`)
+    replace(updated)
+    return updated
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : t('common.withdrawFailed')
+    return null
+  }
+}
+
+/** Tap a finished subtask again to take the completion back. */
+async function withdrawSubtask(inst: TaskInstance): Promise<void> {
+  if (!canWithdraw(inst) || busy.value) return
+  tap()
+  busy.value = `i-${inst.id}`
+  error.value = ''
+  try {
+    await withdraw(inst)
+  } finally {
+    busy.value = null
+  }
+}
+
+function onSubtaskClick(inst: TaskInstance): void {
+  if (canWithdraw(inst)) {
+    void withdrawSubtask(inst)
+    return
+  }
+  void advanceSubtask(inst)
 }
 
 /** Tap a subtask row to complete it (start then submit when needed). */
@@ -359,6 +397,7 @@ function replace(updated: TaskInstance): void {
 }
 
 function subtaskActionLabel(inst: TaskInstance): string {
+  if (canWithdraw(inst)) return `${statusLabel(inst.status)} · ${t('kid.taskActions.tapToUndo')}`
   if (isDoneStatus(inst.status)) return statusLabel(inst.status)
   if (inst.status === 'returned') return t('kid.taskActions.tapToFinish')
   if (inst.status === 'in_progress' && inst.snapshot?.requires_self_check) {
@@ -400,11 +439,11 @@ onUnmounted(stopSpeaking)
               :class="{
                 done: isDoneStatus(inst.status),
                 active: inst.status === 'in_progress' || inst.status === 'returned',
-                locked: !canActOn(inst),
+                locked: !canActOn(inst) && !canWithdraw(inst),
               }"
-              :disabled="busy === `i-${inst.id}` || !canActOn(inst)"
+              :disabled="busy === `i-${inst.id}` || (!canActOn(inst) && !canWithdraw(inst))"
               :aria-label="`${titleOf(inst)} — ${subtaskActionLabel(inst)}`"
-              @click="advanceSubtask(inst)"
+              @click="onSubtaskClick(inst)"
             >
               <span class="mark" aria-hidden="true">{{ isDoneStatus(inst.status) ? '✓' : inst.status === 'in_progress' ? '●' : '○' }}</span>
               <span class="check-body">
@@ -502,6 +541,15 @@ onUnmounted(stopSpeaking)
               @click="submitCard(inst)"
             >
               {{ t('kid.taskActions.done') }}
+            </button>
+            <button
+              v-if="canWithdraw(inst)"
+              type="button"
+              class="big ghost"
+              :disabled="busy === `i-${inst.id}`"
+              @click="withdrawSubtask(inst)"
+            >
+              {{ t('kid.taskActions.tapToUndo') }}
             </button>
           </div>
         </div>
@@ -726,6 +774,10 @@ onUnmounted(stopSpeaking)
 .big.sun {
   background: var(--gp-sun);
   color: var(--gp-space-dark);
+}
+.big.ghost {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 .big:disabled {
   opacity: 0.5;

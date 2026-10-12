@@ -515,6 +515,8 @@ export default {
         redemption: '商城兑换',
         english_log: '英语观看登记',
       },
+      rewardAfter: '通过后发放 {xp} 经验 · {coins} 成长币',
+      approveTask: '通过后会发放 {xp} 经验、{coins} 成长币。确认通过？',
     },
     tasks: {
       status: {
@@ -641,6 +643,7 @@ export default {
       finishStepsFirst: '请先勾完每一项再提交',
     },
     taskReward: '🎁 {xp} 经验 · {coins} 成长币',
+    taskRewardPending: '🎁 {xp} 经验 · {coins} 成长币（审核通过后）',
     englishStatus: {
       PENDING: '待家长确认',
       APPROVED: '已确认',

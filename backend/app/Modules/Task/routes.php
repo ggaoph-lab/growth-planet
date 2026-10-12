@@ -36,4 +36,5 @@ Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(funct
     Route::post('task-instances/{id}/steps/{sid}/check', [KidTaskController::class, 'checkStep'])->whereNumber(['id', 'sid'])->middleware('idempotent');
     Route::post('task-instances/{id}/self-check', [KidTaskController::class, 'selfCheck'])->whereNumber('id')->middleware('idempotent');
     Route::post('task-instances/{id}/submit', [KidTaskController::class, 'submit'])->whereNumber('id')->middleware('idempotent');
+    Route::post('task-instances/{id}/withdraw', [KidTaskController::class, 'withdraw'])->whereNumber('id')->middleware('idempotent');
 });

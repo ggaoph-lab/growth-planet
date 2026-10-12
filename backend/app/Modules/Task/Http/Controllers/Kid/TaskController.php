@@ -10,6 +10,7 @@ use App\Modules\Task\Services\TaskInstanceGenerator;
 use App\Modules\Task\Services\TaskKidFlowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class TaskController
 {
@@ -26,23 +27,22 @@ class TaskController
         $child = $this->context->child();
         $date = $request->query('date', $this->clock->today($family->timezone)->toDateString());
         $instances = $this->generator->ensureForChildOnDate($family, $child, $date);
-        $instances->each(fn ($instance) => $instance->load('instanceSteps'));
 
-        return response()->json(['data' => $instances->values()]);
+        return response()->json(['data' => $this->presentMany($instances)->values()]);
     }
 
     public function ready(int $id): JsonResponse
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->withSteps($this->flow->ready($instance, $this->context->child()))]);
+        return response()->json(['data' => $this->present($this->flow->ready($instance, $this->context->child()))]);
     }
 
     public function firstStep(int $id): JsonResponse
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->withSteps($this->flow->markFirstStep($instance, $this->context->child()))]);
+        return response()->json(['data' => $this->present($this->flow->markFirstStep($instance, $this->context->child()))]);
     }
 
     public function checkStep(int $id, int $sid, Request $request): JsonResponse
@@ -58,14 +58,14 @@ class TaskController
         );
 
         // Return the whole instance (with steps) so the kid UI can refresh checkmarks in one shot.
-        return response()->json(['data' => $this->withSteps($instance->fresh())]);
+        return response()->json(['data' => $this->present($instance->fresh())]);
     }
 
     public function selfCheck(int $id): JsonResponse
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->withSteps($this->flow->selfCheck($instance, $this->context->child()))]);
+        return response()->json(['data' => $this->present($this->flow->selfCheck($instance, $this->context->child()))]);
     }
 
     public function submit(int $id, Request $request): JsonResponse
@@ -73,7 +73,18 @@ class TaskController
         $data = $request->validate(['note' => ['nullable', 'string', 'max:500']]);
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->withSteps($this->flow->submit($instance, $this->context->child(), $data['note'] ?? null))]);
+        return response()->json(['data' => $this->present($this->flow->submit($instance, $this->context->child(), $data['note'] ?? null))]);
+    }
+
+    public function withdraw(int $id): JsonResponse
+    {
+        $instance = $this->findInstance($id);
+
+        return response()->json(['data' => $this->present($this->flow->withdraw(
+            $instance,
+            $this->context->child(),
+            $this->context->user()->id,
+        ))]);
     }
 
     private function findInstance(int $id): TaskInstance
@@ -86,8 +97,24 @@ class TaskController
             ->findOrFail($id);
     }
 
-    private function withSteps(TaskInstance $instance): TaskInstance
+    private function present(TaskInstance $instance): TaskInstance
     {
-        return $instance->load('instanceSteps');
+        $instance->load('instanceSteps');
+        $instance->setAttribute('can_withdraw', $this->flow->canWithdraw($instance));
+
+        return $instance;
+    }
+
+    /**
+     * @param  Collection<int, TaskInstance>  $instances
+     * @return Collection<int, TaskInstance>
+     */
+    private function presentMany(Collection $instances): Collection
+    {
+        $instances->each(fn (TaskInstance $instance) => $instance->load('instanceSteps'));
+        $open = $this->flow->withdrawableIds($instances)->flip();
+        $instances->each(fn (TaskInstance $instance) => $instance->setAttribute('can_withdraw', $open->has($instance->id)));
+
+        return $instances;
     }
 }

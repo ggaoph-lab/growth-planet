@@ -105,6 +105,26 @@ class ApprovalService
         return $request;
     }
 
+    public function cancel(ApprovalRequest $request, ?int $actorUserId, ?string $note = null): ApprovalRequest
+    {
+        if ($request->status !== ApprovalStatus::Pending) {
+            throw new ApiException('ALREADY_DECIDED', BiMsg::of('该申请已处理', 'This request has already been processed'), 409);
+        }
+
+        $from = $request->status;
+        $request->status = ApprovalStatus::Cancelled;
+        $request->decided_by = $actorUserId;
+        $request->decided_at = $this->clock->now();
+        $request->decision_note = $note;
+        $request->active_key = null;
+        $request->lock_version++;
+        $request->save();
+
+        $this->recordEvent($request, $from, ApprovalStatus::Cancelled, $actorUserId, $note);
+
+        return $request;
+    }
+
     private function recordEvent(ApprovalRequest $request, ?ApprovalStatus $from, ApprovalStatus $to, ?int $actorId, ?string $note): void
     {
         ApprovalEvent::query()->create([

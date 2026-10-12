@@ -515,6 +515,8 @@ export default {
         redemption: 'Shop redemption',
         english_log: 'English watch log',
       },
+      rewardAfter: '{xp} XP · {coins} growth coins after approval',
+      approveTask: 'Approving grants {xp} XP and {coins} growth coins. Continue?',
     },
     tasks: {
       status: {
@@ -641,6 +643,7 @@ export default {
       finishStepsFirst: 'Check off each item before submitting',
     },
     taskReward: '🎁 {xp} XP · {coins} growth coins',
+    taskRewardPending: '🎁 {xp} XP · {coins} growth coins (after approval)',
     englishStatus: {
       PENDING: 'Waiting for parent',
       APPROVED: 'Confirmed',

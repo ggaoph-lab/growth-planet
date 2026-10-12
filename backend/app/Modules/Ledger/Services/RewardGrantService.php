@@ -10,9 +10,11 @@ use App\Modules\Ledger\DTO\RewardIntent;
 use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\RewardGrantStatus;
 use App\Modules\Ledger\Models\CoinAccount;
+use App\Modules\Ledger\Models\CoinLedgerEntry;
 use App\Modules\Ledger\Models\RewardGrant;
 use App\Modules\Ledger\Models\RewardPolicy;
 use App\Modules\Ledger\Models\XpAccount;
+use App\Modules\Ledger\Models\XpLedgerEntry;
 use Illuminate\Database\QueryException;
 class RewardGrantService
 {
@@ -129,6 +131,39 @@ class RewardGrantService
         $grant->save();
 
         return $grant;
+    }
+
+    /**
+     * Undo a posted task reward and free its grant key so a later approval can pay again.
+     */
+    public function reversePosted(RewardGrant $grant, ?int $operatorId = null): RewardGrant
+    {
+        if ($grant->status === RewardGrantStatus::Reversed) {
+            return $grant;
+        }
+
+        if ($grant->xp_ledger_id !== null) {
+            $entry = XpLedgerEntry::query()->whereKey($grant->xp_ledger_id)->first();
+            if ($entry !== null && $entry->reversal_of_id === null) {
+                $this->xpLedger->reverse($entry, 'reversal:grant:'.$grant->id.':xp', $operatorId);
+            }
+        }
+
+        if ($grant->coin_ledger_id !== null) {
+            $entry = CoinLedgerEntry::query()->whereKey($grant->coin_ledger_id)->first();
+            if ($entry !== null && $entry->reversal_of_id === null) {
+                $this->coinLedger->reverse($entry, 'reversal:grant:'.$grant->id.':coin', $operatorId);
+            }
+        }
+
+        $suffix = ':reversed:'.$grant->id;
+        if (! str_ends_with($grant->grant_key, $suffix)) {
+            $grant->grant_key = mb_substr($grant->grant_key, 0, 128 - strlen($suffix)).$suffix;
+        }
+        $grant->status = RewardGrantStatus::Reversed;
+        $grant->save();
+
+        return $grant->fresh();
     }
 
     /**

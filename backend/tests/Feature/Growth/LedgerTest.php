@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\Growth;
 
+use App\Modules\Approval\Enums\ApprovalStatus;
+use App\Modules\Approval\Models\ApprovalRequest;
+use App\Modules\Ledger\DTO\RewardIntent;
 use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\SourceModule;
 use App\Modules\Ledger\Models\CoinAccount;
 use App\Modules\Ledger\Models\XpAccount;
 use App\Modules\Ledger\Services\CoinLedgerService;
+use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Ledger\Services\XpLedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -60,20 +64,52 @@ class LedgerTest extends TestCase
             ->assertJsonCount(1, 'data')
             ->json('data.0.id');
 
-        $key = (string) Str::uuid();
         $this->loginKid($child->fresh(['member.user']), $device, $token)
-            ->withHeader('Idempotency-Key', $key)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/ready")
             ->assertOk();
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.status', 'submitted');
 
         $wallet = $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->getJson('/api/v1/kid/wallet')
             ->json('data');
-        $this->assertSame(10, $wallet['xp']['balance']);
-        $this->assertSame(5, $wallet['coin']['balance']);
+        $this->assertSame(0, $wallet['xp']['balance']);
+        $this->assertSame(0, $wallet['coin']['balance']);
+
+        $approval = ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail();
+        $this->assertSame(ApprovalStatus::Pending, $approval->status);
+
+        $login = $this->loginParent($parent);
+        $response = $login
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/parent/approvals/{$approval->id}/approve", ['lock_version' => $approval->lock_version]);
+        if ($response->status() !== 200) {
+            fwrite(STDERR, json_encode($response->json(), JSON_UNESCAPED_UNICODE).PHP_EOL);
+        }
+        $response->assertOk();
+
+        $this->assertSame(10, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(5, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+
+        app(RewardGrantService::class)->grant(new RewardIntent(
+            familyId: $family->id,
+            childId: $child->id,
+            policyCode: 'task.complete',
+            grantKey: 'task:instance:'.$instanceId.':complete',
+            sourceModule: SourceModule::Task,
+            sourceType: 'task_instance',
+            sourceId: $instanceId,
+            occurredAt: now()->toImmutable(),
+            xpAmount: 10,
+            coinAmount: 5,
+            postImmediately: true,
+        ));
+
+        $this->assertSame(10, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(5, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 }

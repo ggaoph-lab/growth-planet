@@ -140,6 +140,14 @@ export interface ApprovalRequest {
   lock_version: number
   created_at: string
   updated_at: string
+  child_name?: string | null
+  summary?: {
+    title?: string | null
+    group_title?: string | null
+    description?: string | null
+    xp_reward?: number
+    coin_reward?: number
+  } | null
 }
 
 export type TaskKind = 'standard' | 'stepped' | 'long_term'
@@ -250,6 +258,7 @@ export interface TaskInstance {
   first_step_at?: string | null
   submitted_at: string | null
   completed_at: string | null
+  can_withdraw?: boolean
 }
 
 export interface ParentHabit {
