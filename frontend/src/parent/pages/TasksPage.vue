@@ -39,10 +39,9 @@ const childMap = computed(() => new Map(children.value.map((c) => [c.id, c])))
 
 const subjects: HomeworkSubject[] = ['语文', '数学', '英语', '科学', '道法', '体育', '美术', '音乐', '其他']
 
-type TaskForm = {
+type SubtaskForm = {
+  id?: number
   title: string
-  child_id: number | undefined
-  category_id: number | null
   start_date: string
   due_time: string | null
   recurring: boolean
@@ -50,8 +49,14 @@ type TaskForm = {
   xp_reward: number
   coin_reward: number
   with_parent: boolean
+}
+
+type TaskForm = {
+  title: string
+  child_id: number | undefined
+  category_id: number | null
   steps: { title: string }[]
-  subtasks: { id?: number; title: string; due_time: string | null }[]
+  subtasks: SubtaskForm[]
   kind: ParentTask['kind']
 }
 
@@ -61,10 +66,9 @@ function soleActiveChildId(): number | undefined {
   return activeChildren.value.length === 1 ? activeChildren.value[0]?.id : undefined
 }
 
-function blankForm(): TaskForm {
+function blankSubtask(): SubtaskForm {
   return {
     title: '',
-    child_id: soleActiveChildId(),
     start_date: todayIso(),
     due_time: '13:20',
     recurring: false,
@@ -72,8 +76,15 @@ function blankForm(): TaskForm {
     xp_reward: 10,
     coin_reward: 5,
     with_parent: false,
+  }
+}
+
+function blankForm(): TaskForm {
+  return {
+    title: '',
+    child_id: soleActiveChildId(),
     steps: [],
-    subtasks: [],
+    subtasks: [blankSubtask()],
     category_id: null,
     kind: 'standard',
   }
@@ -160,13 +171,13 @@ function isoWeekday(dateStr: string): number {
   return day === 0 ? 7 : day
 }
 
-function buildSchedules(f: TaskForm): TaskSchedule[] {
-  const due = f.due_time || null
-  if (f.recurring) {
+function buildSubtaskSchedules(sub: SubtaskForm): TaskSchedule[] {
+  const due = sub.due_time || null
+  if (sub.recurring) {
     return [
       {
         frequency: 'weekly',
-        weekdays: [isoWeekday(f.start_date)],
+        weekdays: [isoWeekday(sub.start_date)],
         due_time: due,
       },
     ]
@@ -177,6 +188,31 @@ function buildSchedules(f: TaskForm): TaskSchedule[] {
       due_time: due,
     },
   ]
+}
+
+function subtaskFromTask(task: ParentTask): SubtaskForm {
+  const schedule = task.schedules?.[0]
+  return {
+    id: task.id,
+    title: task.title,
+    start_date: dateOnly(task.start_date) || todayIso(),
+    due_time: timeOnly(schedule?.due_time ?? undefined) || null,
+    recurring: schedule?.frequency === 'weekly',
+    end_date: dateOnly(task.end_date),
+    xp_reward: task.xp_reward,
+    coin_reward: task.coin_reward,
+    with_parent: !!task.with_parent,
+  }
+}
+
+function rewardSummary(task: ParentTask): string {
+  const kids = task.children ?? []
+  if (kids.length > 0) {
+    const xp = kids.reduce((sum, child) => sum + child.xp_reward, 0)
+    const coins = kids.reduce((sum, child) => sum + child.coin_reward, 0)
+    return `${xp} XP · ${coins} ${t('common.coinShort')}`
+  }
+  return `${task.xp_reward} XP · ${task.coin_reward} ${t('common.coinShort')}`
 }
 
 function subtaskTimes(task: ParentTask): string[] {
@@ -332,26 +368,19 @@ function openCreate(): void {
 }
 
 function openEdit(task: ParentTask): void {
-  const schedule = task.schedules?.[0]
   editingId.value = task.id
+  const childSubs = task.children ?? []
   form.value = {
     title: task.title,
     child_id: task.child_id ?? undefined,
-    start_date: dateOnly(task.start_date) || todayIso(),
-    due_time: timeOnly(schedule?.due_time ?? undefined) || '13:20',
-    recurring: schedule?.frequency === 'weekly',
-    end_date: dateOnly(task.end_date),
-    xp_reward: task.xp_reward,
-    coin_reward: task.coin_reward,
-    with_parent: !!task.with_parent,
     steps: (task.steps ?? []).map((s) => ({ title: s.title })),
-    subtasks: (task.children ?? []).map((child) => ({
-      id: child.id,
-      title: child.title,
-      due_time: timeOnly(child.schedules?.[0]?.due_time ?? undefined) || null,
-    })),
+    subtasks: childSubs.length > 0 ? childSubs.map(subtaskFromTask) : [subtaskFromTask(task)],
     category_id: task.category_id ?? null,
     kind: task.kind,
+  }
+  // Leaf tasks become a group title + one subtask on save; drop the leaf id from the only subtask.
+  if (childSubs.length === 0 && form.value.subtasks[0]) {
+    delete form.value.subtasks[0].id
   }
   showForm.value = true
 }
@@ -361,16 +390,20 @@ function validateForm(): boolean {
     ElMessage.warning(t('common.fillTaskTitle'))
     return false
   }
-  if (!form.value.start_date) {
-    ElMessage.warning(t('common.fillTaskDate'))
-    return false
-  }
-  if (form.value.recurring && !form.value.end_date) {
-    ElMessage.warning(t('common.fillTaskEndDate'))
+  if (form.value.subtasks.length === 0) {
+    ElMessage.warning(t('common.fillSubtaskTitle'))
     return false
   }
   if (form.value.subtasks.some((sub) => !sub.title.trim())) {
     ElMessage.warning(t('common.fillSubtaskTitle'))
+    return false
+  }
+  if (form.value.subtasks.some((sub) => !sub.start_date)) {
+    ElMessage.warning(t('common.fillTaskDate'))
+    return false
+  }
+  if (form.value.subtasks.some((sub) => sub.recurring && !sub.end_date)) {
+    ElMessage.warning(t('common.fillTaskEndDate'))
     return false
   }
   return true
@@ -380,23 +413,33 @@ async function saveTask(): Promise<void> {
   if (!validateForm()) return
   saving.value = true
   try {
-    const endDate = form.value.recurring ? form.value.end_date : form.value.start_date
+    const subs = form.value.subtasks
+    const startDates = subs.map((sub) => sub.start_date).filter(Boolean).sort()
+    const endDates = subs
+      .map((sub) => (sub.recurring ? sub.end_date : sub.start_date))
+      .filter(Boolean)
+      .sort()
     const payload = {
       title: form.value.title.trim(),
       kind: form.value.kind,
-      start_date: form.value.start_date,
-      end_date: endDate,
-      xp_reward: form.value.xp_reward,
-      coin_reward: form.value.coin_reward,
+      start_date: startDates[0] ?? todayIso(),
+      end_date: endDates[endDates.length - 1] ?? startDates[0] ?? todayIso(),
+      xp_reward: 0,
+      coin_reward: 0,
       requires_approval: false,
-      with_parent: form.value.with_parent,
-      schedules: buildSchedules(form.value),
+      with_parent: false,
+      schedules: [{ frequency: 'once' as const }],
       child_id: form.value.child_id ?? null,
       category_id: form.value.category_id ?? null,
-      subtasks: form.value.subtasks.map((sub) => ({
+      subtasks: subs.map((sub) => ({
         ...(sub.id ? { id: sub.id } : {}),
         title: sub.title.trim(),
-        due_time: sub.due_time || null,
+        start_date: sub.start_date,
+        end_date: sub.recurring ? sub.end_date : sub.start_date,
+        xp_reward: sub.xp_reward,
+        coin_reward: sub.coin_reward,
+        with_parent: sub.with_parent,
+        schedules: buildSubtaskSchedules(sub),
       })),
       ...(form.value.kind === 'stepped'
         ? { steps: form.value.steps.filter((s) => s.title.trim()).map((s) => ({ title: s.title.trim() })) }
@@ -444,7 +487,7 @@ async function deleteTask(task: ParentTask): Promise<void> {
 }
 
 function addSubtask(): void {
-  form.value.subtasks.push({ title: '', due_time: null })
+  form.value.subtasks.push(blankSubtask())
 }
 
 function removeSubtask(index: number): void {
@@ -659,15 +702,22 @@ onMounted(load)
                     : t('common.wholeFamily')
                 }}
               </div>
-              <el-tag v-if="(row as ParentTask).with_parent" size="small" type="warning" class="tag-inline">
+              <el-tag
+                v-if="
+                  (row as ParentTask).with_parent ||
+                  (row as ParentTask).children?.some((child) => child.with_parent)
+                "
+                size="small"
+                type="warning"
+                class="tag-inline"
+              >
                 {{ t('common.withParentTag') }}
               </el-tag>
             </template>
           </el-table-column>
           <el-table-column :label="t('growth.coins')" width="150">
             <template #default="{ row }">
-              {{ (row as ParentTask).xp_reward }} XP · {{ (row as ParentTask).coin_reward }} {{ t('common.coinShort') }}
-              <span v-if="(row as ParentTask).children?.length"> {{ t('common.rewardEach') }}</span>
+              {{ rewardSummary(row as ParentTask) }}
             </template>
           </el-table-column>
           <el-table-column :label="t('common.actions')" width="140" fixed="right">
@@ -722,13 +772,18 @@ onMounted(load)
     <el-dialog
       v-model="showForm"
       :title="editingId ? t('common.editTask') : t('common.createTask')"
-      width="560px"
+      width="600px"
       destroy-on-close
+      class="task-form-dialog"
     >
-      <el-form label-width="100px">
-        <el-form-item :label="t('common.title')" required>
-          <el-input v-model="form.title" maxlength="128" />
-        </el-form-item>
+      <el-input
+        v-model="form.title"
+        class="title-box"
+        size="large"
+        maxlength="128"
+        :placeholder="t('common.title')"
+      />
+      <el-form label-width="100px" class="task-meta-form">
         <el-form-item :label="t('common.taskCategory')">
           <el-select
             v-model="form.category_id"
@@ -749,64 +804,74 @@ onMounted(load)
             <el-option v-for="c in activeChildren" :key="c.id" :label="c.nickname" :value="c.id" />
           </el-select>
         </el-form-item>
-        <el-form-item :label="t('common.withParent')">
-          <el-switch v-model="form.with_parent" />
-          <div class="hint-inline">{{ t('common.withParentHint') }}</div>
-        </el-form-item>
-        <el-form-item :label="t('common.taskStartDate')" required>
-          <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
-        </el-form-item>
-        <el-form-item v-if="form.subtasks.length === 0" :label="t('common.taskTime')">
-          <el-time-picker
-            v-model="form.due_time"
-            format="HH:mm"
-            value-format="HH:mm"
-            clearable
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item :label="t('common.recurringTask')">
-          <el-switch v-model="form.recurring" />
-          <div class="hint-inline">{{ t('common.recurringTaskHint') }}</div>
-        </el-form-item>
-        <el-form-item v-if="form.recurring" :label="t('common.taskEndDate')" required>
-          <el-date-picker
-            v-model="form.end_date"
-            type="date"
-            value-format="YYYY-MM-DD"
-            :disabled-date="(d: Date) => form.start_date ? d < new Date(form.start_date + 'T00:00:00') : false"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item :label="t('common.xpLabel')">
-          <el-input-number v-model="form.xp_reward" :min="0" />
-        </el-form-item>
-        <el-form-item :label="t('common.growthCoin')">
-          <el-input-number v-model="form.coin_reward" :min="0" />
-        </el-form-item>
-
-        <div class="hw-items-head">
-          <strong>{{ t('common.subtasks') }}</strong>
-          <el-button size="small" @click="addSubtask">{{ t('common.addSubtask') }}</el-button>
-        </div>
-        <p class="hint">{{ t('common.subtaskHint') }}</p>
-        <div v-for="(sub, index) in form.subtasks" :key="sub.id ?? `new-${index}`" class="subtask-row">
-          <el-input v-model="sub.title" :placeholder="t('common.subtaskTitle')" maxlength="128" />
-          <el-time-picker v-model="sub.due_time" format="HH:mm" value-format="HH:mm" clearable />
-          <el-button link type="danger" @click="removeSubtask(index)">{{ t('common.delete') }}</el-button>
-        </div>
-
-        <template v-if="form.kind === 'stepped'">
-          <div class="hw-items-head">
-            <strong>{{ t('common.homeworkItems') }}</strong>
-            <el-button size="small" @click="addStep">{{ t('common.homeworkAddItem') }}</el-button>
-          </div>
-          <div v-for="(step, index) in form.steps" :key="index" class="hw-item">
-            <el-input v-model="step.title" :placeholder="t('common.homeworkItemTitle')" maxlength="128" />
-            <el-button link type="danger" @click="removeStep(index)">{{ t('common.homeworkRemoveItem') }}</el-button>
-          </div>
-        </template>
       </el-form>
+
+      <div class="hw-items-head">
+        <strong>{{ t('common.subtasks') }}</strong>
+        <el-button size="small" @click="addSubtask">{{ t('common.addSubtask') }}</el-button>
+      </div>
+      <p class="hint">{{ t('common.subtaskHint') }}</p>
+      <div v-for="(sub, index) in form.subtasks" :key="sub.id ?? `new-${index}`" class="subtask-card">
+        <div class="subtask-card-head">
+          <el-input v-model="sub.title" :placeholder="t('common.subtaskTitle')" maxlength="128" />
+          <el-button
+            link
+            type="danger"
+            :disabled="form.subtasks.length <= 1"
+            @click="removeSubtask(index)"
+          >
+            {{ t('common.delete') }}
+          </el-button>
+        </div>
+        <el-form label-width="100px" class="subtask-fields">
+          <el-form-item :label="t('common.withParent')">
+            <el-switch v-model="sub.with_parent" />
+            <div class="hint-inline">{{ t('common.withParentHint') }}</div>
+          </el-form-item>
+          <el-form-item :label="t('common.taskStartDate')" required>
+            <el-date-picker v-model="sub.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-form-item>
+          <el-form-item :label="t('common.taskTime')">
+            <el-time-picker
+              v-model="sub.due_time"
+              format="HH:mm"
+              value-format="HH:mm"
+              clearable
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item :label="t('common.recurringTask')">
+            <el-switch v-model="sub.recurring" />
+            <div class="hint-inline">{{ t('common.recurringTaskHint') }}</div>
+          </el-form-item>
+          <el-form-item v-if="sub.recurring" :label="t('common.taskEndDate')" required>
+            <el-date-picker
+              v-model="sub.end_date"
+              type="date"
+              value-format="YYYY-MM-DD"
+              :disabled-date="(d: Date) => sub.start_date ? d < new Date(sub.start_date + 'T00:00:00') : false"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item :label="t('common.xpLabel')">
+            <el-input-number v-model="sub.xp_reward" :min="0" />
+          </el-form-item>
+          <el-form-item :label="t('common.growthCoin')">
+            <el-input-number v-model="sub.coin_reward" :min="0" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template v-if="form.kind === 'stepped'">
+        <div class="hw-items-head">
+          <strong>{{ t('common.homeworkItems') }}</strong>
+          <el-button size="small" @click="addStep">{{ t('common.homeworkAddItem') }}</el-button>
+        </div>
+        <div v-for="(step, index) in form.steps" :key="index" class="hw-item">
+          <el-input v-model="step.title" :placeholder="t('common.homeworkItemTitle')" maxlength="128" />
+          <el-button link type="danger" @click="removeStep(index)">{{ t('common.homeworkRemoveItem') }}</el-button>
+        </div>
+      </template>
       <template #footer>
         <el-button @click="showForm = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="saving" @click="saveTask">
@@ -847,17 +912,20 @@ onMounted(load)
           </div>
           <div>
             <dt>{{ t('growth.coins') }}</dt>
-            <dd>
-              {{ detailTask.xp_reward }} XP · {{ detailTask.coin_reward }} {{ t('common.coinShort') }}
-              <template v-if="detailTask.children?.length"> {{ t('common.rewardEach') }}</template>
-            </dd>
+            <dd>{{ rewardSummary(detailTask) }}</dd>
           </div>
         </dl>
         <div v-if="detailSubtasks(detailTask).length" class="detail-subs">
           <strong>{{ t('common.subtasks') }}</strong>
           <div v-for="sub in detailSubtasks(detailTask)" :key="sub.id" class="detail-sub">
             <span>{{ timeOnly(sub.schedules?.[0]?.due_time ?? undefined) || '—' }}</span>
-            <span>{{ sub.title }}</span>
+            <div>
+              <div>{{ sub.title }}</div>
+              <div class="muted">
+                {{ sub.xp_reward }} XP · {{ sub.coin_reward }} {{ t('common.coinShort') }}
+                <template v-if="sub.with_parent"> · {{ t('common.withParentTag') }}</template>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -1061,12 +1129,31 @@ onMounted(load)
   color: #5b8def;
   text-decoration: none;
 }
-.subtask-row {
+.title-box {
+  margin-bottom: 16px;
+}
+.task-meta-form {
+  margin-bottom: 4px;
+}
+.subtask-card {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #eef0f5;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+.subtask-card-head {
   display: grid;
-  grid-template-columns: 1fr 130px auto;
+  grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
+}
+.subtask-fields {
+  margin-top: 4px;
+}
+.subtask-fields :deep(.el-form-item) {
+  margin-bottom: 12px;
 }
 .group-toggle {
   display: flex;
@@ -1119,6 +1206,7 @@ onMounted(load)
   display: grid;
   grid-template-columns: 64px 1fr;
   gap: 8px;
+  align-items: start;
   padding: 8px 10px;
   border-radius: 10px;
   background: #f7f8fb;

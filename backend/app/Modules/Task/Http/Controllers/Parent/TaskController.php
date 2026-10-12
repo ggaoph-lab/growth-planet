@@ -162,7 +162,19 @@ class TaskController
             'subtasks' => ['nullable', 'array'],
             'subtasks.*.id' => ['nullable', 'integer'],
             'subtasks.*.title' => ['required', 'string', 'max:128'],
+            'subtasks.*.start_date' => ['nullable', 'date'],
+            'subtasks.*.end_date' => ['nullable', 'date'],
+            'subtasks.*.xp_reward' => ['nullable', 'integer', 'min:0'],
+            'subtasks.*.coin_reward' => ['nullable', 'integer', 'min:0'],
+            'subtasks.*.with_parent' => ['nullable', 'boolean'],
             'subtasks.*.due_time' => ['nullable', 'date_format:H:i'],
+            'subtasks.*.schedules' => ['nullable', 'array'],
+            'subtasks.*.schedules.*.frequency' => ['required', Rule::enum(ScheduleFrequency::class)],
+            'subtasks.*.schedules.*.weekdays' => ['nullable', 'array'],
+            'subtasks.*.schedules.*.weekdays.*' => ['integer', 'min:1', 'max:7'],
+            'subtasks.*.schedules.*.dates' => ['nullable', 'array'],
+            'subtasks.*.schedules.*.dates.*' => ['date'],
+            'subtasks.*.schedules.*.due_time' => ['nullable', 'date_format:H:i'],
         ]);
     }
 
@@ -221,9 +233,11 @@ class TaskController
                     ->first();
             }
 
+            $attrs = $this->attributesForSubtask($parent, $sub);
+
             if ($child === null) {
                 $child = Task::query()->create([
-                    ...$this->inheritedAttributes($parent),
+                    ...$attrs,
                     'family_id' => $parent->family_id,
                     'parent_id' => $parent->id,
                     'title' => $sub['title'],
@@ -232,14 +246,14 @@ class TaskController
                 ]);
             } else {
                 $child->fill([
-                    ...$this->inheritedAttributes($parent),
+                    ...$attrs,
                     'title' => $sub['title'],
                 ]);
                 $child->version++;
                 $child->save();
             }
 
-            $this->syncSchedules($child, $this->schedulesForSubtask($parent, $sub['due_time'] ?? null));
+            $this->syncSchedules($child, $this->schedulesForSubtask($parent, $sub));
             $this->refreshPendingInstances($child);
             $keptIds[] = $child->id;
         }
@@ -254,43 +268,63 @@ class TaskController
     {
         $children = Task::query()->where('parent_id', $parent->id)->get();
         foreach ($children as $child) {
-            $child->fill($this->inheritedAttributes($parent));
+            $child->fill($this->sharedParentAttributes($parent));
             $child->version++;
             $child->save();
-            $this->syncSchedules($child, $this->schedulesForSubtask($parent, $child->schedules()->value('due_time')));
             $this->refreshPendingInstances($child);
         }
     }
 
     /**
+     * Fields copied from the group title task onto every subtask.
+     *
      * @return array<string, mixed>
      */
-    private function inheritedAttributes(Task $parent): array
+    private function sharedParentAttributes(Task $parent): array
     {
         return [
             'child_id' => $parent->child_id,
             'category' => $parent->category,
             'category_id' => $parent->category_id,
             'kind' => TaskKind::Standard,
-            'start_date' => $parent->start_date,
-            'end_date' => $parent->end_date,
-            'xp_reward' => $parent->xp_reward,
-            'coin_reward' => $parent->coin_reward,
             'requires_approval' => $parent->requires_approval,
             'requires_self_check' => $parent->requires_self_check,
-            'with_parent' => $parent->with_parent,
             'is_active' => $parent->is_active,
         ];
     }
 
     /**
+     * @param  array<string, mixed>  $sub
+     * @return array<string, mixed>
+     */
+    private function attributesForSubtask(Task $parent, array $sub): array
+    {
+        return [
+            ...$this->sharedParentAttributes($parent),
+            'start_date' => $sub['start_date'] ?? $parent->start_date,
+            'end_date' => array_key_exists('end_date', $sub) ? $sub['end_date'] : $parent->end_date,
+            'xp_reward' => $sub['xp_reward'] ?? $parent->xp_reward,
+            'coin_reward' => $sub['coin_reward'] ?? $parent->coin_reward,
+            'with_parent' => array_key_exists('with_parent', $sub)
+                ? (bool) $sub['with_parent']
+                : $parent->with_parent,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $sub
      * @return list<array<string, mixed>>
      */
-    private function schedulesForSubtask(Task $parent, mixed $dueTime): array
+    private function schedulesForSubtask(Task $parent, array $sub): array
     {
+        if (! empty($sub['schedules']) && is_array($sub['schedules'])) {
+            return array_values($sub['schedules']);
+        }
+
         $parent->load('schedules');
         $base = $parent->schedules->first();
         $frequency = $base?->frequency?->value ?? ScheduleFrequency::Once->value;
+        $dueTime = $sub['due_time'] ?? null;
 
         if (is_string($dueTime) && strlen($dueTime) >= 5) {
             $dueTime = substr($dueTime, 0, 5);

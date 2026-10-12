@@ -268,6 +268,8 @@ export interface Reward {
   requires_approval: boolean
   status: RewardStatus
   version: number
+  image_attachment_id?: number | null
+  image_url?: string | null
 }
 
 export type RedemptionStatus = 'requested' | 'approved' | 'rejected' | 'cancelled' | 'fulfilled'

@@ -91,7 +91,7 @@
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
 | 账本 | `GET /parent/children/{id}/ledger?asset=xp|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus` 🔁🔐 | `GET /kid/wallet` |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |
-| 商城 | `GET/POST/PUT /parent/rewards`、`GET /parent/redemptions` | `GET /kid/shop`、`POST /kid/redemptions` 🔁、`POST /kid/redemptions/{ulid}/cancel` 🔁 |
+| 商城 | `GET/POST/PUT/DELETE /parent/rewards`（创建可带 `image` multipart；`POST/DELETE /parent/rewards/{id}/image`；`GET .../image`）、`GET /parent/redemptions` | `GET /kid/shop`、`GET /kid/shop/{id}/image`、`POST /kid/redemptions` 🔁、`POST /kid/redemptions/{ulid}/cancel` 🔁 |
 | 审核中心 | `GET /parent/approvals?status=PENDING`、`POST /parent/approvals/{id}/approve|reject|return` 🔁🔒、`GET /parent/approvals/{id}/events` | `GET /kid/requests`（我的申请状态） |
 
 ### 第三阶段：生活管理

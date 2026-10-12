@@ -149,19 +149,49 @@ class ParentTaskApiTest extends TestCase
             'end_date' => '2026-10-12',
             'child_id' => $child->id,
             'category_id' => $categoryId,
-            'xp_reward' => 6,
-            'coin_reward' => 2,
+            'xp_reward' => 0,
+            'coin_reward' => 0,
             'subtasks' => [
-                ['title' => '练琴', 'due_time' => '14:00'],
-                ['title' => '阅读', 'due_time' => '15:30'],
+                [
+                    'title' => '练琴',
+                    'start_date' => '2026-10-12',
+                    'end_date' => '2026-10-12',
+                    'xp_reward' => 6,
+                    'coin_reward' => 2,
+                    'with_parent' => true,
+                    'schedules' => [['frequency' => 'once', 'due_time' => '14:00']],
+                ],
+                [
+                    'title' => '阅读',
+                    'start_date' => '2026-10-12',
+                    'end_date' => '2026-12-31',
+                    'xp_reward' => 8,
+                    'coin_reward' => 3,
+                    'with_parent' => false,
+                    'schedules' => [[
+                        'frequency' => 'weekly',
+                        'weekdays' => [1],
+                        'due_time' => '15:30',
+                    ]],
+                ],
             ],
-            'schedules' => [['frequency' => 'once', 'due_time' => '14:00']],
+            'schedules' => [['frequency' => 'once']],
         ])->assertCreated()
             ->assertJsonPath('data.title', '下午安排')
             ->assertJsonPath('data.category_id', $categoryId)
             ->assertJsonPath('data.task_category.name', '学习')
             ->assertJsonCount(2, 'data.children')
             ->json('data');
+
+        $piano = collect($created['children'])->firstWhere('title', '练琴');
+        $reading = collect($created['children'])->firstWhere('title', '阅读');
+        $this->assertNotNull($piano);
+        $this->assertNotNull($reading);
+        $this->assertSame(6, $piano['xp_reward']);
+        $this->assertSame(2, $piano['coin_reward']);
+        $this->assertTrue((bool) $piano['with_parent']);
+        $this->assertSame(8, $reading['xp_reward']);
+        $this->assertSame('weekly', $reading['schedules'][0]['frequency'] ?? null);
 
         $this->actingAsParent($parent)->getJson('/api/v1/parent/tasks')
             ->assertOk()
@@ -182,15 +212,33 @@ class ParentTaskApiTest extends TestCase
         $this->assertTrue($instances->every(fn ($instance) => ($instance->snapshot['group_title'] ?? null) === '下午安排'));
         $this->assertTrue($instances->every(fn ($instance) => ($instance->snapshot['group_task_id'] ?? null) === $created['id']));
 
-        $piano = collect($created['children'])->firstWhere('title', '练琴');
-        $reading = collect($created['children'])->firstWhere('title', '阅读');
+        $pianoInstance = $instances->firstWhere(fn ($instance) => $instance->snapshot['title'] === '练琴');
+        $this->assertNotNull($pianoInstance);
+        $this->assertTrue((bool) ($pianoInstance->snapshot['with_parent'] ?? false));
+        $this->assertSame(6, $pianoInstance->snapshot['xp_reward'] ?? null);
 
         $this->actingAsParent($parent)->putJson('/api/v1/parent/tasks/'.$created['id'], [
             'title' => '放学后',
             'category_id' => $categoryId,
             'subtasks' => [
-                ['id' => $reading['id'], 'title' => '阅读', 'due_time' => '16:00'],
-                ['title' => '运动', 'due_time' => '17:00'],
+                [
+                    'id' => $reading['id'],
+                    'title' => '阅读',
+                    'start_date' => '2026-10-12',
+                    'end_date' => '2026-12-31',
+                    'xp_reward' => 8,
+                    'coin_reward' => 3,
+                    'with_parent' => false,
+                    'schedules' => [['frequency' => 'once', 'due_time' => '16:00']],
+                ],
+                [
+                    'title' => '运动',
+                    'start_date' => '2026-10-12',
+                    'end_date' => '2026-10-12',
+                    'xp_reward' => 5,
+                    'coin_reward' => 1,
+                    'schedules' => [['frequency' => 'once', 'due_time' => '17:00']],
+                ],
             ],
             'schedules' => [['frequency' => 'once']],
         ])->assertOk()

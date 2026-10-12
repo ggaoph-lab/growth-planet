@@ -169,7 +169,8 @@ onMounted(load)
       <el-empty v-if="!loading && rewards.length === 0" :description="t('kid.shopEmpty')" />
       <article v-for="r in rewards" :key="r.id" class="card">
         <div class="row">
-          <span class="emoji">{{ kindEmoji[r.kind] ?? '🎁' }}</span>
+          <img v-if="r.image_url" class="thumb" :src="r.image_url" :alt="r.name" />
+          <span v-else class="emoji">{{ kindEmoji[r.kind] ?? '🎁' }}</span>
           <div>
             <h3>{{ r.name }}</h3>
             <p v-if="r.description" class="desc">{{ r.description }}</p>
@@ -253,6 +254,14 @@ h2 {
 }
 .emoji {
   font-size: 36px;
+}
+.thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 14px;
+  flex: none;
+  background: rgba(255, 255, 255, 0.08);
 }
 .card h3 {
   margin: 0 0 4px;

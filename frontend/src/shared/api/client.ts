@@ -75,14 +75,16 @@ async function send(method: Method, path: string, options: RequestOptions, idemp
     const token = readCookie('XSRF-TOKEN')
     if (token) headers['X-XSRF-TOKEN'] = token
   }
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+  if (options.body !== undefined && !isFormData) headers['Content-Type'] = 'application/json'
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey.slice(0, 64)
 
   return fetch(url.pathname + url.search, {
     method,
     headers,
     credentials: 'same-origin',
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body:
+      options.body === undefined ? undefined : isFormData ? (options.body as FormData) : JSON.stringify(options.body),
   })
 }
 
@@ -149,6 +151,8 @@ export const api = {
   delete: <T>(path: string, options?: Omit<RequestOptions, 'body'>) => request<T>('DELETE', path, options ?? {}),
   postIdempotent: <T>(path: string, body?: unknown) => requestIdempotent<T>('POST', path, body),
   putIdempotent: <T>(path: string, body?: unknown) => requestIdempotent<T>('PUT', path, body),
+  /** Multipart upload; do not set Content-Type so the browser can add the boundary. */
+  upload: <T>(path: string, form: FormData) => request<T>('POST', path, { body: form }),
 }
 
 /** Paginated endpoints return meta alongside data. */

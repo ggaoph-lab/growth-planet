@@ -14,6 +14,9 @@ const saving = ref(false)
 const dialogOpen = ref(false)
 const editing = ref<Reward | null>(null)
 const tab = ref<'rewards' | 'redemptions' | 'wishes'>('rewards')
+const imageFile = ref<File | null>(null)
+const imagePreview = ref<string | null>(null)
+const removeExistingImage = ref(false)
 
 function kindLabel(kind: RewardKind): string {
   return t(`parent.shop.kind.${kind}`)
@@ -52,6 +55,29 @@ function resetForm(): void {
     requires_approval: true,
     status: 'draft',
   }
+  clearImageSelection()
+}
+
+function clearImageSelection(): void {
+  imageFile.value = null
+  imagePreview.value = null
+  removeExistingImage.value = false
+}
+
+function onImageChange(file: File | null): void {
+  imageFile.value = file
+  removeExistingImage.value = false
+  if (!file) {
+    imagePreview.value = editing.value?.image_url ?? null
+    return
+  }
+  imagePreview.value = URL.createObjectURL(file)
+}
+
+function clearImage(): void {
+  imageFile.value = null
+  imagePreview.value = null
+  if (editing.value?.image_url) removeExistingImage.value = true
 }
 
 async function load(): Promise<void> {
@@ -89,7 +115,16 @@ function openEdit(r: Reward): void {
     requires_approval: r.requires_approval,
     status: r.status,
   }
+  imageFile.value = null
+  imagePreview.value = r.image_url ?? null
+  removeExistingImage.value = false
   dialogOpen.value = true
+}
+
+function replaceReward(updated: Reward): void {
+  const i = rewards.value.findIndex((r) => r.id === updated.id)
+  if (i >= 0) rewards.value[i] = updated
+  else rewards.value.unshift(updated)
 }
 
 async function save(): Promise<void> {
@@ -99,22 +134,37 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    const payload = {
-      name: form.value.name.trim(),
-      description: form.value.description.trim() || null,
-      kind: form.value.kind,
-      coin_price: form.value.coin_price,
-      stock: form.value.stock,
-      requires_approval: form.value.requires_approval,
-      status: form.value.status,
-    }
     if (editing.value) {
-      const updated = await api.put<Reward>(`/parent/rewards/${editing.value.id}`, payload)
-      const i = rewards.value.findIndex((r) => r.id === updated.id)
-      if (i >= 0) rewards.value[i] = updated
+      const updated = await api.put<Reward>(`/parent/rewards/${editing.value.id}`, {
+        name: form.value.name.trim(),
+        description: form.value.description.trim() || null,
+        kind: form.value.kind,
+        coin_price: form.value.coin_price,
+        stock: form.value.stock,
+        requires_approval: form.value.requires_approval,
+        status: form.value.status,
+      })
+      let finalReward = updated
+      if (imageFile.value) {
+        const body = new FormData()
+        body.append('image', imageFile.value)
+        finalReward = await api.upload<Reward>(`/parent/rewards/${editing.value.id}/image`, body)
+      } else if (removeExistingImage.value) {
+        finalReward = await api.delete<Reward>(`/parent/rewards/${editing.value.id}/image`)
+      }
+      replaceReward(finalReward)
       ElMessage.success(t('common.saved'))
     } else {
-      rewards.value.unshift(await api.post<Reward>('/parent/rewards', payload))
+      const body = new FormData()
+      body.append('name', form.value.name.trim())
+      if (form.value.description.trim()) body.append('description', form.value.description.trim())
+      body.append('kind', form.value.kind)
+      body.append('coin_price', String(form.value.coin_price))
+      if (form.value.stock != null) body.append('stock', String(form.value.stock))
+      body.append('requires_approval', form.value.requires_approval ? '1' : '0')
+      body.append('status', form.value.status)
+      if (imageFile.value) body.append('image', imageFile.value)
+      rewards.value.unshift(await api.upload<Reward>('/parent/rewards', body))
       ElMessage.success(t('common.rewardCreated'))
     }
     dialogOpen.value = false
@@ -122,6 +172,21 @@ async function save(): Promise<void> {
     reportError(e)
   } finally {
     saving.value = false
+  }
+}
+
+async function removeReward(reward: Reward): Promise<void> {
+  try {
+    await ElMessageBox.confirm(t('common.confirmDeleteReward', { name: reward.name }), t('common.delete'), {
+      type: 'warning',
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
+    })
+    await api.delete(`/parent/rewards/${reward.id}`)
+    rewards.value = rewards.value.filter((r) => r.id !== reward.id)
+    ElMessage.success(t('common.rewardDeleted'))
+  } catch (e) {
+    reportError(e)
   }
 }
 
@@ -176,6 +241,12 @@ onMounted(load)
           <el-button type="primary" @click="openCreate">{{ t('common.createReward') }}</el-button>
         </div>
         <el-table :data="rewards" stripe :empty-text="t('common.noRewardsYet')">
+          <el-table-column :label="t('common.rewardImage')" width="72">
+            <template #default="{ row }">
+              <img v-if="(row as Reward).image_url" class="thumb" :src="(row as Reward).image_url!" :alt="(row as Reward).name" />
+              <span v-else class="thumb empty">—</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="name" :label="t('common.name')" min-width="120" />
           <el-table-column :label="t('common.type')" width="100">
             <template #default="scope">{{ kindLabel((scope.row as Reward).kind) }}</template>
@@ -191,9 +262,10 @@ onMounted(load)
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" width="80">
+          <el-table-column :label="t('common.actions')" width="140">
             <template #default="scope">
               <el-button link type="primary" @click="openEdit(scope.row as Reward)">{{ t('common.edit') }}</el-button>
+              <el-button link type="danger" @click="removeReward(scope.row as Reward)">{{ t('common.delete') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -248,6 +320,21 @@ onMounted(load)
         <el-form-item :label="t('common.description')">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item :label="t('common.rewardImage')">
+          <div class="image-field">
+            <img v-if="imagePreview" class="preview" :src="imagePreview" alt="" />
+            <el-upload
+              :auto-upload="false"
+              :show-file-list="false"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              :on-change="(file) => onImageChange(file.raw ?? null)"
+            >
+              <el-button>{{ t('common.rewardImagePick') }}</el-button>
+            </el-upload>
+            <el-button v-if="imagePreview" link type="danger" @click="clearImage">{{ t('common.rewardImageRemove') }}</el-button>
+            <p class="hint">{{ t('common.rewardImageHint') }}</p>
+          </div>
+        </el-form-item>
         <el-form-item :label="t('common.type')">
           <el-select v-model="form.kind">
             <el-option v-for="k in ['physical', 'family_activity', 'virtual_decoration'] as const" :key="k" :label="kindLabel(k)" :value="k" />
@@ -282,5 +369,38 @@ onMounted(load)
 }
 .toolbar {
   margin-bottom: 12px;
+}
+.thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+}
+.thumb.empty {
+  display: grid;
+  place-items: center;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
+}
+.image-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+.preview {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--el-fill-color-light);
+}
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
