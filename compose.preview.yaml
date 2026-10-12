@@ -1,8 +1,14 @@
-# Local preview overlay: serve host frontend/dist on the running stack (prod or dev).
+# Local preview overlay: serve host frontend/dist + live backend source on the running stack.
 # Usage:
-#   docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod -f compose.preview.yaml up -d nginx
+#   docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod -f compose.preview.yaml up -d nginx app
 # Or: make preview
 services:
   nginx:
     volumes:
       - ./frontend/dist:/var/www/frontend/dist:ro
+  # Pick up PHP TTS / API edits without rebuilding the prod image.
+  app:
+    volumes:
+      - ./backend:/var/www/backend
+      - app-storage:/var/www/backend/storage/app
+      - app-logs:/var/www/backend/storage/logs

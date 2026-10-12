@@ -127,9 +127,10 @@ return [
     |
     */
 
+    // Chinese APP_NAME slugs to "" → cookie would be "-session" (invalid / flaky in browsers).
     'cookie' => env(
         'SESSION_COOKIE',
-        Str::slug((string) env('APP_NAME', 'laravel')).'-session'
+        (Str::slug((string) env('APP_NAME', 'laravel')) ?: 'growth-planet').'-session'
     ),
 
     /*

@@ -131,11 +131,33 @@ class TaskInstanceGenerator
         $snapshot = $instance->snapshot ?? [];
         $changed = false;
 
+        // Older homework imports merged "title：detail" into title only — split once for kid display/TTS.
+        if (
+            $task->parent_id !== null
+            && ($task->description === null || trim((string) $task->description) === '')
+            && is_string($task->title)
+            && preg_match('/^(.+?)[：:](.+)$/u', $task->title, $parts) === 1
+        ) {
+            $task->title = mb_substr(trim($parts[1]), 0, 128);
+            $task->description = mb_substr(trim($parts[2]), 0, 2000);
+            $task->save();
+        }
+
         $groupId = $task->parent_id !== null ? (int) $task->parent_id : null;
         $groupTitle = $task->parent?->title;
         if (($snapshot['group_task_id'] ?? null) != $groupId || ($snapshot['group_title'] ?? null) !== $groupTitle) {
             $snapshot['group_task_id'] = $groupId;
             $snapshot['group_title'] = $groupTitle;
+            $changed = true;
+        }
+
+        $description = $task->description;
+        if (($snapshot['description'] ?? null) !== $description) {
+            $snapshot['description'] = $description;
+            $changed = true;
+        }
+        if (($snapshot['title'] ?? null) !== $task->title) {
+            $snapshot['title'] = $task->title;
             $changed = true;
         }
 

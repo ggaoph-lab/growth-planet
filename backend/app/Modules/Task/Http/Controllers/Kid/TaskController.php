@@ -35,29 +35,37 @@ class TaskController
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->flow->ready($instance, $this->context->child())]);
+        return response()->json(['data' => $this->withSteps($this->flow->ready($instance, $this->context->child()))]);
     }
 
     public function firstStep(int $id): JsonResponse
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->flow->markFirstStep($instance, $this->context->child())]);
+        return response()->json(['data' => $this->withSteps($this->flow->markFirstStep($instance, $this->context->child()))]);
     }
 
-    public function checkStep(int $id, int $sid): JsonResponse
+    public function checkStep(int $id, int $sid, Request $request): JsonResponse
     {
+        $data = $request->validate(['checked' => ['sometimes', 'boolean']]);
         $instance = $this->findInstance($id);
         $step = TaskInstanceStep::query()->where('task_instance_id', $instance->id)->findOrFail($sid);
+        $this->flow->checkStep(
+            $instance,
+            $step,
+            $this->context->child(),
+            array_key_exists('checked', $data) ? (bool) $data['checked'] : true,
+        );
 
-        return response()->json(['data' => $this->flow->checkStep($instance, $step, $this->context->child())]);
+        // Return the whole instance (with steps) so the kid UI can refresh checkmarks in one shot.
+        return response()->json(['data' => $this->withSteps($instance->fresh())]);
     }
 
     public function selfCheck(int $id): JsonResponse
     {
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->flow->selfCheck($instance, $this->context->child())]);
+        return response()->json(['data' => $this->withSteps($this->flow->selfCheck($instance, $this->context->child()))]);
     }
 
     public function submit(int $id, Request $request): JsonResponse
@@ -65,7 +73,7 @@ class TaskController
         $data = $request->validate(['note' => ['nullable', 'string', 'max:500']]);
         $instance = $this->findInstance($id);
 
-        return response()->json(['data' => $this->flow->submit($instance, $this->context->child(), $data['note'] ?? null)]);
+        return response()->json(['data' => $this->withSteps($this->flow->submit($instance, $this->context->child(), $data['note'] ?? null))]);
     }
 
     private function findInstance(int $id): TaskInstance
@@ -76,5 +84,10 @@ class TaskController
             ->where('family_id', $child->family_id)
             ->where('child_id', $child->id)
             ->findOrFail($id);
+    }
+
+    private function withSteps(TaskInstance $instance): TaskInstance
+    {
+        return $instance->load('instanceSteps');
     }
 }

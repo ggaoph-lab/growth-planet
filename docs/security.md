@@ -44,7 +44,7 @@
 |---|---|
 | CSRF | Sanctum 有状态 SPA；同源部署 |
 | XSS | Vue 默认转义；ESLint `vue/no-v-html: error`；后端存纯文本 |
-| CSP | `default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'` |
+| CSP | `default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'` |
 | 安全头 | `X-Content-Type-Options`、`Referrer-Policy: same-origin`、`Permissions-Policy`、生产 HSTS |
 | SQL 注入 | Eloquent/查询构造器参数绑定；排序与筛选字段白名单 |
 | 输入验证 | 所有接口使用 FormRequest；长度上限；枚举校验；日期合法性 |

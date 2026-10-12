@@ -229,16 +229,25 @@ export interface TaskInstance {
   lock_version: number
   snapshot: {
     title?: string
+    description?: string | null
     xp_reward?: number
     coin_reward?: number
     due_time?: string | null
     with_parent?: boolean
+    requires_self_check?: boolean
     group_title?: string | null
     group_task_id?: number | string | null
-    steps?: { id?: number; title: string; sort?: number }[]
+    steps?: { id?: number; title: string; sort?: number; is_required?: boolean }[]
   } & Record<string, unknown>
-  instance_steps?: { id: number; title: string; sort?: number; checked?: boolean }[]
+  instance_steps?: {
+    id: number
+    title: string
+    sort?: number
+    checked?: boolean
+    is_required?: boolean
+  }[]
   ready_at: string | null
+  first_step_at?: string | null
   submitted_at: string | null
   completed_at: string | null
 }

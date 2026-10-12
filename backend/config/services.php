@@ -56,6 +56,18 @@ return [
         'base_url' => env('DASHSCOPE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
         'model' => env('QWEN_MODEL', 'qwen-turbo'),
         'timeout' => (int) env('QWEN_TIMEOUT', 30),
+        // Natural kid read-aloud. Same DashScope key as homework LLM.
+        'tts_base_url' => env('DASHSCOPE_TTS_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1'),
+        'tts_model' => env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
+        'tts_voice' => env('QWEN_TTS_VOICE', 'Cherry'),
+        'tts_cosy_model' => env('QWEN_TTS_COSY_MODEL', 'cosyvoice-v2'),
+        'tts_cosy_voice' => env('QWEN_TTS_COSY_VOICE', 'longxiaochun_v2'),
+        'tts_timeout' => (int) env('QWEN_TTS_TIMEOUT', 25),
+    ],
+
+    // Kid read-aloud TTS (Qwen/CosyVoice when DASHSCOPE_API_KEY is set; else Edge / online fallbacks).
+    'tts' => [
+        'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
     ],
 
 ];

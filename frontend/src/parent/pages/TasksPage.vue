@@ -47,6 +47,7 @@ const subjects: HomeworkSubject[] = ['语文', '数学', '英语', '科学', '�
 type SubtaskForm = {
   id?: number
   title: string
+  description: string
   start_date: string
   due_time: string | null
   recurring: boolean
@@ -74,6 +75,7 @@ function soleActiveChildId(): number | undefined {
 function blankSubtask(): SubtaskForm {
   return {
     title: '',
+    description: '',
     start_date: todayIso(),
     due_time: '13:20',
     recurring: false,
@@ -200,6 +202,7 @@ function subtaskFromTask(task: ParentTask): SubtaskForm {
   return {
     id: task.id,
     title: task.title,
+    description: task.description ?? '',
     start_date: dateOnly(task.start_date) || todayIso(),
     due_time: timeOnly(schedule?.due_time ?? undefined) || null,
     recurring: schedule?.frequency === 'weekly',
@@ -439,6 +442,7 @@ async function saveTask(): Promise<void> {
       subtasks: subs.map((sub) => ({
         ...(sub.id ? { id: sub.id } : {}),
         title: sub.title.trim(),
+        description: sub.description.trim() || null,
         start_date: sub.start_date,
         end_date: sub.recurring ? sub.end_date : sub.start_date,
         xp_reward: sub.xp_reward,
@@ -882,6 +886,14 @@ onMounted(load)
             {{ t('common.delete') }}
           </el-button>
         </div>
+        <el-input
+          v-model="sub.description"
+          class="subtask-desc"
+          type="textarea"
+          :rows="2"
+          maxlength="2000"
+          :placeholder="t('common.subtaskDescription')"
+        />
         <el-form :label-width="taskFormLabelWidth" class="subtask-fields">
           <el-form-item :label="t('common.withParent')">
             <div class="field-inline">
@@ -1302,6 +1314,9 @@ onMounted(load)
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: center;
+  margin-bottom: 8px;
+}
+.subtask-desc {
   margin-bottom: 8px;
 }
 .subtask-fields {

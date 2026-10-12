@@ -51,11 +51,17 @@ PY
 }
 
 ensure_nginx_mount() {
-  if [[ -f "$MOUNT_MARK" ]]; then
-    if docker inspect growth-planet-nginx-1 --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null \
-      | grep -q '/frontend/dist$'; then
-      return 0
-    fi
+  local nginx_ok=0 app_ok=0
+  if docker inspect growth-planet-nginx-1 --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null \
+    | grep -q '/frontend/dist$'; then
+    nginx_ok=1
+  fi
+  if docker inspect growth-planet-app-1 --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null \
+    | grep -q '/backend$'; then
+    app_ok=1
+  fi
+  if [[ -f "$MOUNT_MARK" && "$nginx_ok" -eq 1 && "$app_ok" -eq 1 ]]; then
+    return 0
   fi
 
   if [[ ! -f "$ROOT/deploy/compose/.env.prod" ]]; then
@@ -63,11 +69,14 @@ ensure_nginx_mount() {
     return 0
   fi
 
-  echo "[$(date '+%H:%M:%S')] mounting frontend/dist onto nginx" >>"$LOG"
-  if docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod -f compose.preview.yaml up -d nginx >>"$LOG" 2>&1; then
+  echo "[$(date '+%H:%M:%S')] mounting frontend/dist + backend onto preview stack" >>"$LOG"
+  if docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod -f compose.preview.yaml up -d nginx app >>"$LOG" 2>&1; then
+    # Drop cached config so new services.php / TTS code is visible immediately.
+    docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod -f compose.preview.yaml exec -T app \
+      php artisan config:clear >>"$LOG" 2>&1 || true
     touch "$MOUNT_MARK"
   else
-    echo "[$(date '+%H:%M:%S')] nginx mount failed" >>"$LOG"
+    echo "[$(date '+%H:%M:%S')] preview mount failed" >>"$LOG"
   fi
 }
 

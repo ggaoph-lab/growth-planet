@@ -63,6 +63,7 @@ class Task extends Model
 
         return [
             'title' => $this->title,
+            'description' => $this->description,
             'icon' => $this->icon,
             'xp_reward' => $this->xp_reward,
             'coin_reward' => $this->coin_reward,

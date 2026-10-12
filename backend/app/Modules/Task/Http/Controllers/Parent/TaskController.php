@@ -162,6 +162,7 @@ class TaskController
             'subtasks' => ['nullable', 'array'],
             'subtasks.*.id' => ['nullable', 'integer'],
             'subtasks.*.title' => ['required', 'string', 'max:128'],
+            'subtasks.*.description' => ['nullable', 'string', 'max:2000'],
             'subtasks.*.start_date' => ['nullable', 'date'],
             'subtasks.*.end_date' => ['nullable', 'date'],
             'subtasks.*.xp_reward' => ['nullable', 'integer', 'min:0'],
@@ -241,6 +242,7 @@ class TaskController
                     'family_id' => $parent->family_id,
                     'parent_id' => $parent->id,
                     'title' => $sub['title'],
+                    'description' => $sub['description'] ?? null,
                     'version' => 1,
                     'created_by' => $parent->created_by,
                 ]);
@@ -248,6 +250,7 @@ class TaskController
                 $child->fill([
                     ...$attrs,
                     'title' => $sub['title'],
+                    'description' => array_key_exists('description', $sub) ? $sub['description'] : $child->description,
                 ]);
                 $child->version++;
                 $child->save();

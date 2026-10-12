@@ -80,7 +80,7 @@ class HomeworkImportService
                     'category' => $subject,
                     'title' => $this->itemTitle($item),
                     'icon' => null,
-                    'description' => null,
+                    'description' => $this->itemDescription($item),
                     'kind' => TaskKind::Standard,
                     'start_date' => $taskDate,
                     'end_date' => $taskDate,
@@ -148,12 +148,16 @@ class HomeworkImportService
      */
     private function itemTitle(array $item): string
     {
-        $title = trim((string) ($item['title'] ?? ''));
-        $detail = isset($item['detail']) ? trim((string) $item['detail']) : '';
-        if ($detail !== '') {
-            $title = $title.'：'.$detail;
-        }
+        return mb_substr(trim((string) ($item['title'] ?? '')), 0, 128);
+    }
 
-        return mb_substr($title, 0, 128);
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function itemDescription(array $item): ?string
+    {
+        $detail = isset($item['detail']) ? trim((string) $item['detail']) : '';
+
+        return $detail === '' ? null : mb_substr($detail, 0, 2000);
     }
 }

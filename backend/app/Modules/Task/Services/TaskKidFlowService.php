@@ -52,14 +52,17 @@ class TaskKidFlowService
         return $instance;
     }
 
-    public function checkStep(TaskInstance $instance, TaskInstanceStep $step, ChildProfile $child): TaskInstanceStep
+    public function checkStep(TaskInstance $instance, TaskInstanceStep $step, ChildProfile $child, bool $checked = true): TaskInstanceStep
     {
         $this->assertChildInstance($instance, $child);
         if ($step->task_instance_id !== $instance->id) {
             throw new ApiException('NOT_FOUND', BiMsg::of('内容不存在', 'Not found'), 404);
         }
-        $step->checked = true;
-        $step->checked_at = $this->clock->now();
+        if (! in_array($instance->status, [TaskInstanceStatus::Pending, TaskInstanceStatus::InProgress, TaskInstanceStatus::Returned], true)) {
+            throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能改勾选', 'Cannot change checklist in the current state'), 409);
+        }
+        $step->checked = $checked;
+        $step->checked_at = $checked ? $this->clock->now() : null;
         $step->save();
 
         return $step;

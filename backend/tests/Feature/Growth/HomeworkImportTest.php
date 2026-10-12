@@ -378,7 +378,7 @@ TEXT;
 
         $instances = collect($response->json('data.instances'));
         $this->assertEqualsCanonicalizing(
-            ['指读常用词：计算、得数', '读题练习', '口算卡片：2遍'],
+            ['指读常用词', '读题练习', '口算卡片'],
             $instances->pluck('snapshot.title')->all(),
         );
         $this->assertTrue($instances->every(
@@ -387,11 +387,15 @@ TEXT;
                 && ($instance['child_id'] ?? null) === $child->id
                 && ($instance['status'] ?? null) === 'pending',
         ));
-        $reading = $instances->firstWhere('snapshot.title', '指读常用词：计算、得数');
+        $reading = $instances->firstWhere('snapshot.title', '指读常用词');
         $this->assertNotNull($reading);
+        $this->assertSame('计算、得数', $reading['snapshot']['description'] ?? null);
         $this->assertSame(5, $reading['snapshot']['xp_reward'] ?? null);
         $this->assertSame(3, $reading['snapshot']['coin_reward'] ?? null);
         $this->assertTrue((bool) ($reading['snapshot']['with_parent'] ?? false));
+        $card = $instances->firstWhere('snapshot.title', '口算卡片');
+        $this->assertNotNull($card);
+        $this->assertSame('2遍', $card['snapshot']['description'] ?? null);
 
         $taskDate = (string) $instances->first()['task_date'];
         $this->assertTrue(str_starts_with($taskDate, '2026-10-12'), 'task_date should be 2026-10-12, got '.$taskDate);
