@@ -22,12 +22,27 @@ class EnglishLabCoachTest extends TestCase
             'meaning' => '太长',
             'options' => ['太长', '短', '中'],
         ], [], 1));
-        $this->assertNotNull($gate->probeCard([
+        $word = $gate->probeCard([
             'text' => 'bird',
             'meaning' => '鸟',
             'options' => ['鸟', '鱼', '树'],
             'emoji' => '🐦',
-        ], [], 1));
+            'ipa' => '/bɜːrd/',
+            'pos' => 'n.',
+            'kind' => 'word',
+        ], [], 1);
+        $this->assertNotNull($word);
+        $this->assertSame('/bɜːrd/', $word['ipa']);
+        $this->assertSame('n.', $word['pos']);
+        $sentence = $gate->probeCard([
+            'text' => 'I see a bird.',
+            'meaning' => '我看见一只鸟。',
+            'options' => ['我看见一只鸟。', '我想喝水。', '这是猫。'],
+            'emoji' => '👀',
+            'kind' => 'sentence',
+        ], [], 1);
+        $this->assertNotNull($sentence);
+        $this->assertSame('sentence', $sentence['kind']);
         $draft = $gate->challengeDraft('grammar', [
             'prompt' => 'I ___ happy.',
             'text' => 'I ___ happy.',
@@ -40,6 +55,26 @@ class EnglishLabCoachTest extends TestCase
         $this->assertNotNull($draft);
         $this->assertSame(['key2', 'key1'], $gate->reorderKeys(['key1', 'key2'], ['key2', 'key1', 'key2']));
         $this->assertNull($gate->reorderKeys(['key1', 'key2'], ['key1']));
+    }
+
+    public function test_new_cards_keep_a_sentence_and_expose_ai_status(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $service = app(EnglishLearningService::class);
+        $plan = $service->plan($child);
+        $newCards = array_values(array_filter($plan['items'], fn ($item) => empty($item['probe']) && empty($item['challenge']) && empty($item['review'])));
+        $this->assertNotEmpty($newCards);
+        $this->assertTrue(collect($newCards)->contains(fn ($item) => ($item['kind'] ?? '') === 'sentence'));
+        $apple = collect($newCards)->firstWhere('key', 'apple');
+        $this->assertNotNull($apple);
+        $this->assertSame('/ˈæpl/', $apple['ipa']);
+        $this->assertSame('n.', $apple['pos']);
+        $this->assertContains($plan['ai_status'], ['ok', 'failed', 'off']);
+        $probes = array_values(array_filter($plan['items'], fn ($item) => ! empty($item['probe'])));
+        if (count($probes) >= 3) {
+            $this->assertTrue(collect($probes)->contains(fn ($item) => ($item['kind'] ?? '') === 'sentence'));
+        }
     }
 
     public function test_wrong_answer_returns_coach_tip_without_reward(): void

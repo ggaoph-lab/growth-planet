@@ -6,8 +6,8 @@ import { api } from '@/shared/api/client'
 
 vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), post: vi.fn().mockResolvedValue({ items: [] }), postIdempotent: vi.fn() } }))
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
-const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
-const plan = { items: [card], completed: 0, due: 0, mastered: 0, learned: 0, total: 18, next_review: null }
+const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', ipa: '/ˈæpl/', pos: 'n.', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
+const plan = { items: [card], completed: 0, due: 0, mastered: 0, learned: 0, total: 18, next_review: null, ai_status: 'ok' as const }
 
 beforeEach(() => { vi.clearAllMocks(); setAppLocale('zh-CN'); vi.mocked(api.get).mockResolvedValue(plan) })
 
@@ -15,6 +15,8 @@ describe('English learning', () => {
   it('hides study hints in a quiz and displays only server-confirmed rewards', async () => {
     const wrapper = mount(EnglishLearning)
     await flushPromises()
+    expect(wrapper.find('.ai-dot').classes()).toContain('on')
+    expect(wrapper.find('.meta').text()).toContain('/ˈæpl/')
     expect(wrapper.find('.meaning').text()).toBe('苹果')
     await wrapper.find('.primary').trigger('click')
     expect(wrapper.find('.meaning').exists()).toBe(false)

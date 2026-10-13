@@ -28,6 +28,11 @@ class EnglishContentGate
             return null;
         }
 
+        $kind = strtolower(trim((string) ($raw['kind'] ?? '')));
+        if (! in_array($kind, ['word', 'sentence'], true)) {
+            $kind = str_contains($text, ' ') ? 'sentence' : 'word';
+        }
+
         $options = $this->chineseOptions($raw['options'] ?? [], $meaning);
         if ($options === null) {
             return null;
@@ -38,6 +43,9 @@ class EnglishContentGate
             $emoji = '✨';
         }
 
+        $ipa = $this->ipa((string) ($raw['ipa'] ?? ''), $kind);
+        $pos = $this->pos((string) ($raw['pos'] ?? ''), $kind);
+
         $slug = trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower($text)), '-');
         if ($slug === '') {
             return null;
@@ -45,16 +53,56 @@ class EnglishContentGate
 
         return [
             'key' => 'probe:'.mb_substr($slug, 0, 50),
-            'theme' => '词汇小测试',
-            'kind' => 'word',
+            'theme' => $kind === 'sentence' ? '生活短句' : '词汇小测试',
+            'kind' => $kind,
             'text' => $text,
             'meaning' => $meaning,
             'emoji' => $emoji,
+            'ipa' => $ipa,
+            'pos' => $pos,
             'options' => $options,
             'review' => false,
             'stage' => 0,
             'probe' => true,
         ];
+    }
+
+    public function ipa(string $ipa, string $kind = 'word'): string
+    {
+        $ipa = trim($ipa);
+        if ($kind === 'sentence' || $ipa === '') {
+            return '';
+        }
+        if (mb_strlen($ipa) > 48) {
+            return '';
+        }
+        // Keep printable IPA-like marks; drop CJK and control characters.
+        if (preg_match('/[\x{4e00}-\x{9fff}\x00-\x1f]/u', $ipa) === 1) {
+            return '';
+        }
+
+        return $ipa;
+    }
+
+    public function pos(string $pos, string $kind = 'word'): string
+    {
+        if ($kind !== 'word') {
+            return '';
+        }
+        $pos = trim($pos);
+        $allowed = ['n.', 'v.', 'adj.', 'adv.', 'prep.', 'pron.', 'conj.', 'interj.', 'num.', 'art.'];
+        if (in_array($pos, $allowed, true)) {
+            return $pos;
+        }
+        $map = [
+            'noun' => 'n.', 'n' => 'n.', '名词' => 'n.',
+            'verb' => 'v.', 'v' => 'v.', '动词' => 'v.',
+            'adj' => 'adj.', 'adjective' => 'adj.', '形容词' => 'adj.',
+            'adv' => 'adv.', 'adverb' => 'adv.', '副词' => 'adv.',
+        ];
+        $key = strtolower(rtrim($pos, '.'));
+
+        return $map[$key] ?? $map[$pos] ?? '';
     }
 
     /**
@@ -176,13 +224,14 @@ class EnglishContentGate
 
     public function fitsBand(string $text, int $band): bool
     {
-        $words = preg_split('/\s+/u', trim($text)) ?: [];
+        $words = preg_split('/\s+/u', trim(preg_replace('/[.!?,]/', '', $text) ?? $text)) ?: [];
         $count = count(array_filter($words, fn ($word) => $word !== ''));
+        // Everyday sentences like "I see a bird." need a little more room than single words.
         $maxWords = match (true) {
-            $band <= 1 => 3,
-            $band === 2 => 5,
-            $band === 3 => 7,
-            default => 10,
+            $band <= 1 => 5,
+            $band === 2 => 6,
+            $band === 3 => 8,
+            default => 12,
         };
         if ($count > $maxWords) {
             return false;

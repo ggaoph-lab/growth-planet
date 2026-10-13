@@ -15,12 +15,24 @@ type Item = {
   options: string[]
   review: boolean
   stage: number
+  ipa?: string
+  pos?: string
   probe?: boolean
   challenge?: boolean
   prompt?: string
   question?: string
 }
-type Plan = { items: Item[]; completed: number; due: number; mastered: number; learned: number; total: number; next_review: string | null; vocabulary?: { estimated_size: number; band: number } }
+type Plan = {
+  items: Item[]
+  completed: number
+  due: number
+  mastered: number
+  learned: number
+  total: number
+  next_review: string | null
+  vocabulary?: { estimated_size: number; band: number }
+  ai_status?: 'ok' | 'failed' | 'off'
+}
 type Result = { correct: boolean; meaning: string; xp: number; coins: number; next_review: string; plan: Plan; coach_tip?: string; probe?: boolean; challenge?: boolean }
 const { locale } = useI18n()
 const session = useSessionStore()
@@ -36,7 +48,14 @@ const speaking = ref(false)
 const choices = ref<string[]>([])
 const audioSupported = canSpeak()
 const finished = computed(() => plan.value && !current.value)
+const aiConnected = computed(() => plan.value?.ai_status === 'ok')
+const aiStatusTitle = computed(() => {
+  if (plan.value?.ai_status === 'ok') return label('AI 已接入', 'AI connected')
+  if (plan.value?.ai_status === 'failed') return label('AI 接入失败，已用本地内容', 'AI unavailable — using local cards')
+  return label('未选择 AI 引擎', 'No AI engine selected')
+})
 function kindLabel(item: Item) {
+  if (item.probe && item.kind === 'sentence') return label('生活短句', 'Everyday phrase')
   if (item.probe) return label('词汇小测试', 'Vocabulary check')
   if (item.challenge && item.kind === 'story') return label('短故事', 'Short story')
   if (item.challenge && item.kind === 'grammar') return label('语法小练', 'Grammar play')
@@ -46,6 +65,10 @@ function badgeLabel(item: Item) {
   if (item.probe) return label('词汇小测试', 'Vocabulary check')
   if (item.challenge) return label('探索挑战', 'Lab challenge')
   return item.review ? label('记忆巩固', 'Review') : label('新发现', 'New discovery')
+}
+function wordMeta(item: Item | null) {
+  if (!item || item.kind !== 'word') return ''
+  return [item.pos, item.ipa].filter(Boolean).join(' ')
 }
 function choose(item?: Item) {
   current.value = item ?? null
@@ -122,9 +145,19 @@ onUnmounted(() => { stopSpeaking() })
 
 <template>
   <section class="learning" :aria-label="label('每日英语任务', 'Daily English mission')" :aria-busy="busy">
-    <div class="intro"><span class="eyebrow">ENGLISH LAB · {{ label('每天一小步', 'One small step a day') }}</span>
+    <div class="intro">
+      <span class="eyebrow">
+        ENGLISH LAB · {{ label('每天一小步', 'One small step a day') }}
+        <span
+          class="ai-dot"
+          :class="aiConnected ? 'on' : 'off'"
+          :title="aiStatusTitle"
+          :aria-label="aiStatusTitle"
+          role="img"
+        />
+      </span>
       <h2>🚀 {{ label('今天，用英语探索世界', 'Explore your world in English') }}</h2>
-      <p>{{ label('每天最多 10 题 · 最多 3 个新内容 · 其余用来认识你的词汇', 'Up to 10 questions · Up to 3 new cards · The rest checks your vocabulary') }}</p>
+      <p>{{ label('每天最多 10 题 · 最多 3 个新内容 · 其余用来认识你的词汇与短句', 'Up to 10 questions · Up to 3 new cards · The rest checks words and short phrases') }}</p>
     </div>
     <div v-if="plan" class="stats">
       <span>✨ {{ label('今日完成', 'Done today') }} <b>{{ plan.completed }}/{{ plan.completed + plan.items.length }}</b></span>
@@ -139,6 +172,7 @@ onUnmounted(() => { stopSpeaking() })
       <template v-if="phase === 'learn'">
         <div class="emoji" aria-hidden="true">{{ current.emoji }}</div>
         <h3 lang="en">{{ current.challenge ? (current.prompt || current.text) : current.text }}</h3>
+        <p v-if="wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
         <p v-if="!current.challenge" class="meaning">{{ current.meaning }}</p>
         <p v-else class="meaning">{{ current.question || current.meaning }}</p>
         <p>{{ current.challenge ? label('先读一读，再挑战选择题。', 'Read first, then take the challenge.') : label('听一听，跟着说，再试着不看提示回想。', 'Listen, say it aloud, then try to remember without a hint.') }}</p>
@@ -148,6 +182,7 @@ onUnmounted(() => { stopSpeaking() })
       <template v-else-if="phase === 'quiz'">
         <p>{{ current.challenge ? (current.question || label('选出正确答案', 'Choose the best answer')) : current.review ? label('这句话或单词，用英语怎么说？', 'How do you say this in English?') : label('选出它的意思', 'Choose the meaning') }}</p>
         <h3 :lang="current.review ? 'zh' : 'en'">{{ current.challenge ? (current.prompt || current.text) : current.review ? current.meaning : current.text }}</h3>
+        <p v-if="!current.review && wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
         <button v-if="!current.review" class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('再听一次', 'Listen again') }}</button>
         <div class="answers"><button v-for="option in choices" :key="option" :disabled="busy" @click="answer(option)">{{ option }}</button></div>
       </template>
@@ -155,6 +190,7 @@ onUnmounted(() => { stopSpeaking() })
         <div class="emoji">{{ result.correct ? '🎉' : '🌱' }}</div>
         <h3>{{ result.correct ? label('答对了！', 'You got it!') : label('没关系，再认识它一次', 'Let’s learn this one again') }}</h3>
         <p><strong lang="en">{{ current.text }}</strong> · {{ result.meaning }}</p>
+        <p v-if="wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
         <p v-if="result.coach_tip" class="coach">{{ result.coach_tip }}</p>
         <p v-if="result.correct && !current.probe && !current.challenge">+{{ result.xp }} XP · +{{ result.coins }} {{ label('金币', 'coins') }}<br>{{ label('下次复习', 'Next review') }}：{{ result.next_review }}</p>
         <p v-else-if="current.probe">{{ label('这题用来认识你的词汇，不发金币。估计会留在家里，换一个 AI 也接着用。', 'This check estimates your vocabulary and does not award coins. The estimate stays with your family if the AI provider changes.') }}</p>
@@ -173,13 +209,17 @@ onUnmounted(() => { stopSpeaking() })
 
 <style scoped>
 .learning { margin: 24px 0 32px; padding: 24px; border: 1px solid #77b7d944; border-radius: 24px; background: linear-gradient(135deg, #23577933, #34523c22); }
-.eyebrow { color: #8cdbc8; font-size: 12px; letter-spacing: 1px; }
+.eyebrow { color: #8cdbc8; font-size: 12px; letter-spacing: 1px; display: inline-flex; align-items: center; gap: 8px; }
+.ai-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.ai-dot.on { background: #3dd68c; box-shadow: 0 0 0 3px #3dd68c33; }
+.ai-dot.off { background: #8b93a1; box-shadow: 0 0 0 3px #8b93a133; }
 h2 { margin: 10px 0; font-size: clamp(21px, 3vw, 28px); } p { line-height: 1.7; }
 .intro p, .rules { opacity: .8; font-size: 14px; }
 .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }.stats span { background: #ffffff0a; padding: 10px 14px; border-radius: 12px; font-size: 14px; }.stats b { margin-left: 6px; }
 .lesson { background: #071e3280; border: 1px solid #ffffff1a; border-radius: 20px; padding: 24px; text-align: center; }
 .card-top { display: flex; gap: 10px; justify-content: space-between; align-items: center; font-size: 13px; text-align: left; }.badge { background: #8cdbc81c; color: #9fe4d3; border-radius: 20px; padding: 5px 12px; white-space: nowrap; }
-.emoji { font-size: 52px; margin-top: 20px; } h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0; overflow-wrap: anywhere; }.meaning { font-size: 20px; }
+.emoji { font-size: 52px; margin-top: 20px; } h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0 8px; overflow-wrap: anywhere; }.meaning { font-size: 20px; }
+.meta { margin: 0 0 10px; font-size: 14px; color: #9fe4d3; letter-spacing: .02em; opacity: .95; }
 .coach { margin: 12px auto 0; max-width: 420px; padding: 10px 14px; border-radius: 12px; background: #8cdbc814; color: #c9f3e8; font-size: 15px; }
 button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; padding: 10px 18px; color: inherit; border: 1px solid #ffffff35; background: #ffffff0a; }button:disabled { opacity: .5; cursor: wait; }button:focus-visible { outline: 3px solid #8cdbc8; outline-offset: 3px; }
 .primary { display: block; margin: 18px auto 0; background: #8cdbc8; color: #102c31; font-weight: 700; border: 0; }.secondary { font-size: 14px; }

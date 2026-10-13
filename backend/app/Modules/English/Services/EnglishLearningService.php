@@ -45,13 +45,26 @@ class EnglishLearningService
             if (isset($catalog[$p->item_key])) {
                 $card = $catalog[$p->item_key];
                 $options = $catalog->filter(fn ($i) => $i['kind'] === $card['kind'] && $i['key'] !== $card['key'])->pluck('text')->take(2)->all();
-                $items[] = [...$card, 'options' => [...$options, $card['text']], 'review' => true, 'stage' => $p->stage];
+                $items[] = [
+                    ...$card,
+                    'ipa' => (string) ($card['ipa'] ?? ''),
+                    'pos' => (string) ($card['pos'] ?? ''),
+                    'options' => [...$options, $card['text']],
+                    'review' => true,
+                    'stage' => $p->stage,
+                ];
             }
         }
 
         $newLimit = min(max(0, $newCap - $progress->where('introduced_date', $today)->count()), $remaining - count($items));
-        foreach ($catalog->reject(fn ($item) => $progress->has($item['key']))->take($newLimit) as $item) {
-            $items[] = [...$item, 'review' => false, 'stage' => 0];
+        foreach ($this->pickNewCards($catalog, $progress, $newLimit) as $item) {
+            $items[] = [
+                ...$item,
+                'ipa' => (string) ($item['ipa'] ?? ''),
+                'pos' => (string) ($item['pos'] ?? ''),
+                'review' => false,
+                'stage' => 0,
+            ];
         }
 
         $slotsLeft = $remaining - count($items);
@@ -85,6 +98,7 @@ class EnglishLearningService
             'learned' => $progress->count(), 'total' => $catalog->count(),
             'next_review' => $progress->where('due_date', '>', $today)->min('due_date'),
             'vocabulary' => $this->vocabulary->summary($child),
+            'ai_status' => $this->coach->connectionStatus($child, $today),
         ];
     }
 
@@ -276,6 +290,67 @@ class EnglishLearningService
         }
 
         return array_values(array_unique($themes));
+    }
+
+    /**
+     * Prefer theme groups (words + sentence) so daily new cards are not word-only.
+     *
+     * @param  Collection<string, array<string, mixed>>  $catalog
+     * @param  Collection<string, object>  $progress
+     * @return list<array<string, mixed>>
+     */
+    private function pickNewCards(Collection $catalog, Collection $progress, int $newLimit): array
+    {
+        if ($newLimit < 1) {
+            return [];
+        }
+
+        $unlearned = $catalog->reject(fn ($item) => $progress->has($item['key']));
+        $picked = [];
+        foreach ($unlearned->groupBy('theme') as $themeItems) {
+            if (count($picked) >= $newLimit) {
+                break;
+            }
+            /** @var Collection<int, array<string, mixed>> $themeItems */
+            $words = $themeItems->where('kind', 'word')->values();
+            $sentences = $themeItems->where('kind', 'sentence')->values();
+            $slots = $newLimit - count($picked);
+
+            if ($slots >= 3) {
+                foreach ($words->take(2) as $word) {
+                    $picked[] = $word;
+                }
+                if ($sentences->isNotEmpty()) {
+                    $picked[] = $sentences->first();
+                } elseif ($words->count() > 2) {
+                    $picked[] = $words->get(2);
+                }
+                continue;
+            }
+
+            if ($slots === 2) {
+                // Keep a short sentence in the pair whenever one remains in the theme.
+                if ($words->isNotEmpty()) {
+                    $picked[] = $words->first();
+                }
+                if ($sentences->isNotEmpty()) {
+                    $picked[] = $sentences->first();
+                } elseif ($words->count() > 1) {
+                    $picked[] = $words->get(1);
+                }
+                continue;
+            }
+
+            if ($sentences->isNotEmpty() && $words->isEmpty()) {
+                $picked[] = $sentences->first();
+            } elseif ($words->isNotEmpty()) {
+                $picked[] = $words->first();
+            } elseif ($sentences->isNotEmpty()) {
+                $picked[] = $sentences->first();
+            }
+        }
+
+        return array_slice($picked, 0, $newLimit);
     }
 
     /**

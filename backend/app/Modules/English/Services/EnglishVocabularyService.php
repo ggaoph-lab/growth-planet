@@ -102,7 +102,65 @@ class EnglishVocabularyService
             }
         }
 
-        return $cards;
+        return $this->ensureSentenceMix($cards, $slots, $avoidTexts, $answered, (int) ($this->profile($child)['band'] ?? 1));
+    }
+
+    /**
+     * Older word-only probe records still get a short-sentence share.
+     *
+     * @param  list<array<string, mixed>>  $cards
+     * @param  list<string>  $avoidTexts
+     * @param  list<string>  $answered
+     * @return list<array<string, mixed>>
+     */
+    private function ensureSentenceMix(array $cards, int $slots, array $avoidTexts, array $answered, int $band): array
+    {
+        $wantSentences = $slots >= 3 ? max(1, intdiv($slots, 3)) : ($slots >= 2 ? 1 : 0);
+        if ($wantSentences < 1) {
+            return array_slice($cards, 0, $slots);
+        }
+
+        $sentenceCount = count(array_filter($cards, fn ($card) => ($card['kind'] ?? '') === 'sentence'));
+        if ($sentenceCount >= $wantSentences) {
+            return array_slice($cards, 0, $slots);
+        }
+
+        $avoid = [];
+        foreach ([...$avoidTexts, ...array_map(fn ($card) => (string) ($card['text'] ?? ''), $cards)] as $text) {
+            $expression = $this->gate->expression((string) $text);
+            if ($expression !== '') {
+                $avoid[strtolower($expression)] = true;
+            }
+        }
+
+        $extras = $this->fillFromLadder([], $wantSentences - $sentenceCount + 6, $avoid, max(1, $band));
+        foreach ($extras as $extra) {
+            if (($extra['kind'] ?? '') !== 'sentence') {
+                continue;
+            }
+            if (in_array($extra['key'] ?? '', $answered, true)) {
+                continue;
+            }
+            // Replace a trailing word card when possible so the list stays within slots.
+            $replaced = false;
+            for ($i = count($cards) - 1; $i >= 0; $i--) {
+                if (($cards[$i]['kind'] ?? 'word') === 'word') {
+                    $cards[$i] = $extra;
+                    $replaced = true;
+                    $sentenceCount++;
+                    break;
+                }
+            }
+            if (! $replaced && count($cards) < $slots) {
+                $cards[] = $extra;
+                $sentenceCount++;
+            }
+            if ($sentenceCount >= $wantSentences) {
+                break;
+            }
+        }
+
+        return array_slice($cards, 0, $slots);
     }
 
     public function observe(ChildProfile $child, string $expression, bool $correct): void
@@ -171,7 +229,7 @@ class EnglishVocabularyService
         $reply = $this->coach->chatJson($child, [
             [
                 'role' => 'system',
-                'content' => 'You write short English vocabulary checks for a young child. Reply with JSON only: {"items":[{"text":"bird","meaning":"鸟","emoji":"🐦","options":["鸟","鱼","树"]}]}. text is simple English the child might or might not know. meaning is simplified Chinese. options has exactly 3 different Chinese choices and includes meaning. Do not repeat known_words. No personal data.',
+                'content' => 'You write short English checks for a young child. Mix single words and short everyday sentences (about 2 words per 1 sentence). Reply JSON only: {"items":[{"kind":"word","text":"bird","meaning":"鸟","emoji":"🐦","ipa":"/bɜːrd/","pos":"n.","options":["鸟","鱼","树"]},{"kind":"sentence","text":"I see a bird.","meaning":"我看见一只鸟。","emoji":"👀","options":["我看见一只鸟。","我想喝水。","这是猫。"]}]}. For words include IPA and pos (n./v./adj./adv.). Sentences omit ipa/pos. meaning is simplified Chinese. options has exactly 3 different Chinese choices including meaning. Do not repeat known_words. No personal data.',
             ],
             ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
         ]);

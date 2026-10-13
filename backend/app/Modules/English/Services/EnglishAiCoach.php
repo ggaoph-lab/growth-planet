@@ -30,6 +30,32 @@ class EnglishAiCoach
     }
 
     /**
+     * Kid UI status: ok (green), failed (gray after a selected engine missed), off (gray, not selected).
+     *
+     * @return 'ok'|'failed'|'off'
+     */
+    public function connectionStatus(ChildProfile $child, string $date): string
+    {
+        if ($this->selectedProvider($child) === null) {
+            return 'off';
+        }
+
+        $statuses = DB::table('english_ai_records')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->pluck('status');
+
+        if ($statuses->isEmpty()) {
+            return 'failed';
+        }
+        if ($statuses->contains(fn ($status) => in_array((string) $status, ['ai', 'mixed'], true))) {
+            return 'ok';
+        }
+
+        return 'failed';
+    }
+
+    /**
      * @param  list<array{role: string, content: string}>  $messages
      * @return array{content: string, provider: string, model: string}|null
      */
