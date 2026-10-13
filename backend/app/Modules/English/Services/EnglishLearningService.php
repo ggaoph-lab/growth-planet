@@ -14,7 +14,14 @@ use Illuminate\Validation\ValidationException;
 
 class EnglishLearningService
 {
-    public const DAILY_LIMIT = 10;
+    /** Cards offered in each queue refill; learning can continue after rewards cap. */
+    public const SESSION_SIZE = 10;
+
+    /** Course-card reward ceiling for `english.practice` (coins/XP), not a learning stop. */
+    public const REWARD_DAILY_LIMIT = 10;
+
+    /** @deprecated Use SESSION_SIZE / REWARD_DAILY_LIMIT */
+    public const DAILY_LIMIT = self::REWARD_DAILY_LIMIT;
 
     public function __construct(
         private Clock $clock,
@@ -29,8 +36,7 @@ class EnglishLearningService
         $today = $this->clock->today($child->family->timezone)->toDateString();
         $progress = DB::table('english_learning_progress')->where('child_id', $child->id)->get()->keyBy('item_key');
         $completed = $progress->where('completed_date', $today)->count();
-        $challengeAnswered = $this->vocabulary->answeredToday($child, $today);
-        $remaining = max(0, self::DAILY_LIMIT - $completed - $challengeAnswered);
+        $remaining = self::SESSION_SIZE;
         $catalog = collect(config('english_learning.items'))->keyBy('key');
         $profile = $this->vocabulary->profile($child);
         $accuracy = $this->recentAccuracy($child, 7);
@@ -171,7 +177,7 @@ class EnglishLearningService
             $coins = 0;
             if ($correct) {
                 $policy = RewardPolicy::query()->firstOrCreate(['family_id' => $child->family_id, 'code' => 'english.practice'], [
-                    'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => self::DAILY_LIMIT, 'is_active' => true,
+                    'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => self::REWARD_DAILY_LIMIT, 'is_active' => true,
                 ]);
                 if ($policy->is_active && ! $policy->requires_approval) {
                     $grant = $this->rewards->grant(new RewardIntent(

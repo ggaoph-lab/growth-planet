@@ -272,16 +272,13 @@ onUnmounted(() => {
     <div class="intro">
       <span class="eyebrow">
         ENGLISH LAB · {{ label('每天一小步', 'One small step a day') }}
-        <span
-          class="ai-dot"
-          :class="aiConnected ? 'on' : 'off'"
-          :title="aiStatusTitle"
-          :aria-label="aiStatusTitle"
-          role="img"
-        />
+        <span class="ai-status-chip" :title="aiStatusTitle" :aria-label="aiStatusTitle">
+          <span class="ai-dot" :class="aiConnected ? 'on' : 'off'" role="img" />
+          <span class="ai-status-text">{{ aiStatusTitle }}</span>
+        </span>
       </span>
       <h2>🚀 {{ label('今天，用英语探索世界', 'Explore your world in English') }}</h2>
-      <p>{{ label('每天最多 10 题 · 最多 3 个新内容 · 其余用来认识你的词汇与短句', 'Up to 10 questions · Up to 3 new cards · The rest checks words and short phrases') }}</p>
+      <p>{{ label('每次大约 10 题，做完还能继续 · 最多 3 个新内容 · 其余用来认识你的词汇与短句', 'About 10 cards per round — keep going after that · Up to 3 new cards · The rest checks words and short phrases') }}</p>
     </div>
     <div v-if="plan" class="stats">
       <span>✨ {{ label('今日完成', 'Done today') }} <b>{{ plan.completed }}/{{ plan.completed + plan.items.length }}</b></span>
@@ -355,18 +352,21 @@ onUnmounted(() => {
       <p v-else-if="speakPrompt && !speakPrompt.available" class="hint">{{ label('今天还没有答对的句子可跟读，明天继续。', 'No correct phrase to read yet today. Try again tomorrow.') }}</p>
       <p>{{ label('离开屏幕，选一句今天学过的英语，对家人说一说吧！', 'Take a screen break and say one of today’s phrases to your family!') }}</p>
       <p v-if="plan?.next_review">{{ label('下次复习', 'Next review') }}：{{ plan.next_review }}</p>
-      <p v-if="plan && plan.due > 0">{{ label('其余复习留到明天，慢慢来。', 'Save the remaining reviews for tomorrow. Take your time.') }}</p>
+      <p v-if="plan && plan.due > 0">{{ label('还有复习可以继续，点重新加载再来一轮吧。', 'More reviews are waiting — reload to start another round.') }}</p>
+      <button v-if="plan && (plan.due > 0 || plan.items.length > 0)" class="primary" :disabled="busy" @click="load">{{ label('再学一轮', 'Another round') }} →</button>
     </div>
-    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天最多 10 题，其中课程奖励最多 10 项。词汇小测试、探索挑战与跟读打分不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 questions. Vocabulary checks, lab challenges, and speak-along scores do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
+    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天课程奖励最多 10 项，做完仍可继续学，只是不再发奖。词汇小测试、探索挑战与跟读打分不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 rewarded course cards. You can keep practicing after that without more rewards. Vocabulary checks, lab challenges, and speak-along scores do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
   </section>
 </template>
 
 <style scoped>
 .learning { margin: 24px 0 32px; padding: 24px; border: 1px solid #77b7d944; border-radius: 24px; background: linear-gradient(135deg, #23577933, #34523c22); }
 .eyebrow { color: #8cdbc8; font-size: 12px; letter-spacing: 1px; display: inline-flex; align-items: center; gap: 8px; }
+.ai-status-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
 .ai-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .ai-dot.on { background: #3dd68c; box-shadow: 0 0 0 3px #3dd68c33; }
 .ai-dot.off { background: #8b93a1; box-shadow: 0 0 0 3px #8b93a133; }
+.ai-status-text { color: #a8b0bd; font-size: 11px; letter-spacing: 0; text-transform: none; }
 h2 { margin: 10px 0; font-size: clamp(21px, 3vw, 28px); } p { line-height: 1.7; }
 .intro p, .rules, .hint { opacity: .8; font-size: 14px; }
 .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }.stats span { background: #ffffff0a; padding: 10px 14px; border-radius: 12px; font-size: 14px; }.stats b { margin-left: 6px; }

@@ -106,7 +106,7 @@ class EnglishDraftService
     }
 
     /**
-     * Published challenges not yet answered, for today's remaining slots.
+     * Published challenges not yet answered, for the current session slots.
      *
      * @return list<array<string, mixed>>
      */

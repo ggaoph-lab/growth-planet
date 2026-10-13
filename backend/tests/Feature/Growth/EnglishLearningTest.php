@@ -69,7 +69,7 @@ class EnglishLearningTest extends TestCase
         $this->assertSame(0, $service->plan($other)['learned']);
     }
 
-    public function test_daily_limit_and_disabled_rewards_are_respected(): void
+    public function test_learning_continues_after_ten_and_rewards_still_cap(): void
     {
         ['family' => $family] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -83,9 +83,24 @@ class EnglishLearningTest extends TestCase
             $answer = $service->answer($child, $card['key'], $card['text']);
             $this->assertSame(0, $answer['coins']);
         }
-        $this->assertCount(0, $service->plan($child)['items']);
-        $this->assertSame(2, $service->plan($child)['due']);
+        $afterTen = $service->plan($child);
+        $this->assertNotEmpty($afterTen['items']);
+        $this->assertSame(2, $afterTen['due']);
         $this->assertDatabaseCount('reward_grants', 0);
+
+        RewardPolicy::query()->where('family_id', $family->id)->where('code', 'english.practice')->update([
+            'is_active' => true,
+            'max_per_day' => EnglishLearningService::REWARD_DAILY_LIMIT,
+        ]);
+        foreach ($afterTen['items'] as $card) {
+            if (! empty($card['probe']) || ! empty($card['challenge'])) {
+                continue;
+            }
+            $service->answer($child, $card['key'], $card['review'] ? $card['text'] : $card['meaning']);
+        }
+        $coinTotal = (int) DB::table('reward_grants')->where('policy_code', 'english.practice')->sum('coin_amount');
+        $this->assertGreaterThan(0, $coinTotal);
+        $this->assertLessThanOrEqual(EnglishLearningService::REWARD_DAILY_LIMIT, $coinTotal);
     }
 
     public function test_kid_api_validates_answers_and_replays_idempotently(): void
