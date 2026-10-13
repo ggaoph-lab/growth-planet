@@ -68,7 +68,7 @@ class TaskInstanceGenerator
                 return in_array($date, $dates, true);
             }
             if ($schedule->frequency === ScheduleFrequency::Weekly) {
-                $weekday = (int) CarbonImmutable::createFromFormat('!Y-m-d', $date, $family->timezone)->dayOfWeekIso();
+                $weekday = CarbonImmutable::createFromFormat('!Y-m-d', $date, $family->timezone)->isoWeekday();
                 $weekdays = $schedule->weekdays ?? [];
 
                 return in_array($weekday, $weekdays, true);

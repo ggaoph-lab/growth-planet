@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
@@ -80,6 +81,8 @@ onMounted(load)
       <button type="button" class="back" @click="router.push({ name: 'kid-home' })">{{ t('kid.backPlanet') }}</button>
       <h1>{{ t('kid.english') }}</h1>
     </header>
+    <EnglishLearning />
+    <h2>{{ t('common.submitLog') }}</h2>
     <p class="hint">{{ t('common.englishHint') }}</p>
     <p v-if="error" class="error">{{ error }}</p>
     <section v-if="!loading" class="form">

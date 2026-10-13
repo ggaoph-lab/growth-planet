@@ -5,12 +5,32 @@ namespace Tests\Feature\Growth;
 use App\Modules\Task\Enums\TaskInstanceStatus;
 use App\Modules\Task\Models\TaskCategory;
 use App\Modules\Task\Models\TaskInstance;
+use App\Modules\Task\Services\TaskInstanceGenerator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class ParentTaskApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_weekly_tasks_are_generated_for_child_only_on_scheduled_weekdays(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '周日阅读',
+            'kind' => 'standard',
+            'start_date' => '2026-10-11',
+            'child_id' => $child->id,
+            'schedules' => [['frequency' => 'weekly', 'weekdays' => [7]]],
+        ])->assertCreated();
+
+        $generator = app(TaskInstanceGenerator::class);
+        $sunday = $generator->ensureForChildOnDate($family, $child, '2026-10-11');
+        $this->assertCount(1, $sunday);
+        $this->assertSame('周日阅读', $sunday->first()->snapshot['title']);
+        $this->assertCount(0, $generator->ensureForChildOnDate($family, $child, '2026-10-12'));
+    }
 
     public function test_parent_can_create_task_via_api(): void
     {

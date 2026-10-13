@@ -12,6 +12,8 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 });
 
 Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(function () {
+    Route::get('english/learning', [\App\Modules\English\Http\Controllers\Kid\EnglishLearningController::class, 'index']);
+    Route::post('english/learning/answer', [\App\Modules\English\Http\Controllers\Kid\EnglishLearningController::class, 'answer'])->middleware(['idempotent', 'throttle:60,1']);
     Route::get('english/shows', [KidEnglishController::class, 'indexShows']);
     Route::get('english/logs', [KidEnglishController::class, 'indexLogs']);
     Route::post('english/logs', [KidEnglishController::class, 'storeLog'])->middleware('idempotent');
