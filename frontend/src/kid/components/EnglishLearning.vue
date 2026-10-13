@@ -5,9 +5,23 @@ import { api, ApiError } from '@/shared/api/client'
 import { canSpeak, speakPhrase, stopSpeaking, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
-type Item = { key: string; theme: string; kind: string; text: string; meaning: string; emoji: string; options: string[]; review: boolean; stage: number; probe?: boolean }
+type Item = {
+  key: string
+  theme: string
+  kind: string
+  text: string
+  meaning: string
+  emoji: string
+  options: string[]
+  review: boolean
+  stage: number
+  probe?: boolean
+  challenge?: boolean
+  prompt?: string
+  question?: string
+}
 type Plan = { items: Item[]; completed: number; due: number; mastered: number; learned: number; total: number; next_review: string | null; vocabulary?: { estimated_size: number; band: number } }
-type Result = { correct: boolean; meaning: string; xp: number; coins: number; next_review: string; plan: Plan }
+type Result = { correct: boolean; meaning: string; xp: number; coins: number; next_review: string; plan: Plan; coach_tip?: string; probe?: boolean; challenge?: boolean }
 const { locale } = useI18n()
 const session = useSessionStore()
 const label = (zh: string, en: string) => locale.value === 'en' ? en : locale.value === 'zh-en' ? `${zh} / ${en}` : zh
@@ -22,9 +36,21 @@ const speaking = ref(false)
 const choices = ref<string[]>([])
 const audioSupported = canSpeak()
 const finished = computed(() => plan.value && !current.value)
+function kindLabel(item: Item) {
+  if (item.probe) return label('词汇小测试', 'Vocabulary check')
+  if (item.challenge && item.kind === 'story') return label('短故事', 'Short story')
+  if (item.challenge && item.kind === 'grammar') return label('语法小练', 'Grammar play')
+  return item.kind === 'word' ? label('推荐单词', 'Word') : label('生活短句', 'Everyday phrase')
+}
+function badgeLabel(item: Item) {
+  if (item.probe) return label('词汇小测试', 'Vocabulary check')
+  if (item.challenge) return label('探索挑战', 'Lab challenge')
+  return item.review ? label('记忆巩固', 'Review') : label('新发现', 'New discovery')
+}
 function choose(item?: Item) {
   current.value = item ?? null
-  phase.value = item?.probe || item?.review ? 'quiz' : 'learn'
+  phase.value = item?.probe || item?.review || item?.challenge ? 'quiz' : 'learn'
+  if (item?.challenge) phase.value = 'learn'
   result.value = null
   choices.value = [...(item?.options ?? [])]
   for (let i = choices.value.length - 1; i > 0; i--) {
@@ -109,17 +135,19 @@ onUnmounted(() => { stopSpeaking() })
     <p v-if="error" role="alert" class="error">{{ error }} <button :disabled="busy" @click="load">{{ label('重新加载', 'Reload') }}</button></p>
     <p v-if="!plan && busy">{{ label('正在准备探索任务…', 'Preparing your mission…') }}</p>
     <article v-if="current" class="lesson">
-      <div class="card-top"><span>{{ current.theme }} · {{ current.probe ? label('词汇小测试', 'Vocabulary check') : current.kind === 'word' ? label('推荐单词', 'Word') : label('生活短句', 'Everyday phrase') }}</span><span class="badge">{{ current.probe ? label('词汇小测试', 'Vocabulary check') : current.review ? label('记忆巩固', 'Review') : label('新发现', 'New discovery') }}</span></div>
+      <div class="card-top"><span>{{ current.theme }} · {{ kindLabel(current) }}</span><span class="badge">{{ badgeLabel(current) }}</span></div>
       <template v-if="phase === 'learn'">
         <div class="emoji" aria-hidden="true">{{ current.emoji }}</div>
-        <h3 lang="en">{{ current.text }}</h3><p class="meaning">{{ current.meaning }}</p>
-        <p>{{ label('听一听，跟着说，再试着不看提示回想。', 'Listen, say it aloud, then try to remember without a hint.') }}</p>
+        <h3 lang="en">{{ current.challenge ? (current.prompt || current.text) : current.text }}</h3>
+        <p v-if="!current.challenge" class="meaning">{{ current.meaning }}</p>
+        <p v-else class="meaning">{{ current.question || current.meaning }}</p>
+        <p>{{ current.challenge ? label('先读一读，再挑战选择题。', 'Read first, then take the challenge.') : label('听一听，跟着说，再试着不看提示回想。', 'Listen, say it aloud, then try to remember without a hint.') }}</p>
         <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
         <button class="primary" @click="phase = 'quiz'">{{ label('我准备好了，挑战一下', 'Ready for a challenge') }} →</button>
       </template>
       <template v-else-if="phase === 'quiz'">
-        <p>{{ current.review ? label('这句话或单词，用英语怎么说？', 'How do you say this in English?') : label('选出它的意思', 'Choose the meaning') }}</p>
-        <h3 :lang="current.review ? 'zh' : 'en'">{{ current.review ? current.meaning : current.text }}</h3>
+        <p>{{ current.challenge ? (current.question || label('选出正确答案', 'Choose the best answer')) : current.review ? label('这句话或单词，用英语怎么说？', 'How do you say this in English?') : label('选出它的意思', 'Choose the meaning') }}</p>
+        <h3 :lang="current.review ? 'zh' : 'en'">{{ current.challenge ? (current.prompt || current.text) : current.review ? current.meaning : current.text }}</h3>
         <button v-if="!current.review" class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('再听一次', 'Listen again') }}</button>
         <div class="answers"><button v-for="option in choices" :key="option" :disabled="busy" @click="answer(option)">{{ option }}</button></div>
       </template>
@@ -127,8 +155,10 @@ onUnmounted(() => { stopSpeaking() })
         <div class="emoji">{{ result.correct ? '🎉' : '🌱' }}</div>
         <h3>{{ result.correct ? label('答对了！', 'You got it!') : label('没关系，再认识它一次', 'Let’s learn this one again') }}</h3>
         <p><strong lang="en">{{ current.text }}</strong> · {{ result.meaning }}</p>
-        <p v-if="result.correct && !current.probe">+{{ result.xp }} XP · +{{ result.coins }} {{ label('金币', 'coins') }}<br>{{ label('下次复习', 'Next review') }}：{{ result.next_review }}</p>
+        <p v-if="result.coach_tip" class="coach">{{ result.coach_tip }}</p>
+        <p v-if="result.correct && !current.probe && !current.challenge">+{{ result.xp }} XP · +{{ result.coins }} {{ label('金币', 'coins') }}<br>{{ label('下次复习', 'Next review') }}：{{ result.next_review }}</p>
         <p v-else-if="current.probe">{{ label('这题用来认识你的词汇，不发金币。估计会留在家里，换一个 AI 也接着用。', 'This check estimates your vocabulary and does not award coins. The estimate stays with your family if the AI provider changes.') }}</p>
+        <p v-else-if="current.challenge">{{ label('探索挑战由家长发布，不发金币。', 'Lab challenges are published by a parent and do not award coins.') }}</p>
         <p v-else>{{ label('答错不扣分。看看正确表达，稍后再试一次。', 'No points lost. Read the expression and try again shortly.') }}</p>
         <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
         <button class="primary" @click="next">{{ label('继续探索', 'Continue') }} →</button>
@@ -137,7 +167,7 @@ onUnmounted(() => { stopSpeaking() })
       <p v-if="audioMessage" role="status">{{ audioMessage }}</p>
     </article>
     <div v-else-if="finished" class="lesson done"><div class="emoji">🪐</div><h3>{{ label('今天的小任务完成啦', 'Your mission is complete') }}</h3><p>{{ label('离开屏幕，选一句今天学过的英语，对家人说一说吧！', 'Take a screen break and say one of today’s phrases to your family!') }}</p><p v-if="plan?.next_review">{{ label('下次复习', 'Next review') }}：{{ plan.next_review }}</p><p v-if="plan && plan.due > 0">{{ label('其余复习留到明天，慢慢来。', 'Save the remaining reviews for tomorrow. Take your time.') }}</p></div>
-    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天最多 10 题，其中课程奖励最多 10 项。词汇小测试不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 questions. Vocabulary checks do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
+    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天最多 10 题，其中课程奖励最多 10 项。词汇小测试与探索挑战不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 questions. Vocabulary checks and lab challenges do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
   </section>
 </template>
 
@@ -150,6 +180,7 @@ h2 { margin: 10px 0; font-size: clamp(21px, 3vw, 28px); } p { line-height: 1.7; 
 .lesson { background: #071e3280; border: 1px solid #ffffff1a; border-radius: 20px; padding: 24px; text-align: center; }
 .card-top { display: flex; gap: 10px; justify-content: space-between; align-items: center; font-size: 13px; text-align: left; }.badge { background: #8cdbc81c; color: #9fe4d3; border-radius: 20px; padding: 5px 12px; white-space: nowrap; }
 .emoji { font-size: 52px; margin-top: 20px; } h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0; overflow-wrap: anywhere; }.meaning { font-size: 20px; }
+.coach { margin: 12px auto 0; max-width: 420px; padding: 10px 14px; border-radius: 12px; background: #8cdbc814; color: #c9f3e8; font-size: 15px; }
 button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; padding: 10px 18px; color: inherit; border: 1px solid #ffffff35; background: #ffffff0a; }button:disabled { opacity: .5; cursor: wait; }button:focus-visible { outline: 3px solid #8cdbc8; outline-offset: 3px; }
 .primary { display: block; margin: 18px auto 0; background: #8cdbc8; color: #102c31; font-weight: 700; border: 0; }.secondary { font-size: 14px; }
 .answers { display: grid; gap: 12px; max-width: 480px; margin: 24px auto 0; }.answers button:hover:not(:disabled) { border-color: #8cdbc8; background: #8cdbc81c; }

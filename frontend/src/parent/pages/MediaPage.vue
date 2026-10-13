@@ -6,6 +6,9 @@ import { ApiError, api } from '@/shared/api/client'
 import MoviePoster from '@/shared/MoviePoster.vue'
 import { overviewParagraphs } from '@/shared/movieOverview'
 import type {
+  EnglishContentDraft,
+  EnglishLabProgress,
+  EnglishLabSummary,
   EnglishShow,
   EnglishWatchLog,
   ParentCatalogItem,
@@ -33,6 +36,10 @@ const catalog = ref<ParentCatalogItem[]>([])
 const collections = ref<ParentMovieCollection[]>([])
 const shows = ref<EnglishShow[]>([])
 const englishLogs = ref<EnglishWatchLog[]>([])
+const labProgress = ref<EnglishLabProgress | null>(null)
+const labSummary = ref<EnglishLabSummary | null>(null)
+const labDrafts = ref<EnglishContentDraft[]>([])
+const labBusy = ref(false)
 const policies = ref<ScreenTimePolicyRow[]>([])
 const expanded = ref<Record<string, boolean>>(loadExpanded())
 
@@ -240,6 +247,70 @@ async function loadMovies(): Promise<void> {
 async function loadEnglish(): Promise<void> {
   shows.value = await api.get<EnglishShow[]>('/parent/english/shows')
   englishLogs.value = await api.get<EnglishWatchLog[]>('/parent/english/logs', { child_id: childId.value })
+  await loadEnglishLab()
+}
+
+async function loadEnglishLab(): Promise<void> {
+  if (!childId.value) {
+    labProgress.value = null
+    labSummary.value = null
+    labDrafts.value = []
+    return
+  }
+  const params = { child_id: childId.value }
+  const [progress, summary, drafts] = await Promise.all([
+    api.get<EnglishLabProgress>('/parent/english/learning', params),
+    api.get<EnglishLabSummary>('/parent/english/learning/summary', params),
+    api.get<EnglishContentDraft[]>('/parent/english/learning/drafts', params),
+  ])
+  labProgress.value = progress
+  labSummary.value = summary
+  labDrafts.value = drafts
+}
+
+async function generateLabDraft(kind: 'grammar' | 'story'): Promise<void> {
+  if (!childId.value || labBusy.value) return
+  labBusy.value = true
+  try {
+    await api.post('/parent/english/learning/drafts/generate', { child_id: childId.value, kind })
+    await loadEnglishLab()
+    ElMessage.success(t('common.saved'))
+  } catch (e) {
+    if (e instanceof ApiError) ElMessage.error(e.message)
+  } finally {
+    labBusy.value = false
+  }
+}
+
+async function publishLabDraft(id: number): Promise<void> {
+  if (!childId.value || labBusy.value) return
+  labBusy.value = true
+  try {
+    await api.post(`/parent/english/learning/drafts/${id}/publish`, { child_id: childId.value })
+    await loadEnglishLab()
+  } catch (e) {
+    if (e instanceof ApiError) ElMessage.error(e.message)
+  } finally {
+    labBusy.value = false
+  }
+}
+
+async function rejectLabDraft(id: number): Promise<void> {
+  if (!childId.value || labBusy.value) return
+  labBusy.value = true
+  try {
+    await api.post(`/parent/english/learning/drafts/${id}/reject`, { child_id: childId.value })
+    await loadEnglishLab()
+  } catch (e) {
+    if (e instanceof ApiError) ElMessage.error(e.message)
+  } finally {
+    labBusy.value = false
+  }
+}
+
+function draftPreview(draft: EnglishContentDraft): string {
+  const payload = draft.payload
+  return [payload.prompt || payload.text, payload.question].filter(Boolean).join(' · ')
 }
 
 async function loadScreen(): Promise<void> {
@@ -580,7 +651,54 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
       </section>
 
       <section v-else-if="tab === 'english'">
-        <el-card shadow="never">
+        <el-card v-if="labProgress" shadow="never" class="lab-card">
+          <h3>{{ t('common.englishLabProgress') }}</h3>
+          <p>
+            {{ t('common.englishRemainingToday') }}：{{ labProgress.remaining_today }}
+            · {{ t('common.englishAccuracy7d') }}：{{ labProgress.accuracy_7d == null ? '—' : Math.round(labProgress.accuracy_7d * 100) + '%' }}
+            · {{ labProgress.learned }}/{{ labProgress.total }}
+          </p>
+          <p v-if="labProgress.missed_words.length">{{ t('common.englishMissedWords') }}：{{ labProgress.missed_words.join('、') }}</p>
+          <div v-if="labSummary" class="lab-summary">
+            <strong>{{ t('common.englishLabSummary') }}</strong>
+            <p>{{ labSummary.summary }}</p>
+            <p v-if="labSummary.focuses.length">{{ labSummary.focuses.join(' · ') }}</p>
+          </div>
+        </el-card>
+        <el-card shadow="never" class="lab-card" style="margin-top: 12px">
+          <h3>{{ t('common.englishLabDrafts') }}</h3>
+          <div class="lab-actions">
+            <el-button :disabled="labBusy || !childId" @click="generateLabDraft('grammar')">{{ t('common.englishGenerateGrammar') }}</el-button>
+            <el-button :disabled="labBusy || !childId" @click="generateLabDraft('story')">{{ t('common.englishGenerateStory') }}</el-button>
+          </div>
+          <el-table v-if="!isPhone && labDrafts.length" :data="labDrafts" style="margin-top: 12px">
+            <el-table-column prop="kind" :label="t('common.category')" width="100" />
+            <el-table-column prop="status" :label="t('common.status')" width="110" />
+            <el-table-column :label="t('common.movieTitle')">
+              <template #default="{ row }">{{ draftPreview(row) }}</template>
+            </el-table-column>
+            <el-table-column width="180">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'pending'" type="primary" link :disabled="labBusy" @click="publishLabDraft(row.id)">{{ t('common.englishPublishDraft') }}</el-button>
+                <el-button v-if="row.status === 'pending'" type="danger" link :disabled="labBusy" @click="rejectLabDraft(row.id)">{{ t('common.englishRejectDraft') }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-else-if="isPhone" class="phone-list" style="margin-top: 12px">
+            <article v-for="row in labDrafts" :key="row.id" class="phone-card">
+              <div class="phone-info">
+                <div class="phone-title">{{ row.kind }} · {{ row.status }}</div>
+                <div class="phone-meta">{{ draftPreview(row) }}</div>
+                <div v-if="row.status === 'pending'" class="lab-actions">
+                  <el-button size="small" type="primary" :disabled="labBusy" @click="publishLabDraft(row.id)">{{ t('common.englishPublishDraft') }}</el-button>
+                  <el-button size="small" :disabled="labBusy" @click="rejectLabDraft(row.id)">{{ t('common.englishRejectDraft') }}</el-button>
+                </div>
+              </div>
+            </article>
+          </div>
+          <p v-else class="hint">{{ t('common.englishNoDrafts') }}</p>
+        </el-card>
+        <el-card shadow="never" style="margin-top: 12px">
           <el-form inline @submit.prevent="createShow">
             <el-input v-model="showForm.title" :placeholder="t('common.showName')" />
             <el-input v-model="showForm.emoji" style="width: 80px" />
@@ -684,6 +802,9 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .page { display: flex; flex-direction: column; gap: 12px; }
 .child { max-width: 220px; }
 .hint { color: #888; font-size: 13px; }
+.lab-card h3 { margin: 0 0 8px; }
+.lab-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+.lab-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .search-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .search-row .el-input { flex: 1; min-width: 200px; }
 .poster-grid {

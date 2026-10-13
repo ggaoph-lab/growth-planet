@@ -581,6 +581,49 @@ export interface EnglishWatchLog {
   show?: EnglishShow
 }
 
+export interface EnglishLabProgress {
+  completed_today: number
+  remaining_today: number
+  due: number
+  learned: number
+  mastered: number
+  total: number
+  next_review: string | null
+  vocabulary: { estimated_size: number; band: number }
+  accuracy_7d: number | null
+  missed_words: string[]
+  as_of: string
+}
+
+export interface EnglishLabSummary {
+  week_start: string
+  summary: string
+  focuses: string[]
+  status: string
+  accuracy_7d: number | null
+  missed_words: string[]
+}
+
+export interface EnglishContentDraft {
+  id: number
+  kind: 'grammar' | 'story' | string
+  status: 'pending' | 'published' | 'rejected' | string
+  payload: {
+    prompt?: string
+    question?: string
+    text?: string
+    options?: string[]
+    answer?: string
+    tip?: string
+    emoji?: string
+    theme?: string
+  }
+  published_at: string | null
+  created_at: string
+  updated_at: string
+  generation_status?: string
+}
+
 export interface GrowthDailyReport {
   date: string
   tasks_completed: number

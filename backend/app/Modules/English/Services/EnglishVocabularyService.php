@@ -4,9 +4,6 @@ namespace App\Modules\English\Services;
 
 use App\Modules\Core\Support\Clock;
 use App\Modules\Identity\Models\ChildProfile;
-use App\Modules\Task\Services\FamilyAiConfig;
-use App\Modules\Task\Services\HomeworkLlmRouter;
-use App\Modules\Task\Services\HomeworkLlmTimeoutException;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -18,8 +15,8 @@ class EnglishVocabularyService
 {
     public function __construct(
         private readonly Clock $clock,
-        private readonly HomeworkLlmRouter $llm,
-        private readonly FamilyAiConfig $ai,
+        private readonly EnglishAiCoach $coach,
+        private readonly EnglishContentGate $gate,
     ) {}
 
     /**
@@ -27,11 +24,28 @@ class EnglishVocabularyService
      */
     public function summary(ChildProfile $child): array
     {
+        $profile = $this->profile($child);
+
+        return [
+            'estimated_size' => $profile['estimated_size'],
+            'band' => $profile['band'],
+        ];
+    }
+
+    /**
+     * @return array{estimated_size: int, band: int, known_words: list<string>, missed_words: list<string>}
+     */
+    public function profile(ChildProfile $child): array
+    {
         $row = $this->profileRow($child->id);
+        $known = $this->decodeList($row->known_words ?? null);
+        $missed = $this->decodeList($row->missed_words ?? null);
 
         return [
             'estimated_size' => (int) ($row->estimated_size ?? 0),
             'band' => (int) ($row->band ?? 1),
+            'known_words' => $known,
+            'missed_words' => $missed,
         ];
     }
 
@@ -40,7 +54,11 @@ class EnglishVocabularyService
         return DB::table('english_learning_answers')
             ->where('child_id', $child->id)
             ->where('business_date', $date)
-            ->where('item_key', 'like', 'probe:%')
+            ->where(function ($query) {
+                $query->where('item_key', 'like', 'probe:%')
+                    ->orWhere('item_key', 'like', 'grammar:%')
+                    ->orWhere('item_key', 'like', 'story:%');
+            })
             ->pluck('item_key')
             ->unique()
             ->count();
@@ -56,12 +74,7 @@ class EnglishVocabularyService
             return [];
         }
 
-        $record = DB::table('english_ai_records')
-            ->where('child_id', $child->id)
-            ->where('business_date', $date)
-            ->where('purpose', 'vocabulary_probe')
-            ->first();
-
+        $record = $this->coach->findRecord($child, 'vocabulary_probe', $date);
         if ($record === null) {
             $record = $this->createRecord($child, $slots, $avoidTexts, $date);
         }
@@ -94,7 +107,7 @@ class EnglishVocabularyService
 
     public function observe(ChildProfile $child, string $expression, bool $correct): void
     {
-        $expression = $this->expression($expression);
+        $expression = $this->gate->expression($expression);
         if ($expression === '') {
             return;
         }
@@ -133,100 +146,63 @@ class EnglishVocabularyService
 
     private function createRecord(ChildProfile $child, int $slots, array $avoidTexts, string $date): object
     {
-        $row = $this->profileRow($child->id);
-        $known = $this->decodeList($row->known_words ?? null);
-        $missed = $this->decodeList($row->missed_words ?? null);
-        $size = (int) ($row->estimated_size ?? 0);
-        $band = (int) ($row->band ?? 1);
+        $profile = $this->profile($child);
+        $known = $profile['known_words'];
+        $missed = $profile['missed_words'];
+        $band = $profile['band'];
         $snapshot = [
             'band' => $band,
-            'estimated_size' => $size,
+            'estimated_size' => $profile['estimated_size'],
             'known_words' => array_slice($known, -30),
             'missed_words' => array_slice($missed, -15),
             'count' => $slots,
         ];
         $avoid = [];
         foreach ([...$avoidTexts, ...$known] as $text) {
-            $expression = $this->expression((string) $text);
+            $expression = $this->gate->expression((string) $text);
             if ($expression !== '') {
                 $avoid[strtolower($expression)] = true;
             }
         }
 
-        $cfg = $this->ai->resolve((int) $child->family_id);
         $provider = null;
         $model = null;
         $fromAi = [];
-        $choice = strtolower(trim((string) ($cfg['provider'] ?? 'auto')));
-        if (in_array($choice, ['gemini', 'qwen', 'openai'], true)) {
-            [$primary] = $this->llm->attemptsFor($choice, (int) $child->family_id);
-            if ($primary !== null) {
-                $provider = $primary['client']->name();
-                $model = (string) ($primary['config']['model'] ?? '');
-                $fromAi = $this->askModel($primary['client'], $primary['config'], $snapshot, $avoid, $slots);
-                $model = $fromAi['model'] ?? $model;
-                $fromAi = $fromAi['items'];
-            }
-        }
-
-        $items = $this->fillFromLadder($fromAi, $slots, $avoid, max(1, $band));
-        $status = $fromAi === [] ? 'local' : 'ai';
-
-        $id = DB::table('english_ai_records')->insertGetId([
-            'child_id' => $child->id,
-            'provider' => $provider,
-            'model' => $model,
-            'purpose' => 'vocabulary_probe',
-            'business_date' => $date,
-            'profile_snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE),
-            'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
-            'status' => $status,
-            'created_at' => $this->clock->now(),
+        $reply = $this->coach->chatJson($child, [
+            [
+                'role' => 'system',
+                'content' => 'You write short English vocabulary checks for a young child. Reply with JSON only: {"items":[{"text":"bird","meaning":"鸟","emoji":"🐦","options":["鸟","鱼","树"]}]}. text is simple English the child might or might not know. meaning is simplified Chinese. options has exactly 3 different Chinese choices and includes meaning. Do not repeat known_words. No personal data.',
+            ],
+            ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
         ]);
 
-        $created = DB::table('english_ai_records')->where('id', $id)->first();
-        if ($created === null) {
-            throw new \RuntimeException('english_ai_record_missing');
+        if ($reply !== null) {
+            $provider = $reply['provider'];
+            $model = $reply['model'];
+            $fromAi = $this->sanitizeItems($reply['content'], $avoid, $slots, $band);
         }
 
-        return $created;
-    }
+        $aiCount = count($fromAi);
+        $items = $this->fillFromLadder($fromAi, $slots, $avoid, max(1, $band));
+        $status = $aiCount === 0 ? 'local' : ($aiCount >= count($items) ? 'ai' : 'mixed');
 
-    /**
-     * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, count: int}  $snapshot
-     * @param  array<string, true>  $avoid
-     * @param  array{api_key: string, model: string}  $config
-     * @return array{items: list<array<string, mixed>>, model?: string}
-     */
-    private function askModel(object $client, array $config, array $snapshot, array $avoid, int $slots): array
-    {
-        try {
-            $result = $client->chatJson([
-                [
-                    'role' => 'system',
-                    'content' => 'You write short English vocabulary checks for a young child. Reply with JSON only: {"items":[{"text":"bird","meaning":"鸟","emoji":"🐦","options":["鸟","鱼","树"]}]}. text is simple English the child might or might not know. meaning is simplified Chinese. options has exactly 3 different Chinese choices and includes meaning. Do not repeat known_words. No personal data.',
-                ],
-                ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
-            ], $config);
-        } catch (HomeworkLlmTimeoutException) {
-            return ['items' => []];
-        }
-
-        if ($result === null) {
-            return ['items' => []];
-        }
-
-        return [
-            'items' => $this->sanitizeItems((string) $result['content'], $avoid, $slots),
-            'model' => (string) ($result['model'] ?? ''),
-        ];
+        return $this->coach->storeRecord(
+            $child,
+            'vocabulary_probe',
+            $date,
+            $snapshot,
+            $items,
+            $status,
+            $provider,
+            $model,
+        );
     }
 
     /**
      * @param  array<string, true>  $avoid
      * @return list<array<string, mixed>>
      */
-    private function sanitizeItems(string $content, array $avoid, int $slots): array
+    private function sanitizeItems(string $content, array $avoid, int $slots, int $band): array
     {
         $content = trim($content);
         $content = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', $content) ?? $content;
@@ -241,11 +217,11 @@ class EnglishVocabularyService
             if (! is_array($raw)) {
                 continue;
             }
-            $card = $this->cardFromRaw($raw, $avoid);
+            $card = $this->gate->probeCard($raw, $avoid, $band);
             if ($card === null) {
                 continue;
             }
-            $avoid[strtolower($this->expression($card['text']))] = true;
+            $avoid[strtolower($this->gate->expression($card['text']))] = true;
             $cards[] = $card;
             if (count($cards) >= $slots) {
                 break;
@@ -263,7 +239,7 @@ class EnglishVocabularyService
     private function fillFromLadder(array $cards, int $slots, array $avoid, int $band): array
     {
         foreach ($cards as $card) {
-            $expression = $this->expression((string) ($card['text'] ?? ''));
+            $expression = $this->gate->expression((string) ($card['text'] ?? ''));
             if ($expression !== '') {
                 $avoid[strtolower($expression)] = true;
             }
@@ -294,73 +270,19 @@ class EnglishVocabularyService
             if (count($cards) >= $slots) {
                 break;
             }
-            $card = $this->cardFromRaw($raw, $avoid);
+            $card = $this->gate->probeCard($raw, $avoid, $band);
+            if ($card === null) {
+                // Ladder items are curated; retry without band filter for fill.
+                $card = $this->gate->probeCard($raw, $avoid, 5);
+            }
             if ($card === null) {
                 continue;
             }
-            $avoid[strtolower($this->expression($card['text']))] = true;
+            $avoid[strtolower($this->gate->expression($card['text']))] = true;
             $cards[] = $card;
         }
 
         return $cards;
-    }
-
-    /**
-     * @param  array<string, mixed>  $raw
-     * @param  array<string, true>  $avoid
-     * @return array<string, mixed>|null
-     */
-    private function cardFromRaw(array $raw, array $avoid): ?array
-    {
-        $text = $this->expression((string) ($raw['text'] ?? ''));
-        $meaning = trim((string) ($raw['meaning'] ?? ''));
-        if ($text === '' || $meaning === '' || mb_strlen($meaning) > 20) {
-            return null;
-        }
-        if (preg_match('/^[A-Za-z][A-Za-z \'.?!,-]{0,39}$/', $text) !== 1) {
-            return null;
-        }
-        if (isset($avoid[strtolower($text)])) {
-            return null;
-        }
-
-        $options = [];
-        foreach ($raw['options'] ?? [] as $option) {
-            $option = trim((string) $option);
-            if ($option !== '' && mb_strlen($option) <= 20 && ! in_array($option, $options, true)) {
-                $options[] = $option;
-            }
-        }
-        if (! in_array($meaning, $options, true)) {
-            array_unshift($options, $meaning);
-        }
-        $options = array_slice(array_values(array_unique($options)), 0, 3);
-        if (count($options) < 3 || ! in_array($meaning, $options, true)) {
-            return null;
-        }
-
-        $emoji = trim((string) ($raw['emoji'] ?? '✨'));
-        if ($emoji === '' || mb_strlen($emoji) > 8) {
-            $emoji = '✨';
-        }
-
-        $slug = trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower($text)), '-');
-        if ($slug === '') {
-            return null;
-        }
-
-        return [
-            'key' => 'probe:'.mb_substr($slug, 0, 50),
-            'theme' => '词汇小测试',
-            'kind' => 'word',
-            'text' => $text,
-            'meaning' => $meaning,
-            'emoji' => $emoji,
-            'options' => $options,
-            'review' => false,
-            'stage' => 0,
-            'probe' => true,
-        ];
     }
 
     private function profileRow(int $childId): ?object
@@ -384,26 +306,13 @@ class EnglishVocabularyService
 
         $words = [];
         foreach ($decoded as $word) {
-            $expression = $this->expression((string) $word);
+            $expression = $this->gate->expression((string) $word);
             if ($expression !== '') {
                 $words[] = $expression;
             }
         }
 
         return array_values(array_unique($words));
-    }
-
-    private function expression(string $text): string
-    {
-        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
-        if ($text === '' || mb_strlen($text) > 40) {
-            return '';
-        }
-        if (! str_contains($text, ' ')) {
-            return strtolower($text);
-        }
-
-        return $text;
     }
 
     private function bandFor(int $size): int

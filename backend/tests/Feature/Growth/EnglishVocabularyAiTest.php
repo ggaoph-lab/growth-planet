@@ -28,8 +28,9 @@ class EnglishVocabularyAiTest extends TestCase
 
         $service->answer($child, 'apple', '苹果');
         $this->assertSame(1, DB::table('english_vocabulary_profiles')->where('child_id', $child->id)->value('estimated_size'));
-        $this->assertSame('local', DB::table('english_ai_records')->value('status'));
-        $this->assertNull(DB::table('english_ai_records')->value('provider'));
+        $probe = DB::table('english_ai_records')->where('purpose', 'vocabulary_probe')->first();
+        $this->assertSame('local', $probe->status);
+        $this->assertNull($probe->provider);
 
         config([
             'services.openai.api_key' => 'sk-test',
@@ -48,6 +49,10 @@ class EnglishVocabularyAiTest extends TestCase
                             'emoji' => '🐯',
                             'options' => ['老虎', '狮子', '熊'],
                         ]],
+                        'order' => [],
+                        'tips' => [],
+                        'summary' => '本周练习稳定。',
+                        'focuses' => ['动物'],
                     ], JSON_UNESCAPED_UNICODE)],
                 ]],
             ]),
@@ -61,6 +66,8 @@ class EnglishVocabularyAiTest extends TestCase
                             'emoji' => '🦁',
                             'options' => ['狮子', '老虎', '熊'],
                         ]],
+                        'order' => [],
+                        'tips' => [],
                     ], JSON_UNESCAPED_UNICODE)],
                 ]],
             ]),
@@ -69,9 +76,12 @@ class EnglishVocabularyAiTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-10-14 10:00:00', 'Asia/Shanghai'));
         $plan = $service->plan($child);
         $this->assertTrue(collect($plan['items'])->contains(fn ($item) => ($item['text'] ?? '') === 'tiger'));
-        $chatgpt = DB::table('english_ai_records')->where('business_date', '2026-10-14')->first();
+        $chatgpt = DB::table('english_ai_records')
+            ->where('business_date', '2026-10-14')
+            ->where('purpose', 'vocabulary_probe')
+            ->first();
         $this->assertSame('openai', $chatgpt->provider);
-        $this->assertSame('ai', $chatgpt->status);
+        $this->assertContains($chatgpt->status, ['ai', 'mixed']);
         $this->assertStringContainsString('apple', (string) $chatgpt->profile_snapshot);
         Http::assertSent(fn ($request) => str_contains($request->url(), 'openai.test') && str_contains($request->body(), 'apple'));
 
@@ -84,7 +94,10 @@ class EnglishVocabularyAiTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-10-15 10:00:00', 'Asia/Shanghai'));
         $service->plan($child);
 
-        $qwen = DB::table('english_ai_records')->where('business_date', '2026-10-15')->first();
+        $qwen = DB::table('english_ai_records')
+            ->where('business_date', '2026-10-15')
+            ->where('purpose', 'vocabulary_probe')
+            ->first();
         $this->assertSame('qwen', $qwen->provider);
         $this->assertStringContainsString('apple', (string) $qwen->profile_snapshot);
         $this->assertSame(1, DB::table('english_vocabulary_profiles')->where('child_id', $child->id)->value('estimated_size'));

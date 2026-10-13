@@ -4,13 +4,19 @@ namespace App\Modules\English\Http\Controllers\Parent;
 
 use App\Modules\English\Models\EnglishShow;
 use App\Modules\English\Models\EnglishWatchLog;
+use App\Modules\English\Services\EnglishDraftService;
+use App\Modules\English\Services\EnglishLearningService;
 use App\Modules\Identity\Support\CurrentContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class EnglishController
 {
-    public function __construct(private readonly CurrentContext $context) {}
+    public function __construct(
+        private readonly CurrentContext $context,
+        private readonly EnglishLearningService $learning,
+        private readonly EnglishDraftService $drafts,
+    ) {}
 
     public function indexShows(): JsonResponse
     {
@@ -81,5 +87,59 @@ class EnglishController
         }
 
         return response()->json(['data' => $query->limit(200)->get()]);
+    }
+
+    public function learning(Request $request): JsonResponse
+    {
+        $data = $request->validate(['child_id' => ['required', 'integer']]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->learning->parentProgress($child)]);
+    }
+
+    public function learningSummary(Request $request): JsonResponse
+    {
+        $data = $request->validate(['child_id' => ['required', 'integer']]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->learning->parentSummary($child)]);
+    }
+
+    public function indexDrafts(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'child_id' => ['required', 'integer'],
+            'status' => ['nullable', 'string', 'in:pending,published,rejected'],
+        ]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->drafts->list($child, $data['status'] ?? null)]);
+    }
+
+    public function generateDraft(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'child_id' => ['required', 'integer'],
+            'kind' => ['required', 'string', 'in:grammar,story'],
+        ]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->drafts->generate($child, $data['kind'])], 201);
+    }
+
+    public function publishDraft(int $id): JsonResponse
+    {
+        $childId = (int) request()->validate(['child_id' => ['required', 'integer']])['child_id'];
+        $child = $this->context->findChild($childId);
+
+        return response()->json(['data' => $this->drafts->publish($child, $id)]);
+    }
+
+    public function rejectDraft(int $id): JsonResponse
+    {
+        $childId = (int) request()->validate(['child_id' => ['required', 'integer']])['child_id'];
+        $child = $this->context->findChild($childId);
+
+        return response()->json(['data' => $this->drafts->reject($child, $id)]);
     }
 }

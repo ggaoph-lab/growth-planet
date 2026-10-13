@@ -34,7 +34,7 @@ describe('English learning', () => {
   it('starts reviews with recall and gives a learning step after a mistake', async () => {
     const review = { ...card, review: true, options: ['apple', 'banana', 'water'] }
     vi.mocked(api.get).mockResolvedValue({ ...plan, items: [review] })
-    vi.mocked(api.postIdempotent).mockResolvedValue({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [review] } })
+    vi.mocked(api.postIdempotent).mockResolvedValue({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [review] }, coach_tip: '再听一遍：apple 意思是「苹果」。' })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
     expect(wrapper.find('h3').text()).toBe('苹果')
@@ -42,9 +42,31 @@ describe('English learning', () => {
     await wrapper.findAll('.answers button').find(button => button.text() === 'banana')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('答错不扣分')
+    expect(wrapper.find('.coach').text()).toContain('apple')
     await wrapper.find('.primary').trigger('click')
     expect(wrapper.find('.meaning').text()).toBe('苹果')
     expect(wrapper.find('h3').text()).toBe('apple')
+    wrapper.unmount()
+  })
+
+  it('shows challenge badge and coaching for grammar cards', async () => {
+    const grammar = {
+      key: 'grammar:1', theme: '语法小练', kind: 'grammar', text: 'I ___ happy.', meaning: '选正确的词',
+      emoji: '🧩', options: ['am', 'is', 'are'], review: false, stage: 0, challenge: true, prompt: 'I ___ happy.', question: '选正确的词',
+    }
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [grammar] })
+    vi.mocked(api.postIdempotent).mockResolvedValue({
+      correct: true, meaning: '选正确的词', xp: 0, coins: 0, next_review: '2026-10-13',
+      plan: { ...plan, items: [] }, coach_tip: '真棒，记住这个表达！', challenge: true,
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('探索挑战')
+    await wrapper.find('.primary').trigger('click')
+    await wrapper.findAll('.answers button').find(button => button.text() === 'am')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('不发金币')
+    expect(wrapper.find('.coach').exists()).toBe(true)
     wrapper.unmount()
   })
 
