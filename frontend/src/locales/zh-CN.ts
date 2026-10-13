@@ -517,12 +517,16 @@ export default {
       },
       rewardAfter: '通过后发放 {xp} 经验 · {coins} 成长币',
       approveTask: '通过后会发放 {xp} 经验、{coins} 成长币。确认通过？',
+      fulfill: '核销',
+      fulfillTitle: '核销奖励',
+      fulfillConfirm: '核销「{name}」后会扣除 {coins} 成长币，并把这份奖励标为已兑现。确认核销？',
+      redeemCost: '核销后扣除 {coins} 成长币',
     },
     tasks: {
       status: {
         pending: '未开始',
         in_progress: '进行中',
-        submitted: '待审核',
+        submitted: '已提交',
         returned: '已退回',
         completed: '已完成',
         cancelled: '已取消',
@@ -626,7 +630,7 @@ export default {
     taskStatus: {
       pending: '还没开始',
       in_progress: '进行中',
-      submitted: '等家长审核',
+      submitted: '已提交',
       returned: '家长退回了，再试一次',
       completed: '完成啦！',
       cancelled: '已取消',
@@ -643,7 +647,7 @@ export default {
       finishStepsFirst: '请先勾完每一项再提交',
     },
     taskReward: '🎁 {xp} 经验 · {coins} 成长币',
-    taskRewardPending: '🎁 {xp} 经验 · {coins} 成长币（审核通过后）',
+    taskRewardPending: '🎁 完成后 {xp} 经验 · {coins} 成长币',
     englishStatus: {
       PENDING: '待家长确认',
       APPROVED: '已确认',

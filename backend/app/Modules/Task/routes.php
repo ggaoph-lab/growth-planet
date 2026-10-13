@@ -23,8 +23,6 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::post('homework/confirm', [HomeworkController::class, 'confirm']);
 
     Route::get('task-instances', [TaskInstanceController::class, 'index']);
-    Route::post('task-instances/{id}/approve', [TaskInstanceController::class, 'approve'])->whereNumber('id')->middleware('idempotent');
-    Route::post('task-instances/{id}/return', [TaskInstanceController::class, 'returnInstance'])->whereNumber('id')->middleware('idempotent');
 });
 
 Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(function () {

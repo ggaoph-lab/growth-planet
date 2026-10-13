@@ -42,7 +42,7 @@ class ParentTaskApiTest extends TestCase
             'schedules' => [['frequency' => 'daily']],
         ])->assertCreated()
             ->assertJsonPath('data.title', '阅读')
-            ->assertJsonPath('data.requires_approval', true)
+            ->assertJsonPath('data.requires_approval', false)
             ->assertJsonPath('data.with_parent', false);
     }
 

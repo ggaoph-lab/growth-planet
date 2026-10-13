@@ -2,9 +2,6 @@
 
 namespace Tests\Feature\Growth;
 
-use App\Modules\Approval\Enums\ApprovalStatus;
-use App\Modules\Approval\Models\ApprovalRequest;
-use App\Modules\Approval\Services\ApprovalService;
 use App\Modules\Ledger\DTO\RewardIntent;
 use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\SourceModule;
@@ -73,26 +70,13 @@ class LedgerTest extends TestCase
             ->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
             ->assertOk()
-            ->assertJsonPath('data.status', 'submitted');
+            ->assertJsonPath('data.status', 'completed');
 
         $wallet = $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->getJson('/api/v1/kid/wallet')
             ->json('data');
-        $this->assertSame(0, $wallet['xp']['balance']);
-        $this->assertSame(0, $wallet['coin']['balance']);
-
-        $approval = ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail();
-        $this->assertSame(ApprovalStatus::Pending, $approval->status);
-
-        app(ApprovalService::class)->decide(
-            $approval,
-            ApprovalStatus::Approved,
-            $approval->lock_version,
-            $parent->id,
-        );
-
-        $this->assertSame(10, XpAccount::query()->where('child_id', $child->id)->value('balance'));
-        $this->assertSame(5, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(10, $wallet['xp']['balance']);
+        $this->assertSame(5, $wallet['coin']['balance']);
 
         app(RewardGrantService::class)->grant(new RewardIntent(
             familyId: $family->id,

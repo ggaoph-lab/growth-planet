@@ -20,6 +20,7 @@ class TtsController
     {
         $data = $request->validate([
             'text' => ['required', 'string', 'max:500'],
+            'lang' => ['sometimes', 'string', 'in:zh-CN,en-US'],
         ]);
 
         $child = $this->context->child();
@@ -30,7 +31,7 @@ class TtsController
         RateLimiter::hit($throttleKey, 60);
 
         $familyId = (int) $child->family_id;
-        $result = $this->tts->synthesize((string) $data['text'], $familyId);
+        $result = $this->tts->synthesize((string) $data['text'], $familyId, (string) ($data['lang'] ?? 'zh-CN'));
         if ($result === null) {
             return response()->json([
                 'data' => [
@@ -62,6 +63,7 @@ class TtsController
         $data = $request->validate([
             'texts' => ['required', 'array', 'max:8'],
             'texts.*' => ['required', 'string', 'max:500'],
+            'lang' => ['sometimes', 'string', 'in:zh-CN,en-US'],
         ]);
 
         $child = $this->context->child();
@@ -71,7 +73,7 @@ class TtsController
         }
         RateLimiter::hit($throttleKey, 60);
 
-        $items = $this->tts->warm($data['texts']);
+        $items = $this->tts->warm($data['texts'], (string) ($data['lang'] ?? 'zh-CN'));
 
         return response()->json([
             'data' => [

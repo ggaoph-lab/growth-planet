@@ -2,7 +2,9 @@
 
 namespace App\Modules\Shop\Services;
 
+use App\Modules\Approval\Enums\ApprovalStatus;
 use App\Modules\Approval\Enums\ApprovalType;
+use App\Modules\Approval\Models\ApprovalRequest;
 use App\Modules\Approval\Services\ApprovalService;
 use App\Modules\Core\Exceptions\ApiException;
 use App\Modules\Core\Support\BiMsg;
@@ -17,6 +19,7 @@ use App\Modules\Shop\Enums\RewardStatus;
 use App\Modules\Shop\Models\Reward;
 use App\Modules\Shop\Models\RewardRedemption;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class RedemptionService
@@ -96,21 +99,51 @@ class RedemptionService
 
     public function cancel(RewardRedemption $redemption, ChildProfile $child): RewardRedemption
     {
-        if ($redemption->child_id !== $child->id) {
-            throw new ApiException('NOT_FOUND', BiMsg::of('内容不存在', 'Not found'), 404);
-        }
-        if ($redemption->status !== RedemptionStatus::Requested) {
-            throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能取消', 'Cannot cancel in the current state'), 409);
+        return DB::transaction(function () use ($redemption, $child) {
+            $redemption = RewardRedemption::query()->whereKey($redemption->id)->lockForUpdate()->firstOrFail();
+            if ($redemption->child_id !== $child->id) {
+                throw new ApiException('NOT_FOUND', BiMsg::of('内容不存在', 'Not found'), 404);
+            }
+            if ($redemption->status !== RedemptionStatus::Requested) {
+                throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能取消', 'Cannot cancel in the current state'), 409);
+            }
+
+            if ($redemption->coin_hold_id) {
+                $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
+                $this->coins->release($hold);
+            }
+            $redemption->status = RedemptionStatus::Cancelled;
+            $redemption->save();
+
+            if ($redemption->approval_request_id) {
+                $approval = ApprovalRequest::query()->whereKey($redemption->approval_request_id)->lockForUpdate()->first();
+                if ($approval !== null && $approval->status === ApprovalStatus::Pending) {
+                    $child->loadMissing('member');
+                    $this->approvals->cancel($approval, $child->member?->user_id);
+                }
+            }
+
+            return $redemption;
+        });
+    }
+
+    /**
+     * Parent writes off a pending redemption: capture the coin hold and mark it delivered.
+     */
+    public function fulfill(RewardRedemption $redemption, Family $family, ?int $approvedBy): void
+    {
+        if ($redemption->status === RedemptionStatus::Fulfilled) {
+            return;
         }
 
-        if ($redemption->coin_hold_id) {
-            $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
-            $this->coins->release($hold);
+        $this->finalizeApproved($redemption, $family, $approvedBy);
+
+        if ($redemption->status !== RedemptionStatus::Approved) {
+            return;
         }
-        $redemption->status = RedemptionStatus::Cancelled;
+
+        $redemption->status = RedemptionStatus::Fulfilled;
         $redemption->save();
-
-        return $redemption;
     }
 
     public function finalizeApproved(RewardRedemption $redemption, Family $family, ?int $approvedBy): void

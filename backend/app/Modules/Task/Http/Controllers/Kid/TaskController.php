@@ -26,6 +26,7 @@ class TaskController
         $family = $this->context->family();
         $child = $this->context->child();
         $date = $request->query('date', $this->clock->today($family->timezone)->toDateString());
+        $this->flow->retireTaskApprovals($family->id, $child->id);
         $instances = $this->generator->ensureForChildOnDate($family, $child, $date);
 
         return response()->json(['data' => $this->presentMany($instances)->values()]);

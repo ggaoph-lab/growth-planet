@@ -68,6 +68,7 @@ return [
     // Kid read-aloud: Edge neural first, then Qwen/CosyVoice, then public fallbacks.
     'tts' => [
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
+        'edge_voice_en' => env('TTS_EDGE_VOICE_EN', 'en-US-JennyNeural'),
     ],
 
 ];

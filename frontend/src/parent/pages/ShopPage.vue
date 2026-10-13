@@ -343,7 +343,7 @@ onMounted(load)
           <el-table-column :label="t('common.name')" min-width="120">
             <template #default="{ row }">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</template>
           </el-table-column>
-          <el-table-column prop="coin_cost" :label="t('common.cost')" width="80" />
+          <el-table-column prop="coin_price" :label="t('common.cost')" width="80" />
           <el-table-column :label="t('common.status')" width="90">
             <template #default="{ row }">{{ redemptionStatusLabel(row.status) }}</template>
           </el-table-column>
@@ -355,7 +355,7 @@ onMounted(load)
             <div class="phone-info">
               <div class="phone-title">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</div>
               <div class="phone-meta">
-                🪙 {{ row.coin_cost }} · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
+                🪙 {{ row.coin_price }} · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
               </div>
             </div>
           </article>

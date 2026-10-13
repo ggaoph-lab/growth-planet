@@ -309,9 +309,15 @@ class EdgeTtsClient
         $escaped = htmlspecialchars($text, ENT_XML1 | ENT_QUOTES, 'UTF-8');
         $voiceEsc = htmlspecialchars($voice, ENT_XML1 | ENT_QUOTES, 'UTF-8');
 
-        return '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">'
+        $lang = 'zh-CN';
+        if (preg_match('/^([a-z]{2}-[A-Z]{2})/', $voice, $match) === 1) {
+            $lang = $match[1];
+        }
+        $rate = str_starts_with($lang, 'en') ? '-18%' : '-5%';
+
+        return '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="'.$lang.'">'
             ."<voice name=\"{$voiceEsc}\">"
-            .'<prosody pitch="+0Hz" rate="-5%" volume="+0%">'
+            .'<prosody pitch="+0Hz" rate="'.$rate.'" volume="+0%">'
             .$escaped
             .'</prosody></voice></speak>';
     }

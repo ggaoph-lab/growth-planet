@@ -24,7 +24,7 @@ class RedemptionApprovalHandler implements ApprovalHandler
         $family = Family::query()->findOrFail($request->family_id);
 
         if ($decision === ApprovalStatus::Approved) {
-            $this->redemptions->finalizeApproved($redemption, $family, $actorUserId);
+            $this->redemptions->fulfill($redemption, $family, $actorUserId);
 
             return;
         }

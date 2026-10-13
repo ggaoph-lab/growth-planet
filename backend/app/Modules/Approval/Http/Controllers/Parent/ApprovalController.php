@@ -10,7 +10,9 @@ use App\Modules\Approval\Services\ApprovalService;
 use App\Modules\English\Models\EnglishWatchLog;
 use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Support\CurrentContext;
+use App\Modules\Shop\Models\RewardRedemption;
 use App\Modules\Task\Models\TaskInstance;
+use App\Modules\Task\Services\TaskKidFlowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -21,10 +23,13 @@ class ApprovalController
     public function __construct(
         private readonly CurrentContext $context,
         private readonly ApprovalService $approvals,
+        private readonly TaskKidFlowService $tasks,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
+        $this->tasks->retireTaskApprovals($this->context->familyId());
+
         $status = $request->query('status', 'PENDING');
         $query = ApprovalRequest::query()
             ->where('family_id', $this->context->familyId())
@@ -87,6 +92,12 @@ class ApprovalController
             ->where('family_id', $this->context->familyId())
             ->findOrFail($id);
 
+        if ($approval->type === ApprovalType::TaskCompletion) {
+            $this->tasks->retireTaskApprovals($approval->family_id, $approval->child_id);
+
+            return response()->json(['data' => $approval->fresh()]);
+        }
+
         if ($approval->type === ApprovalType::EnglishLog && isset($data['approved_minutes'])) {
             EnglishWatchLog::query()
                 ->whereKey($approval->subject_id)
@@ -130,7 +141,20 @@ class ApprovalController
                 ->get()
                 ->keyBy('id');
 
-        return $items->map(function (ApprovalRequest $item) use ($childNames, $tasks) {
+        $redemptionIds = $items
+            ->filter(fn (ApprovalRequest $item) => $item->type === ApprovalType::Redemption && $item->subject_type === 'reward_redemption')
+            ->pluck('subject_id')
+            ->unique()
+            ->all();
+        $redemptions = $redemptionIds === []
+            ? collect()
+            : RewardRedemption::query()
+                ->where('family_id', $familyId)
+                ->whereIn('id', $redemptionIds)
+                ->get()
+                ->keyBy('id');
+
+        return $items->map(function (ApprovalRequest $item) use ($childNames, $tasks, $redemptions) {
             $data = $item->toArray();
             $data['child_name'] = $childNames[$item->child_id] ?? null;
             $data['summary'] = null;
@@ -144,6 +168,16 @@ class ApprovalController
                     'description' => $snapshot['description'] ?? null,
                     'xp_reward' => (int) ($snapshot['xp_reward'] ?? 0),
                     'coin_reward' => (int) ($snapshot['coin_reward'] ?? 0),
+                ];
+            }
+
+            if ($item->type === ApprovalType::Redemption) {
+                $redemption = $redemptions->get($item->subject_id);
+                $snapshot = is_array($redemption?->reward_snapshot) ? $redemption->reward_snapshot : [];
+                $data['summary'] = [
+                    'title' => $snapshot['name'] ?? null,
+                    'kind' => $snapshot['kind'] ?? null,
+                    'coin_price' => (int) ($redemption?->coin_price ?? $snapshot['coin_price'] ?? 0),
                 ];
             }
 

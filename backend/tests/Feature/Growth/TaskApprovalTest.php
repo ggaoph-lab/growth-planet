@@ -21,7 +21,7 @@ class TaskApprovalTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_kid_submit_creates_pending_approval_without_paying(): void
+    public function test_kid_submit_completes_and_pays_without_an_approval(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -29,7 +29,6 @@ class TaskApprovalTest extends TestCase
         $this->seedTask($family, $parent, [
             'xp_reward' => 15,
             'coin_reward' => 8,
-            'requires_approval' => true,
         ]);
 
         $this->loginKid($child->fresh(['member.user']), $device, $token);
@@ -44,54 +43,16 @@ class TaskApprovalTest extends TestCase
             ->assertOk();
         $this->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed')
+            ->assertJsonPath('data.can_withdraw', true);
 
-        ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail();
-
-        $wallet = $this->getJson('/api/v1/kid/wallet')->json('data');
-        $this->assertSame(0, $wallet['xp']['balance']);
-        $this->assertSame(0, $wallet['coin']['balance']);
-    }
-
-    public function test_parent_approve_grants_xp_and_coins(): void
-    {
-        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
-        $child = $this->makeChild($family);
-        $this->seedTask($family, $parent, [
-            'xp_reward' => 15,
-            'coin_reward' => 8,
-            'requires_approval' => true,
-        ]);
-
-        $instance = app(TaskInstanceGenerator::class)
-            ->ensureForChildOnDate($family, $child, '2026-10-11')
-            ->first();
-        $instance->forceFill([
-            'status' => TaskInstanceStatus::Submitted,
-            'submitted_at' => now(),
-        ])->save();
-
-        $approval = app(ApprovalService::class)->createPending(
-            $family->id,
-            $child->id,
-            ApprovalType::TaskCompletion,
-            'task_instance',
-            $instance->id,
-            $child->member->user_id,
-        );
-
-        $this->actingAsParent($parent)
-            ->withHeader('Idempotency-Key', (string) Str::uuid())
-            ->postJson("/api/v1/parent/task-instances/{$instance->id}/approve", ['lock_version' => $approval->lock_version])
-            ->assertOk();
-
-        $instance->refresh();
-        $this->assertSame(TaskInstanceStatus::Completed, $instance->status);
+        $this->assertSame(0, ApprovalRequest::query()->where('subject_id', $instanceId)->count());
         $this->assertSame(15, XpAccount::query()->where('child_id', $child->id)->value('balance'));
         $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
-    public function test_parent_approval_list_includes_task_title_and_reward(): void
+    public function test_pending_task_approvals_are_finished_and_hidden_from_the_approval_center(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -104,6 +65,10 @@ class TaskApprovalTest extends TestCase
         $instance = app(TaskInstanceGenerator::class)
             ->ensureForChildOnDate($family, $child, '2026-10-11')
             ->first();
+        $instance->forceFill([
+            'status' => TaskInstanceStatus::Submitted,
+            'submitted_at' => now(),
+        ])->save();
         app(ApprovalService::class)->createPending(
             $family->id,
             $child->id,
@@ -116,14 +81,16 @@ class TaskApprovalTest extends TestCase
         $this->actingAsParent($parent)
             ->getJson('/api/v1/parent/approvals?status=PENDING')
             ->assertOk()
-            ->assertJsonPath('data.0.type', 'task_completion')
-            ->assertJsonPath('data.0.child_name', '小星星')
-            ->assertJsonPath('data.0.summary.title', '整理书包')
-            ->assertJsonPath('data.0.summary.xp_reward', 15)
-            ->assertJsonPath('data.0.summary.coin_reward', 8);
+            ->assertJsonCount(0, 'data');
+
+        $instance->refresh();
+        $this->assertSame(TaskInstanceStatus::Completed, $instance->status);
+        $this->assertSame(ApprovalStatus::Cancelled, ApprovalRequest::query()->where('subject_id', $instance->id)->firstOrFail()->status);
+        $this->assertSame(15, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
-    public function test_kid_can_withdraw_a_submitted_task_and_submit_again(): void
+    public function test_kid_can_withdraw_a_completion_and_submit_again(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -132,7 +99,6 @@ class TaskApprovalTest extends TestCase
             'title' => '整理书包',
             'xp_reward' => 15,
             'coin_reward' => 8,
-            'requires_approval' => false,
         ]);
 
         $this->loginKid($child->fresh(['member.user']), $device, $token);
@@ -146,12 +112,10 @@ class TaskApprovalTest extends TestCase
         $this->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
             ->assertOk()
+            ->assertJsonPath('data.status', 'completed')
             ->assertJsonPath('data.can_withdraw', true);
 
-        $this->assertSame(1, ApprovalRequest::query()
-            ->where('subject_id', $instanceId)
-            ->where('status', ApprovalStatus::Pending)
-            ->count());
+        $this->assertSame(15, XpAccount::query()->where('child_id', $child->id)->value('balance'));
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
@@ -160,14 +124,8 @@ class TaskApprovalTest extends TestCase
             ->assertJsonPath('data.status', 'pending')
             ->assertJsonPath('data.can_withdraw', false);
 
-        $this->assertSame(
-            ApprovalStatus::Cancelled,
-            ApprovalRequest::query()->where('subject_id', $instanceId)->firstOrFail()->status,
-        );
-        $this->assertSame(0, ApprovalRequest::query()
-            ->where('subject_id', $instanceId)
-            ->where('status', ApprovalStatus::Pending)
-            ->count());
+        $this->assertSame(0, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(0, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
@@ -177,15 +135,14 @@ class TaskApprovalTest extends TestCase
             ->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
             ->assertOk()
-            ->assertJsonPath('data.status', 'submitted');
+            ->assertJsonPath('data.status', 'completed');
 
-        $this->assertSame(1, ApprovalRequest::query()
-            ->where('subject_id', $instanceId)
-            ->where('status', ApprovalStatus::Pending)
-            ->count());
+        $this->assertSame(15, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(0, ApprovalRequest::query()->where('subject_id', $instanceId)->count());
     }
 
-    public function test_kid_can_undo_a_legacy_completion_that_was_paid_immediately(): void
+    public function test_kid_can_undo_a_completion_that_was_paid_immediately(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -231,7 +188,7 @@ class TaskApprovalTest extends TestCase
         $this->assertSame(0, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
-    public function test_kid_cannot_withdraw_after_parent_approval(): void
+    public function test_kid_cannot_withdraw_a_completion_the_parent_already_approved(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -239,32 +196,41 @@ class TaskApprovalTest extends TestCase
         $this->seedTask($family, $parent, [
             'xp_reward' => 15,
             'coin_reward' => 8,
-            'requires_approval' => true,
         ]);
 
         $instance = app(TaskInstanceGenerator::class)
             ->ensureForChildOnDate($family, $child, '2026-10-11')
             ->first();
         $instance->forceFill([
-            'status' => TaskInstanceStatus::Submitted,
-            'submitted_at' => now(),
+            'status' => TaskInstanceStatus::Completed,
+            'completed_at' => now(),
         ])->save();
-
-        $approval = app(ApprovalService::class)->createPending(
-            $family->id,
-            $child->id,
-            ApprovalType::TaskCompletion,
-            'task_instance',
-            $instance->id,
-            $child->member->user_id,
-        );
-
-        app(ApprovalService::class)->decide(
-            $approval,
-            ApprovalStatus::Approved,
-            $approval->lock_version,
-            $parent->id,
-        );
+        app(RewardGrantService::class)->grant(new RewardIntent(
+            familyId: $family->id,
+            childId: $child->id,
+            policyCode: 'task.complete',
+            grantKey: 'task:instance:'.$instance->id.':complete',
+            sourceModule: SourceModule::Task,
+            sourceType: 'task_instance',
+            sourceId: $instance->id,
+            occurredAt: now()->toImmutable(),
+            xpAmount: 15,
+            coinAmount: 8,
+            postImmediately: true,
+        ));
+        ApprovalRequest::query()->create([
+            'family_id' => $family->id,
+            'child_id' => $child->id,
+            'type' => ApprovalType::TaskCompletion,
+            'subject_type' => 'task_instance',
+            'subject_id' => $instance->id,
+            'status' => ApprovalStatus::Approved,
+            'requested_by' => $child->member->user_id,
+            'requested_at' => now(),
+            'decided_by' => $parent->id,
+            'decided_at' => now(),
+            'lock_version' => 1,
+        ]);
 
         $this->loginKid($child->fresh(['member.user']), $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())

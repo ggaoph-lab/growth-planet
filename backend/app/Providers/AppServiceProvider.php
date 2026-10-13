@@ -4,10 +4,9 @@ namespace App\Providers;
 
 use App\Modules\Approval\Services\ApprovalHandlerRegistry;
 use App\Modules\Core\Support\Clock;
-use App\Modules\Identity\Support\CurrentContext;
 use App\Modules\English\Services\EnglishLogApprovalHandler;
+use App\Modules\Identity\Support\CurrentContext;
 use App\Modules\Shop\Services\RedemptionApprovalHandler;
-use App\Modules\Task\Services\TaskCompletionApprovalHandler;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
@@ -31,7 +30,6 @@ class AppServiceProvider extends ServiceProvider
         Model::shouldBeStrict(! $this->app->isProduction());
 
         $registry = $this->app->make(ApprovalHandlerRegistry::class);
-        $registry->register($this->app->make(TaskCompletionApprovalHandler::class));
         $registry->register($this->app->make(RedemptionApprovalHandler::class));
         $registry->register($this->app->make(EnglishLogApprovalHandler::class));
 

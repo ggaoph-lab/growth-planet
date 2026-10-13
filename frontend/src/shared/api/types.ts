@@ -147,6 +147,8 @@ export interface ApprovalRequest {
     description?: string | null
     xp_reward?: number
     coin_reward?: number
+    kind?: string | null
+    coin_price?: number
   } | null
 }
 
@@ -301,7 +303,7 @@ export interface RewardRedemption {
   child_id: number
   reward_id: number
   status: RedemptionStatus
-  coin_cost: number
+  coin_price: number
   reward_snapshot: { name?: string } & Record<string, unknown>
   created_at: string
 }

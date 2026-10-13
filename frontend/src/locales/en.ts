@@ -517,12 +517,16 @@ export default {
       },
       rewardAfter: '{xp} XP · {coins} growth coins after approval',
       approveTask: 'Approving grants {xp} XP and {coins} growth coins. Continue?',
+      fulfill: 'Fulfill',
+      fulfillTitle: 'Fulfill reward',
+      fulfillConfirm: 'Fulfilling “{name}” deducts {coins} growth coins and marks the reward as delivered. Continue?',
+      redeemCost: '{coins} growth coins will be deducted',
     },
     tasks: {
       status: {
         pending: 'Not started',
         in_progress: 'In progress',
-        submitted: 'Pending approval',
+        submitted: 'Submitted',
         returned: 'Returned',
         completed: 'Completed',
         cancelled: 'Cancelled',
@@ -626,7 +630,7 @@ export default {
     taskStatus: {
       pending: 'Not started',
       in_progress: 'In progress',
-      submitted: 'Waiting for parent',
+      submitted: 'Submitted',
       returned: 'Returned — try again',
       completed: 'Done!',
       cancelled: 'Cancelled',
@@ -643,7 +647,7 @@ export default {
       finishStepsFirst: 'Check off each item before submitting',
     },
     taskReward: '🎁 {xp} XP · {coins} growth coins',
-    taskRewardPending: '🎁 {xp} XP · {coins} growth coins (after approval)',
+    taskRewardPending: '🎁 {xp} XP · {coins} growth coins when you finish',
     englishStatus: {
       PENDING: 'Waiting for parent',
       APPROVED: 'Confirmed',

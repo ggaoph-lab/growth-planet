@@ -27,14 +27,16 @@ class QwenTtsService
     /**
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
-    public function synthesize(string $text, int $familyId): ?array
+    public function synthesize(string $text, int $familyId, string $lang = 'zh-CN'): ?array
     {
         $text = $this->normalizeText($text);
         if ($text === '') {
             return null;
         }
 
-        $cacheKey = $this->cacheKey($text);
+        $lang = $this->normalizeLang($lang);
+        $voice = $this->voiceFor($lang);
+        $cacheKey = $this->cacheKey($text, $voice);
         $cached = $this->readCache($cacheKey);
         if ($cached !== null) {
             return $cached;
@@ -56,16 +58,21 @@ class QwenTtsService
             $cfg = $this->ai->resolve($familyId);
             $apiKey = trim($cfg['qwen_api_key']);
 
-            $result = $this->synthesizeEdge($text);
+            $result = $this->synthesizeEdge($text, $voice);
+            $english = str_starts_with($lang, 'en');
 
             if ($result === null && $apiKey !== '') {
-                $result = $this->synthesizeQwenTts($text, $apiKey)
-                    ?? $this->synthesizeCosyVoice($text, $apiKey);
+                $result = $this->synthesizeQwenTts($text, $apiKey, $lang);
+                if ($result === null && ! $english) {
+                    $result = $this->synthesizeCosyVoice($text, $apiKey);
+                }
             }
 
-            $result ??= $this->synthesizeGoogleTranslate($text)
-                ?? $this->synthesizeYoudao($text)
-                ?? $this->synthesizeBaiduTranslate($text);
+            $result ??= $this->synthesizeGoogleTranslate($text, $lang);
+            if ($result === null && ! $english) {
+                $result = $this->synthesizeYoudao($text)
+                    ?? $this->synthesizeBaiduTranslate($text);
+            }
 
             if ($result === null) {
                 return null;
@@ -86,8 +93,9 @@ class QwenTtsService
      * @param  list<string>  $texts
      * @return list<array{text: string, audio_base64: string|null, mime: string|null, provider: string|null}>
      */
-    public function warm(array $texts): array
+    public function warm(array $texts, string $lang = 'zh-CN'): array
     {
+        $voice = $this->voiceFor($this->normalizeLang($lang));
         $ordered = [];
         $aliases = [];
         foreach ($texts as $raw) {
@@ -114,7 +122,7 @@ class QwenTtsService
         $pending = [];
         $locks = [];
         foreach (array_keys($ordered) as $text) {
-            $cacheKey = $this->cacheKey($text);
+            $cacheKey = $this->cacheKey($text, $voice);
             $cached = $this->readCache($cacheKey);
             if ($cached !== null) {
                 $ordered[$text] = array_merge($ordered[$text], $cached);
@@ -147,12 +155,11 @@ class QwenTtsService
         }
 
         if ($pending !== []) {
-            $voice = (string) config('services.tts.edge_voice', 'zh-CN-XiaoxiaoNeural');
             try {
-                $this->edge->synthesizeMany($pending, $voice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks): void {
+                $this->edge->synthesizeMany($pending, $voice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks, $voice): void {
                     $text = $pending[$index];
                     if ($audio !== null) {
-                        $this->storeCache($this->cacheKey($text), $audio);
+                        $this->storeCache($this->cacheKey($text, $voice), $audio);
                         $ordered[$text] = array_merge($ordered[$text], $audio);
                         Log::info('tts.ready', ['provider' => $audio['provider']]);
                     }
@@ -178,9 +185,23 @@ class QwenTtsService
         return $out;
     }
 
-    private function cacheKey(string $text): string
+    private function cacheKey(string $text, string $voice): string
     {
-        return 'tts:v6:'.hash('sha256', $text);
+        return 'tts:v7:'.$voice.':'.hash('sha256', $text);
+    }
+
+    private function normalizeLang(string $lang): string
+    {
+        return str_starts_with(strtolower(str_replace('_', '-', trim($lang))), 'en') ? 'en-US' : 'zh-CN';
+    }
+
+    private function voiceFor(string $lang): string
+    {
+        if (str_starts_with($lang, 'en')) {
+            return (string) config('services.tts.edge_voice_en', 'en-US-JennyNeural');
+        }
+
+        return (string) config('services.tts.edge_voice', 'zh-CN-XiaoxiaoNeural');
     }
 
     /**
@@ -308,10 +329,8 @@ class QwenTtsService
      *
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
-    private function synthesizeEdge(string $text): ?array
+    private function synthesizeEdge(string $text, string $voice): ?array
     {
-        $voice = (string) config('services.tts.edge_voice', 'zh-CN-XiaoxiaoNeural');
-
         return $this->edge->synthesize($text, $voice);
     }
 
@@ -367,7 +386,7 @@ class QwenTtsService
      *
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
-    private function synthesizeGoogleTranslate(string $text): ?array
+    private function synthesizeGoogleTranslate(string $text, string $lang = 'zh-CN'): ?array
     {
         $chunks = $this->chunkText($text, 100);
         $parts = [];
@@ -380,7 +399,7 @@ class QwenTtsService
                     ->get('https://translate.google.com/translate_tts', [
                         'ie' => 'UTF-8',
                         'client' => 'tw-ob',
-                        'tl' => 'zh-CN',
+                        'tl' => str_starts_with($lang, 'en') ? 'en' : 'zh-CN',
                         'q' => $chunk,
                     ]);
             } catch (\Throwable $e) {
@@ -412,7 +431,7 @@ class QwenTtsService
     /**
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
-    private function synthesizeQwenTts(string $text, string $apiKey): ?array
+    private function synthesizeQwenTts(string $text, string $apiKey, string $lang = 'zh-CN'): ?array
     {
         $voice = (string) config('services.qwen.tts_voice', 'Cherry');
         $model = (string) config('services.qwen.tts_model', 'qwen3-tts-flash');
@@ -436,7 +455,7 @@ class QwenTtsService
                         'input' => [
                             'text' => $text,
                             'voice' => $voice,
-                            'language_type' => 'Chinese',
+                            'language_type' => str_starts_with($lang, 'en') ? 'English' : 'Chinese',
                         ],
                         // Prefer mp3 for reliable browser playback (Safari is picky with huge wav data URLs).
                         'parameters' => [

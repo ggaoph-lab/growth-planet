@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '@/shared/api/client'
+import { canSpeak, speakPhrase, stopSpeaking, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 type Item = { key: string; theme: string; kind: string; text: string; meaning: string; emoji: string; options: string[]; review: boolean; stage: number }
@@ -17,8 +18,9 @@ const result = ref<Result | null>(null)
 const busy = ref(false)
 const error = ref('')
 const audioMessage = ref('')
+const speaking = ref(false)
 const choices = ref<string[]>([])
-const audioSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+const audioSupported = canSpeak()
 const finished = computed(() => plan.value && !current.value)
 function choose(item?: Item) {
   current.value = item ?? null
@@ -30,6 +32,7 @@ function choose(item?: Item) {
     ;[choices.value[i], choices.value[j]] = [choices.value[j]!, choices.value[i]!]
   }
   audioMessage.value = ''
+  if (item?.text) warmPhrases([item.text], 'en-US')
 }
 async function load() {
   busy.value = true
@@ -40,14 +43,28 @@ async function load() {
   } catch (e) { error.value = e instanceof ApiError ? e.message : label('学习任务加载失败，请重试。', 'Could not load your mission. Please retry.') }
   finally { busy.value = false }
 }
-function speak() {
-  if (!audioSupported || !current.value) return
-  window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(current.value.text)
-  utterance.lang = 'en-US'
-  utterance.rate = 0.8
-  utterance.onerror = () => { audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.') }
-  window.speechSynthesis.speak(utterance)
+let speakToken = 0
+async function speak() {
+  if (!current.value) return
+  if (speaking.value) {
+    stopSpeaking()
+    speaking.value = false
+    speakToken += 1
+    return
+  }
+  const token = ++speakToken
+  speaking.value = true
+  audioMessage.value = ''
+  try {
+    await speakPhrase(current.value.text, 'en-US')
+  } catch {
+    if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+  } finally {
+    if (token === speakToken) speaking.value = false
+  }
+}
+function listenText(idle: string, idleEn: string) {
+  return speaking.value ? `⏹ ${label('停止', 'Stop')}` : `🔊 ${label(idle, idleEn)}`
 }
 async function answer(value: string) {
   if (!current.value || busy.value || phase.value !== 'quiz') return
@@ -74,7 +91,7 @@ function next() {
   } else choose(plan.value?.items[0])
 }
 onMounted(load)
-onUnmounted(() => { if (audioSupported) window.speechSynthesis.cancel() })
+onUnmounted(() => { stopSpeaking() })
 </script>
 
 <template>
@@ -96,13 +113,13 @@ onUnmounted(() => { if (audioSupported) window.speechSynthesis.cancel() })
         <div class="emoji" aria-hidden="true">{{ current.emoji }}</div>
         <h3 lang="en">{{ current.text }}</h3><p class="meaning">{{ current.meaning }}</p>
         <p>{{ label('听一听，跟着说，再试着不看提示回想。', 'Listen, say it aloud, then try to remember without a hint.') }}</p>
-        <button class="secondary" :disabled="!audioSupported" @click="speak">🔊 {{ label('听英语', 'Listen') }}</button>
+        <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
         <button class="primary" @click="phase = 'quiz'">{{ label('我准备好了，挑战一下', 'Ready for a challenge') }} →</button>
       </template>
       <template v-else-if="phase === 'quiz'">
         <p>{{ current.review ? label('这句话或单词，用英语怎么说？', 'How do you say this in English?') : label('选出它的意思', 'Choose the meaning') }}</p>
         <h3 :lang="current.review ? 'zh' : 'en'">{{ current.review ? current.meaning : current.text }}</h3>
-        <button v-if="!current.review" class="secondary" :disabled="!audioSupported" @click="speak">🔊 {{ label('再听一次', 'Listen again') }}</button>
+        <button v-if="!current.review" class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('再听一次', 'Listen again') }}</button>
         <div class="answers"><button v-for="option in choices" :key="option" :disabled="busy" @click="answer(option)">{{ option }}</button></div>
       </template>
       <div v-else-if="result" class="feedback" aria-live="polite">
@@ -111,7 +128,7 @@ onUnmounted(() => { if (audioSupported) window.speechSynthesis.cancel() })
         <p><strong lang="en">{{ current.text }}</strong> · {{ result.meaning }}</p>
         <p v-if="result.correct">+{{ result.xp }} XP · +{{ result.coins }} {{ label('金币', 'coins') }}<br>{{ label('下次复习', 'Next review') }}：{{ result.next_review }}</p>
         <p v-else>{{ label('答错不扣分。看看正确表达，稍后再试一次。', 'No points lost. Read the expression and try again shortly.') }}</p>
-        <button class="secondary" :disabled="!audioSupported" @click="speak">🔊 {{ label('听英语', 'Listen') }}</button>
+        <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
         <button class="primary" @click="next">{{ label('继续探索', 'Continue') }} →</button>
       </div>
       <p v-if="!audioSupported">{{ label('当前浏览器不支持朗读，可以和家长一起读。', 'Read together with a grown-up; audio is not supported here.') }}</p>

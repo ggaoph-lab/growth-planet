@@ -247,7 +247,7 @@ class RewardGrantService
                 $grant->source_module,
                 $grant->source_type,
                 $grant->source_id,
-                'grant:'.$grant->grant_key.':xp',
+                'grant:'.$grant->id.':xp',
                 $businessDate,
                 $intent->approvedBy,
             );
@@ -263,7 +263,7 @@ class RewardGrantService
                 $grant->source_module,
                 $grant->source_type,
                 $grant->source_id,
-                'grant:'.$grant->grant_key.':coin',
+                'grant:'.$grant->id.':coin',
                 $businessDate,
                 $intent->approvedBy,
             );

@@ -4,7 +4,7 @@ import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
 
-vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), postIdempotent: vi.fn() } }))
+vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), post: vi.fn().mockResolvedValue({ items: [] }), postIdempotent: vi.fn() } }))
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
 const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
 const plan = { items: [card], completed: 0, due: 0, mastered: 0, learned: 0, total: 18, next_review: null }
@@ -59,6 +59,16 @@ describe('English learning', () => {
     await wrapper.find('.primary').trigger('click')
     expect(wrapper.find('h3').text()).toBe('苹果')
     expect(wrapper.findAll('.answers button').map(button => button.text())).toContain('apple')
+    wrapper.unmount()
+  })
+
+  it('asks for an English neural voice when the child taps listen', async () => {
+    vi.mocked(api.post).mockResolvedValue({ available: false, audio_base64: null, mime: null, provider: null })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    await wrapper.get('button.secondary').trigger('click')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('/kid/tts', { text: 'apple', lang: 'en-US' })
     wrapper.unmount()
   })
 

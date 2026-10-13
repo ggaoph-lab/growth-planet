@@ -10,7 +10,9 @@ use App\Modules\Core\Exceptions\ApiException;
 use App\Modules\Core\Support\BiMsg;
 use App\Modules\Core\Support\Clock;
 use App\Modules\Identity\Models\ChildProfile;
+use App\Modules\Ledger\DTO\RewardIntent;
 use App\Modules\Ledger\Enums\RewardGrantStatus;
+use App\Modules\Ledger\Enums\SourceModule;
 use App\Modules\Ledger\Models\RewardGrant;
 use App\Modules\Ledger\Services\RewardGrantService;
 use App\Modules\Task\Enums\TaskInstanceStatus;
@@ -83,48 +85,90 @@ class TaskKidFlowService
 
     public function submit(TaskInstance $instance, ChildProfile $child, ?string $note = null): TaskInstance
     {
-        $this->assertChildInstance($instance, $child);
-        if ($instance->status === TaskInstanceStatus::Submitted) {
-            return $instance;
-        }
-        if (! in_array($instance->status, [TaskInstanceStatus::InProgress, TaskInstanceStatus::Returned], true)) {
-            throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能提交', 'Cannot submit in the current state'), 409);
-        }
+        return DB::transaction(function () use ($instance, $child, $note) {
+            $locked = TaskInstance::query()->whereKey($instance->id)->lockForUpdate()->firstOrFail();
+            $this->assertChildInstance($locked, $child);
+            if ($locked->status === TaskInstanceStatus::Completed) {
+                return $locked;
+            }
+            if ($locked->status === TaskInstanceStatus::Submitted) {
+                $this->completeAndPay($locked);
+                $this->cancelPendingApproval($locked, $child->member->user_id);
 
-        $snapshot = $instance->snapshot;
-        if (($snapshot['requires_self_check'] ?? false) && ! $instance->self_checked) {
-            throw new ApiException('VALIDATION_FAILED', BiMsg::of('请先完成自检', 'Please complete self-check first'), 422);
-        }
+                return $locked;
+            }
+            if (! in_array($locked->status, [TaskInstanceStatus::InProgress, TaskInstanceStatus::Returned], true)) {
+                throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能提交', 'Cannot submit in the current state'), 409);
+            }
 
-        $attempt = (int) $instance->submissions()->max('attempt_no') + 1;
-        TaskSubmission::query()->create([
-            'task_instance_id' => $instance->id,
-            'attempt_no' => $attempt,
-            'note' => $note,
-            'created_at' => $this->clock->now(),
-        ]);
+            $snapshot = $locked->snapshot;
+            if (($snapshot['requires_self_check'] ?? false) && ! $locked->self_checked) {
+                throw new ApiException('VALIDATION_FAILED', BiMsg::of('请先完成自检', 'Please complete self-check first'), 422);
+            }
 
-        $instance->status = TaskInstanceStatus::Submitted;
-        $instance->submitted_at = $this->clock->now();
-        $instance->completed_at = null;
-        $instance->save();
+            $attempt = (int) $locked->submissions()->max('attempt_no') + 1;
+            TaskSubmission::query()->create([
+                'task_instance_id' => $locked->id,
+                'attempt_no' => $attempt,
+                'note' => $note,
+                'created_at' => $this->clock->now(),
+            ]);
 
-        // Rewards wait for a parent decision in the approval center.
-        $this->approvals->createPending(
-            $instance->family_id,
-            $instance->child_id,
-            ApprovalType::TaskCompletion,
-            'task_instance',
-            $instance->id,
-            $child->member->user_id,
-        );
+            $this->completeAndPay($locked);
+            $this->cancelPendingApproval($locked, $child->member->user_id);
 
-        return $instance;
+            return $locked;
+        });
     }
 
     /**
-     * Kid undoes a completion that the parent has not approved yet.
-     * Legacy rows that were paid immediately (no approval) are reversed.
+     * Parent-created tasks no longer wait in the approval center.
+     * Finish any completion that is still pending, pay it, and close the request.
+     */
+    public function retireTaskApprovals(int $familyId, ?int $childId = null): void
+    {
+        $query = ApprovalRequest::query()
+            ->where('family_id', $familyId)
+            ->where('type', ApprovalType::TaskCompletion)
+            ->where('status', ApprovalStatus::Pending);
+        if ($childId !== null) {
+            $query->where('child_id', $childId);
+        }
+
+        foreach ($query->pluck('id') as $id) {
+            DB::transaction(function () use ($id) {
+                $approval = ApprovalRequest::query()->whereKey($id)->lockForUpdate()->first();
+                if ($approval === null || $approval->status !== ApprovalStatus::Pending) {
+                    return;
+                }
+
+                $instance = TaskInstance::query()->whereKey($approval->subject_id)->lockForUpdate()->first();
+                if ($instance !== null && in_array($instance->status, [TaskInstanceStatus::Submitted, TaskInstanceStatus::Returned], true)) {
+                    $this->completeAndPay($instance);
+                }
+                $this->approvals->cancel($approval, null);
+            });
+        }
+
+        $instances = TaskInstance::query()
+            ->where('family_id', $familyId)
+            ->where('status', TaskInstanceStatus::Submitted);
+        if ($childId !== null) {
+            $instances->where('child_id', $childId);
+        }
+
+        foreach ($instances->pluck('id') as $id) {
+            DB::transaction(function () use ($id) {
+                $instance = TaskInstance::query()->whereKey($id)->lockForUpdate()->first();
+                if ($instance !== null && $instance->status === TaskInstanceStatus::Submitted) {
+                    $this->completeAndPay($instance);
+                }
+            });
+        }
+    }
+
+    /**
+     * Kid undoes a completion and the reward that was paid with it.
      */
     public function withdraw(TaskInstance $instance, ChildProfile $child, int $actorUserId): TaskInstance
     {
@@ -145,9 +189,12 @@ class TaskKidFlowService
                     $this->approvals->cancel($pending, $actorUserId);
                 }
             } elseif ($locked->status === TaskInstanceStatus::Completed && ! $this->hasApprovedCompletion($locked)) {
+                if ($pending !== null) {
+                    $this->approvals->cancel($pending, $actorUserId);
+                }
                 $this->reverseOpenGrants($locked, $actorUserId);
             } else {
-                throw new ApiException('INVALID_STATE', BiMsg::of('只能取消还没通过审核的完成', 'Only a completion still waiting for review can be undone'), 409);
+                throw new ApiException('INVALID_STATE', BiMsg::of('只能取消刚刚完成的任务', 'Only a just-finished task can be undone'), 409);
             }
 
             $locked->status = TaskInstanceStatus::Pending;
@@ -203,6 +250,44 @@ class TaskKidFlowService
             })
             ->pluck('id')
             ->values();
+    }
+
+    private function completeAndPay(TaskInstance $instance): void
+    {
+        $now = $this->clock->now();
+        $instance->status = TaskInstanceStatus::Completed;
+        $instance->submitted_at = $instance->submitted_at ?? $now;
+        $instance->completed_at = $now;
+        $instance->save();
+
+        $snapshot = is_array($instance->snapshot) ? $instance->snapshot : [];
+        $this->rewards->grant(new RewardIntent(
+            familyId: $instance->family_id,
+            childId: $instance->child_id,
+            policyCode: 'task.complete',
+            grantKey: 'task:instance:'.$instance->id.':complete',
+            sourceModule: SourceModule::Task,
+            sourceType: 'task_instance',
+            sourceId: $instance->id,
+            occurredAt: $now,
+            xpAmount: (int) ($snapshot['xp_reward'] ?? 0),
+            coinAmount: (int) ($snapshot['coin_reward'] ?? 0),
+            postImmediately: true,
+        ));
+    }
+
+    private function cancelPendingApproval(TaskInstance $instance, ?int $actorUserId): void
+    {
+        $pending = ApprovalRequest::query()
+            ->where('type', ApprovalType::TaskCompletion)
+            ->where('subject_type', 'task_instance')
+            ->where('subject_id', $instance->id)
+            ->where('status', ApprovalStatus::Pending)
+            ->lockForUpdate()
+            ->first();
+        if ($pending !== null) {
+            $this->approvals->cancel($pending, $actorUserId);
+        }
     }
 
     private function hasApprovedCompletion(TaskInstance $instance): bool
