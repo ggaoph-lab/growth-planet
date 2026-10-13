@@ -75,6 +75,10 @@ class EnglishVocabularyService
         }
 
         $record = $this->coach->findRecord($child, 'vocabulary_probe', $date);
+        if ($record !== null && $this->coach->shouldRetryLocal($child, $record)) {
+            $this->coach->discardLocalRecord($child, 'vocabulary_probe', $date);
+            $record = null;
+        }
         if ($record === null) {
             $record = $this->createRecord($child, $slots, $avoidTexts, $date);
         }
@@ -251,7 +255,7 @@ class EnglishVocabularyService
             $snapshot,
             $items,
             $status,
-            $provider,
+            $provider ?? $this->coach->selectedProvider($child),
             $model,
         );
     }

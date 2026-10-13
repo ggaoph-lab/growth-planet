@@ -11,3 +11,4 @@ Artisan::command('inspire', function () {
 // Queue housekeeping. Task instances are generated lazily on kid/parent access;
 // the scheduler process stays up for this prune job and future scheduled work.
 Schedule::command('queue:prune-failed --hours=168')->dailyAt('03:15');
+Schedule::command('english:prune-speak-attempts')->dailyAt('03:30');

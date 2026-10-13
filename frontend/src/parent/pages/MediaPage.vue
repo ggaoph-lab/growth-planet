@@ -10,6 +10,7 @@ import type {
   EnglishLabProgress,
   EnglishLabSummary,
   EnglishShow,
+  EnglishSpeakAttempt,
   EnglishWatchLog,
   ParentCatalogItem,
   ParentChild,
@@ -39,6 +40,8 @@ const englishLogs = ref<EnglishWatchLog[]>([])
 const labProgress = ref<EnglishLabProgress | null>(null)
 const labSummary = ref<EnglishLabSummary | null>(null)
 const labDrafts = ref<EnglishContentDraft[]>([])
+const labSpeaks = ref<EnglishSpeakAttempt[]>([])
+const speakAudioUrl = ref<string | null>(null)
 const labBusy = ref(false)
 const policies = ref<ScreenTimePolicyRow[]>([])
 const expanded = ref<Record<string, boolean>>(loadExpanded())
@@ -255,17 +258,33 @@ async function loadEnglishLab(): Promise<void> {
     labProgress.value = null
     labSummary.value = null
     labDrafts.value = []
+    labSpeaks.value = []
     return
   }
   const params = { child_id: childId.value }
-  const [progress, summary, drafts] = await Promise.all([
+  const [progress, summary, drafts, speaks] = await Promise.all([
     api.get<EnglishLabProgress>('/parent/english/learning', params),
     api.get<EnglishLabSummary>('/parent/english/learning/summary', params),
     api.get<EnglishContentDraft[]>('/parent/english/learning/drafts', params),
+    api.get<EnglishSpeakAttempt[]>('/parent/english/learning/speaks', params),
   ])
   labProgress.value = progress
   labSummary.value = summary
   labDrafts.value = drafts
+  labSpeaks.value = speaks
+}
+
+function speakAudioSrc(id: number): string {
+  return `/api/v1/parent/english/learning/speaks/${id}/audio?child_id=${childId.value}`
+}
+
+function playSpeak(id: number): void {
+  speakAudioUrl.value = speakAudioSrc(id)
+}
+
+function speakStars(score: number | null): string {
+  const n = Math.max(0, Math.min(5, score ?? 0))
+  return '★'.repeat(n) + '☆'.repeat(5 - n)
 }
 
 async function generateLabDraft(kind: 'grammar' | 'story'): Promise<void> {
@@ -666,6 +685,35 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
           </div>
         </el-card>
         <el-card shadow="never" class="lab-card" style="margin-top: 12px">
+          <h3>{{ t('common.englishSpeakAlong') }}</h3>
+          <el-table v-if="!isPhone && labSpeaks.length" :data="labSpeaks" style="margin-top: 8px">
+            <el-table-column prop="business_date" :label="t('common.today')" width="120" />
+            <el-table-column :label="t('common.movieTitle')">
+              <template #default="{ row }">{{ row.target_text }} · {{ row.target_meaning }}</template>
+            </el-table-column>
+            <el-table-column :label="t('common.englishSpeakStars')" width="120">
+              <template #default="{ row }">{{ speakStars(row.score) }}</template>
+            </el-table-column>
+            <el-table-column prop="feedback" :label="t('common.status')" />
+            <el-table-column width="100">
+              <template #default="{ row }">
+                <el-button type="primary" link @click="playSpeak(row.id)">{{ t('common.englishSpeakPlay') }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-else-if="isPhone && labSpeaks.length" class="phone-list" style="margin-top: 8px">
+            <article v-for="row in labSpeaks" :key="row.id" class="phone-card">
+              <div class="phone-info">
+                <div class="phone-title">{{ row.target_text }}</div>
+                <div class="phone-meta">{{ row.business_date }} · {{ speakStars(row.score) }} · {{ row.feedback }}</div>
+                <el-button size="small" type="primary" @click="playSpeak(row.id)">{{ t('common.englishSpeakPlay') }}</el-button>
+              </div>
+            </article>
+          </div>
+          <p v-else class="hint">{{ t('common.englishSpeakEmpty') }}</p>
+          <audio v-if="speakAudioUrl" :src="speakAudioUrl" controls autoplay class="speak-audio" />
+        </el-card>
+        <el-card shadow="never" class="lab-card" style="margin-top: 12px">
           <h3>{{ t('common.englishLabDrafts') }}</h3>
           <div class="lab-actions">
             <el-button :disabled="labBusy || !childId" @click="generateLabDraft('grammar')">{{ t('common.englishGenerateGrammar') }}</el-button>
@@ -805,6 +853,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .lab-card h3 { margin: 0 0 8px; }
 .lab-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
 .lab-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.speak-audio { display: block; width: 100%; margin-top: 12px; }
 .search-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .search-row .el-input { flex: 1; min-width: 200px; }
 .poster-grid {

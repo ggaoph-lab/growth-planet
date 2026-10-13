@@ -4,12 +4,29 @@ import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
 
-vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), post: vi.fn().mockResolvedValue({ items: [] }), postIdempotent: vi.fn() } }))
+vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), post: vi.fn().mockResolvedValue({ items: [] }), postIdempotent: vi.fn(), upload: vi.fn() } }))
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
 const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', ipa: '/ˈæpl/', pos: 'n.', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
 const plan = { items: [card], completed: 0, due: 0, mastered: 0, learned: 0, total: 18, next_review: null, ai_status: 'ok' as const }
 
-beforeEach(() => { vi.clearAllMocks(); setAppLocale('zh-CN'); vi.mocked(api.get).mockResolvedValue(plan) })
+beforeEach(() => {
+  vi.clearAllMocks()
+  setAppLocale('zh-CN')
+  vi.mocked(api.get).mockImplementation(async (path: string) => {
+    if (path === '/kid/english/learning/speak') {
+      return {
+        available: true,
+        target: { key: 'like-apples', text: 'I like apples.', meaning: '我喜欢苹果。', kind: 'sentence' },
+        attempt: null,
+        retention_days: 7,
+      }
+    }
+    return plan
+  })
+  vi.mocked(api.upload).mockResolvedValue({
+    id: 1, target_text: 'I like apples.', target_meaning: '我喜欢苹果。', score: 4, feedback: '跟读很接近，继续加油！', status: 'local',
+  })
+})
 
 describe('English learning', () => {
   it('hides study hints in a quiz and displays only server-confirmed rewards', async () => {
@@ -48,6 +65,26 @@ describe('English learning', () => {
     await wrapper.find('.primary').trigger('click')
     expect(wrapper.find('.meaning').text()).toBe('苹果')
     expect(wrapper.find('h3').text()).toBe('apple')
+    wrapper.unmount()
+  })
+
+  it('shows speak-along mic on the finished page', async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/kid/english/learning/speak') {
+        return {
+          available: true,
+          target: { key: 'like-apples', text: 'I like apples.', meaning: '我喜欢苹果。', kind: 'sentence' },
+          attempt: null,
+          retention_days: 7,
+        }
+      }
+      return { ...plan, items: [] }
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('今天的小任务完成啦')
+    expect(wrapper.text()).toContain('跟读今天一句')
+    expect(wrapper.text()).toContain('I like apples.')
     wrapper.unmount()
   })
 

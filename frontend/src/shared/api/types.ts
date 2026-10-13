@@ -624,6 +624,20 @@ export interface EnglishContentDraft {
   generation_status?: string
 }
 
+export interface EnglishSpeakAttempt {
+  id: number
+  business_date: string
+  target_key: string
+  target_text: string
+  target_meaning: string
+  score: number | null
+  feedback: string | null
+  status: string
+  duration_ms: number
+  expires_at: string
+  created_at: string
+}
+
 export interface GrowthDailyReport {
   date: string
   tasks_completed: number

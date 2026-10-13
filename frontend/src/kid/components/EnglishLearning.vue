@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '@/shared/api/client'
 import { canSpeak, speakPhrase, stopSpeaking, warmPhrases } from '@/shared/speak'
@@ -34,6 +34,20 @@ type Plan = {
   ai_status?: 'ok' | 'failed' | 'off'
 }
 type Result = { correct: boolean; meaning: string; xp: number; coins: number; next_review: string; plan: Plan; coach_tip?: string; probe?: boolean; challenge?: boolean }
+type SpeakAttempt = {
+  id: number
+  target_text: string
+  target_meaning: string
+  score: number | null
+  feedback: string | null
+  status: string
+}
+type SpeakPrompt = {
+  available: boolean
+  target: { key: string; text: string; meaning: string; kind: string } | null
+  attempt: SpeakAttempt | null
+  retention_days: number
+}
 const { locale } = useI18n()
 const session = useSessionStore()
 const label = (zh: string, en: string) => locale.value === 'en' ? en : locale.value === 'zh-en' ? `${zh} / ${en}` : zh
@@ -54,6 +68,18 @@ const aiStatusTitle = computed(() => {
   if (plan.value?.ai_status === 'failed') return label('AI 接入失败，已用本地内容', 'AI unavailable — using local cards')
   return label('未选择 AI 引擎', 'No AI engine selected')
 })
+
+const speakPrompt = ref<SpeakPrompt | null>(null)
+const speakBusy = ref(false)
+const speakError = ref('')
+const recording = ref(false)
+const micSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined'
+let mediaRecorder: MediaRecorder | null = null
+let mediaStream: MediaStream | null = null
+let recordChunks: Blob[] = []
+let recordStartedAt = 0
+let recordTimer: ReturnType<typeof setTimeout> | null = null
+
 function kindLabel(item: Item) {
   if (item.probe && item.kind === 'sentence') return label('生活短句', 'Everyday phrase')
   if (item.probe) return label('词汇小测试', 'Vocabulary check')
@@ -69,6 +95,10 @@ function badgeLabel(item: Item) {
 function wordMeta(item: Item | null) {
   if (!item || item.kind !== 'word') return ''
   return [item.pos, item.ipa].filter(Boolean).join(' ')
+}
+function stars(score: number | null | undefined) {
+  const n = Math.max(0, Math.min(5, score ?? 0))
+  return '★'.repeat(n) + '☆'.repeat(5 - n)
 }
 function choose(item?: Item) {
   current.value = item ?? null
@@ -92,6 +122,17 @@ async function load() {
   } catch (e) { error.value = e instanceof ApiError ? e.message : label('学习任务加载失败，请重试。', 'Could not load your mission. Please retry.') }
   finally { busy.value = false }
 }
+async function loadSpeakPrompt() {
+  try {
+    speakPrompt.value = await api.get<SpeakPrompt>('/kid/english/learning/speak')
+    if (speakPrompt.value.target?.text) warmPhrases([speakPrompt.value.target.text], 'en-US')
+  } catch {
+    speakPrompt.value = null
+  }
+}
+watch(finished, (done) => {
+  if (done) void loadSpeakPrompt()
+})
 let speakToken = 0
 async function speak() {
   if (!current.value) return
@@ -108,6 +149,25 @@ async function speak() {
     await speakPhrase(current.value.text, 'en-US')
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+  } finally {
+    if (token === speakToken) speaking.value = false
+  }
+}
+async function speakTarget() {
+  const text = speakPrompt.value?.target?.text
+  if (!text) return
+  if (speaking.value) {
+    stopSpeaking()
+    speaking.value = false
+    speakToken += 1
+    return
+  }
+  const token = ++speakToken
+  speaking.value = true
+  try {
+    await speakPhrase(text, 'en-US')
+  } catch {
+    speakError.value = label('暂时无法朗读范读。', 'Could not play the model reading.')
   } finally {
     if (token === speakToken) speaking.value = false
   }
@@ -139,8 +199,72 @@ function next() {
     }
   } else choose(plan.value?.items[0])
 }
+function stopMicTracks() {
+  mediaStream?.getTracks().forEach(track => track.stop())
+  mediaStream = null
+  mediaRecorder = null
+}
+async function startRecording() {
+  if (!micSupported || speakBusy.value || recording.value || !speakPrompt.value?.available) return
+  speakError.value = ''
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  } catch {
+    speakError.value = label('需要麦克风权限才能跟读。可以请家长帮忙打开权限。', 'Microphone permission is needed. Ask a grown-up to allow it.')
+    return
+  }
+  recordChunks = []
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : undefined
+  mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime }) : new MediaRecorder(mediaStream)
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) recordChunks.push(event.data)
+  }
+  mediaRecorder.onstop = () => { void finishRecording() }
+  recordStartedAt = Date.now()
+  recording.value = true
+  mediaRecorder.start()
+  recordTimer = setTimeout(() => stopRecording(), 8000)
+}
+function stopRecording() {
+  if (recordTimer) {
+    clearTimeout(recordTimer)
+    recordTimer = null
+  }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop()
+  else {
+    recording.value = false
+    stopMicTracks()
+  }
+}
+async function finishRecording() {
+  recording.value = false
+  const duration = Date.now() - recordStartedAt
+  const blob = new Blob(recordChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
+  stopMicTracks()
+  if (blob.size < 200) {
+    speakError.value = label('好像没录到声音，再试一次吧。', 'That recording was too quiet. Try again.')
+    return
+  }
+  speakBusy.value = true
+  speakError.value = ''
+  try {
+    const form = new FormData()
+    form.append('audio', blob, 'speak.webm')
+    form.append('duration_ms', String(Math.min(8000, duration)))
+    const attempt = await api.upload<SpeakAttempt>('/kid/english/learning/speak', form, { idempotent: true })
+    if (speakPrompt.value) speakPrompt.value = { ...speakPrompt.value, attempt }
+  } catch (e) {
+    speakError.value = e instanceof ApiError ? e.message : label('上传失败，请再试一次。', 'Upload failed. Please try again.')
+  } finally {
+    speakBusy.value = false
+  }
+}
 onMounted(load)
-onUnmounted(() => { stopSpeaking() })
+onUnmounted(() => {
+  stopSpeaking()
+  stopRecording()
+  stopMicTracks()
+})
 </script>
 
 <template>
@@ -202,8 +326,38 @@ onUnmounted(() => { stopSpeaking() })
       <p v-if="!audioSupported">{{ label('当前浏览器不支持朗读，可以和家长一起读。', 'Read together with a grown-up; audio is not supported here.') }}</p>
       <p v-if="audioMessage" role="status">{{ audioMessage }}</p>
     </article>
-    <div v-else-if="finished" class="lesson done"><div class="emoji">🪐</div><h3>{{ label('今天的小任务完成啦', 'Your mission is complete') }}</h3><p>{{ label('离开屏幕，选一句今天学过的英语，对家人说一说吧！', 'Take a screen break and say one of today’s phrases to your family!') }}</p><p v-if="plan?.next_review">{{ label('下次复习', 'Next review') }}：{{ plan.next_review }}</p><p v-if="plan && plan.due > 0">{{ label('其余复习留到明天，慢慢来。', 'Save the remaining reviews for tomorrow. Take your time.') }}</p></div>
-    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天最多 10 题，其中课程奖励最多 10 项。词汇小测试与探索挑战不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 questions. Vocabulary checks and lab challenges do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
+    <div v-else-if="finished" class="lesson done">
+      <div class="emoji">🪐</div>
+      <h3>{{ label('今天的小任务完成啦', 'Your mission is complete') }}</h3>
+      <p>{{ label('离开屏幕前，可以用小话筒跟读今天一句。练开口，不是正式考试。', 'Before you go, try the mic and read today’s line aloud. Practice only — not a real exam.') }}</p>
+      <div v-if="speakPrompt?.available && speakPrompt.target" class="speak-box">
+        <p class="speak-label">🎤 {{ label('跟读今天一句', 'Read today’s line') }}</p>
+        <h3 lang="en" class="speak-text">{{ speakPrompt.target.text }}</h3>
+        <p class="meaning">{{ speakPrompt.target.meaning }}</p>
+        <button class="secondary" :disabled="!audioSupported || speakBusy" @click="speakTarget">{{ listenText('先听范读', 'Hear model') }}</button>
+        <button
+          class="mic"
+          :class="{ recording }"
+          :disabled="speakBusy || !micSupported"
+          @click="recording ? stopRecording() : startRecording()"
+        >
+          {{ recording ? label('⏹ 说完了', '⏹ Done') : speakBusy ? label('正在听…', 'Listening…') : label('🎙️ 按住说 / 点一下开始', '🎙️ Tap to speak') }}
+        </button>
+        <p v-if="!micSupported" class="hint">{{ label('这个浏览器不能录音，可以请家长陪你口头跟读。', 'Recording is unavailable here. Ask a grown-up to practice with you.') }}</p>
+        <p v-if="speakError" class="error" role="alert">{{ speakError }}</p>
+        <div v-if="speakPrompt.attempt?.score" class="speak-result" aria-live="polite">
+          <p class="stars">{{ stars(speakPrompt.attempt.score) }}</p>
+          <p>{{ speakPrompt.attempt.feedback }}</p>
+          <button class="secondary" :disabled="speakBusy || recording" @click="startRecording">{{ label('再录一次', 'Try again') }}</button>
+        </div>
+        <p class="hint">{{ label('录音会留给家长听几天，到期自动删除，不发金币。', 'Parents can hear this for a few days, then it deletes. No coins.') }}</p>
+      </div>
+      <p v-else-if="speakPrompt && !speakPrompt.available" class="hint">{{ label('今天还没有答对的句子可跟读，明天继续。', 'No correct phrase to read yet today. Try again tomorrow.') }}</p>
+      <p>{{ label('离开屏幕，选一句今天学过的英语，对家人说一说吧！', 'Take a screen break and say one of today’s phrases to your family!') }}</p>
+      <p v-if="plan?.next_review">{{ label('下次复习', 'Next review') }}：{{ plan.next_review }}</p>
+      <p v-if="plan && plan.due > 0">{{ label('其余复习留到明天，慢慢来。', 'Save the remaining reviews for tomorrow. Take your time.') }}</p>
+    </div>
+    <details class="rules"><summary>{{ label('学习与奖励规则', 'Learning and rewards') }}</summary><p>{{ label('课程卡每天首次答对获得奖励，默认 2 XP + 1 金币；每天最多 10 题，其中课程奖励最多 10 项。词汇小测试、探索挑战与跟读打分不发金币。实际奖励以家长设置为准。答错不扣分。', 'Course cards earn a reward once per day: normally 2 XP + 1 coin, up to 10 questions. Vocabulary checks, lab challenges, and speak-along scores do not award coins. Parent settings apply. Mistakes cost nothing.') }}</p><p>{{ label('答对后间隔 1、3、7、14 天复习；答错则缩短间隔，重新巩固。熟悉内容仍会继续复习。', 'Correct answers schedule reviews after 1, 3, 7, then 14 days. Mistakes restart the review sequence. Familiar cards continue to return.') }}</p></details>
   </section>
 </template>
 
@@ -214,13 +368,21 @@ onUnmounted(() => { stopSpeaking() })
 .ai-dot.on { background: #3dd68c; box-shadow: 0 0 0 3px #3dd68c33; }
 .ai-dot.off { background: #8b93a1; box-shadow: 0 0 0 3px #8b93a133; }
 h2 { margin: 10px 0; font-size: clamp(21px, 3vw, 28px); } p { line-height: 1.7; }
-.intro p, .rules { opacity: .8; font-size: 14px; }
+.intro p, .rules, .hint { opacity: .8; font-size: 14px; }
 .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }.stats span { background: #ffffff0a; padding: 10px 14px; border-radius: 12px; font-size: 14px; }.stats b { margin-left: 6px; }
 .lesson { background: #071e3280; border: 1px solid #ffffff1a; border-radius: 20px; padding: 24px; text-align: center; }
 .card-top { display: flex; gap: 10px; justify-content: space-between; align-items: center; font-size: 13px; text-align: left; }.badge { background: #8cdbc81c; color: #9fe4d3; border-radius: 20px; padding: 5px 12px; white-space: nowrap; }
 .emoji { font-size: 52px; margin-top: 20px; } h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0 8px; overflow-wrap: anywhere; }.meaning { font-size: 20px; }
 .meta { margin: 0 0 10px; font-size: 14px; color: #9fe4d3; letter-spacing: .02em; opacity: .95; }
 .coach { margin: 12px auto 0; max-width: 420px; padding: 10px 14px; border-radius: 12px; background: #8cdbc814; color: #c9f3e8; font-size: 15px; }
+.speak-box { margin: 20px auto 0; max-width: 480px; padding: 16px; border-radius: 16px; border: 1px solid #8cdbc844; background: #8cdbc812; }
+.speak-label { margin: 0; font-size: 14px; color: #9fe4d3; }
+.speak-text { margin-top: 8px; }
+.mic { display: block; margin: 14px auto 0; min-width: 220px; background: #235779; border-color: #8cdbc8; font-weight: 700; }
+.mic.recording { background: #c45c5c; border-color: #ffb4b4; animation: pulse-mic 1s ease-in-out infinite; }
+.speak-result { margin-top: 14px; }
+.stars { font-size: 22px; letter-spacing: 2px; color: #f5d76e; margin: 0 0 6px; }
+@keyframes pulse-mic { 50% { transform: scale(1.03); } }
 button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; padding: 10px 18px; color: inherit; border: 1px solid #ffffff35; background: #ffffff0a; }button:disabled { opacity: .5; cursor: wait; }button:focus-visible { outline: 3px solid #8cdbc8; outline-offset: 3px; }
 .primary { display: block; margin: 18px auto 0; background: #8cdbc8; color: #102c31; font-weight: 700; border: 0; }.secondary { font-size: 14px; }
 .answers { display: grid; gap: 12px; max-width: 480px; margin: 24px auto 0; }.answers button:hover:not(:disabled) { border-color: #8cdbc8; background: #8cdbc81c; }

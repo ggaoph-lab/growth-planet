@@ -6,9 +6,11 @@ use App\Modules\English\Models\EnglishShow;
 use App\Modules\English\Models\EnglishWatchLog;
 use App\Modules\English\Services\EnglishDraftService;
 use App\Modules\English\Services\EnglishLearningService;
+use App\Modules\English\Services\EnglishSpeakService;
 use App\Modules\Identity\Support\CurrentContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class EnglishController
 {
@@ -16,6 +18,7 @@ class EnglishController
         private readonly CurrentContext $context,
         private readonly EnglishLearningService $learning,
         private readonly EnglishDraftService $drafts,
+        private readonly EnglishSpeakService $speak,
     ) {}
 
     public function indexShows(): JsonResponse
@@ -141,5 +144,26 @@ class EnglishController
         $child = $this->context->findChild($childId);
 
         return response()->json(['data' => $this->drafts->reject($child, $id)]);
+    }
+
+    public function indexSpeaks(Request $request): JsonResponse
+    {
+        $data = $request->validate(['child_id' => ['required', 'integer']]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->speak->listForParent($child)]);
+    }
+
+    public function speakAudio(Request $request, int $id): BinaryFileResponse
+    {
+        $data = $request->validate(['child_id' => ['required', 'integer']]);
+        $child = $this->context->findChild((int) $data['child_id']);
+        $row = $this->speak->findForParent($child, $id);
+        $path = $this->speak->absolutePath($row);
+
+        return response()->file($path, [
+            'Content-Type' => (string) $row->mime,
+            'Cache-Control' => 'private, max-age=300',
+        ]);
     }
 }

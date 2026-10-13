@@ -152,7 +152,8 @@ export const api = {
   postIdempotent: <T>(path: string, body?: unknown) => requestIdempotent<T>('POST', path, body),
   putIdempotent: <T>(path: string, body?: unknown) => requestIdempotent<T>('PUT', path, body),
   /** Multipart upload; do not set Content-Type so the browser can add the boundary. */
-  upload: <T>(path: string, form: FormData) => request<T>('POST', path, { body: form }),
+  upload: <T>(path: string, form: FormData, options?: { idempotent?: boolean }) =>
+    request<T>('POST', path, { body: form, idempotent: options?.idempotent ?? false }),
 }
 
 /** Paginated endpoints return meta alongside data. */

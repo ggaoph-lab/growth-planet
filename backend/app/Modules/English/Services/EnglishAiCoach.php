@@ -132,6 +132,36 @@ class EnglishAiCoach
     }
 
     /**
+     * Drop a same-day local fallback so a later successful engine call can replace it.
+     */
+    public function discardLocalRecord(ChildProfile $child, string $purpose, string $date): bool
+    {
+        return DB::table('english_ai_records')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->where('purpose', $purpose)
+            ->where('status', 'local')
+            ->delete() > 0;
+    }
+
+    /**
+     * Retry a local fallback only after the family picks a different engine (avoids hammering a dead key).
+     */
+    public function shouldRetryLocal(ChildProfile $child, object $record): bool
+    {
+        if ((string) ($record->status ?? '') !== 'local') {
+            return false;
+        }
+
+        $selected = $this->selectedProvider($child);
+        if ($selected === null) {
+            return false;
+        }
+
+        return $selected !== strtolower(trim((string) ($record->provider ?? '')));
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $candidates
      * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, recent_accuracy: float|null}  $snapshot
      * @return list<array<string, mixed>>
@@ -144,7 +174,11 @@ class EnglishAiCoach
 
         $existing = $this->findRecord($child, 'session_plan', $date);
         if ($existing !== null) {
-            return $this->applyOrder($candidates, json_decode((string) $existing->items, true));
+            if ($this->shouldRetryLocal($child, $existing)) {
+                $this->discardLocalRecord($child, 'session_plan', $date);
+            } else {
+                return $this->applyOrder($candidates, json_decode((string) $existing->items, true));
+            }
         }
 
         $keys = array_values(array_map(fn ($item) => (string) $item['key'], $candidates));
@@ -190,7 +224,7 @@ class EnglishAiCoach
             $snapshot,
             ['order' => $ordered ?? $keys],
             $status,
-            $provider,
+            $provider ?? $this->selectedProvider($child),
             $model,
         );
 
@@ -205,6 +239,11 @@ class EnglishAiCoach
     public function ensureCoachTips(ChildProfile $child, array $items, array $snapshot, string $date): array
     {
         $record = $this->findRecord($child, 'coach_tips', $date);
+        if ($record !== null && $this->shouldRetryLocal($child, $record)) {
+            $this->discardLocalRecord($child, 'coach_tips', $date);
+            $record = null;
+        }
+
         $tips = is_array($decoded = json_decode((string) ($record->items ?? '[]'), true)) ? $decoded : [];
         if (! is_array($tips)) {
             $tips = [];
@@ -282,7 +321,7 @@ class EnglishAiCoach
             fn ($key, $tip) => ['key' => $key, 'tip' => $tip],
             array_keys($map),
             array_values($map),
-        )), $status, $provider, $model);
+        )), $status, $provider ?? $this->selectedProvider($child), $model);
 
         return $map;
     }

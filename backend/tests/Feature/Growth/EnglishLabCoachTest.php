@@ -92,6 +92,20 @@ class EnglishLabCoachTest extends TestCase
         ]);
     }
 
+    public function test_local_ai_record_retries_after_provider_switch(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
+
+        $local = (object) ['status' => 'local', 'provider' => 'openai'];
+        $this->assertFalse($coach->shouldRetryLocal($child, $local));
+
+        app(\App\Modules\Core\Settings\Settings::class)->set('ai.provider', 'qwen', (int) $family->id, null);
+        $this->assertTrue($coach->shouldRetryLocal($child, $local));
+        $this->assertFalse($coach->shouldRetryLocal($child, (object) ['status' => 'ai', 'provider' => 'openai']));
+    }
+
     public function test_published_grammar_enters_kid_queue_without_coins(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

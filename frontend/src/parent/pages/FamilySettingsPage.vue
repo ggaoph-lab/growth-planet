@@ -41,6 +41,7 @@ const showCreateParent = ref(false)
 const createForm = reactive({ display_name: '', username: '', password: '', password_confirmation: '' })
 
 type AiProviderName = 'gemini' | 'qwen' | 'openai'
+type KeyProbe = 'idle' | 'checking' | 'ok' | 'invalid' | 'failed' | 'empty' | 'none'
 
 const ai = ref<AiSettings | null>(null)
 const aiForm = reactive({
@@ -74,6 +75,11 @@ const modelTouched = reactive<Record<AiProviderName, boolean>>({
   gemini: false,
   qwen: false,
   openai: false,
+})
+const keyProbe = reactive<Record<AiProviderName, Exclude<KeyProbe, 'checking'>>>({
+  gemini: 'idle',
+  qwen: 'idle',
+  openai: 'idle',
 })
 const modelRequest = { gemini: 0, qwen: 0, openai: 0 }
 const modelTimers: Record<AiProviderName, number> = { gemini: 0, qwen: 0, openai: 0 }
@@ -152,18 +158,35 @@ function applyModelList(provider: AiProviderName, data: AiModelList): void {
     })
   }
 
-  if (data.error === 'invalid_key') modelNote[provider] = t('parent.settings.modelInvalidKey')
-  else if (data.error === 'upstream_failed') modelNote[provider] = t('parent.settings.modelLoadFailed')
-  else if (data.error === 'no_models') modelNote[provider] = t('parent.settings.modelNone')
-  else if (data.latest && aiForm[field] === data.latest && !customized) modelNote[provider] = t('parent.settings.modelLatest')
-  else if (customized && data.models.length > 0 && !known) modelNote[provider] = t('parent.settings.modelMissing')
-  else modelNote[provider] = ''
+  if (data.error === 'invalid_key') {
+    keyProbe[provider] = 'invalid'
+    modelNote[provider] = t('parent.settings.modelInvalidKey')
+  } else if (data.error === 'upstream_failed') {
+    keyProbe[provider] = 'failed'
+    modelNote[provider] = t('parent.settings.modelLoadFailed')
+  } else if (data.error === 'no_models') {
+    keyProbe[provider] = 'none'
+    modelNote[provider] = t('parent.settings.modelNone')
+  } else if (data.error === 'not_configured') {
+    keyProbe[provider] = 'empty'
+    modelNote[provider] = ''
+  } else if (data.models.length > 0) {
+    keyProbe[provider] = 'ok'
+    if (data.latest && aiForm[field] === data.latest && !customized) modelNote[provider] = t('parent.settings.modelLatest')
+    else if (customized && !known) modelNote[provider] = t('parent.settings.modelMissing')
+    else modelNote[provider] = ''
+  } else {
+    keyProbe[provider] = 'failed'
+    modelNote[provider] = t('parent.settings.modelLoadFailed')
+  }
 }
 
 async function loadModels(provider: AiProviderName, key = ''): Promise<void> {
   if (clearingKey(provider)) {
     modelOptions[provider] = []
     modelNote[provider] = ''
+    keyProbe[provider] = 'empty'
+    modelLoading[provider] = false
     return
   }
   const seq = ++modelRequest[provider]
@@ -177,14 +200,41 @@ async function loadModels(provider: AiProviderName, key = ''): Promise<void> {
   } catch {
     if (seq !== modelRequest[provider]) return
     modelOptions[provider] = []
+    keyProbe[provider] = 'failed'
     modelNote[provider] = t('parent.settings.modelLoadFailed')
   } finally {
     if (seq === modelRequest[provider]) modelLoading[provider] = false
   }
 }
 
+function keyProbeState(provider: AiProviderName): KeyProbe {
+  if (clearingKey(provider)) return 'empty'
+  if (modelLoading[provider]) return 'checking'
+  return keyProbe[provider]
+}
+
+function keyProbeLabel(provider: AiProviderName): string {
+  switch (keyProbeState(provider)) {
+    case 'checking':
+      return t('parent.settings.keyChecking')
+    case 'ok':
+      return t('parent.settings.keyAvailable')
+    case 'invalid':
+      return t('parent.settings.keyUnavailable')
+    case 'failed':
+      return t('parent.settings.keyCheckFailed')
+    case 'none':
+      return t('parent.settings.keyNoModels')
+    case 'empty':
+      return t('parent.settings.aiSourceNone')
+    default:
+      return ''
+  }
+}
+
 function scheduleModels(provider: AiProviderName, key: string): void {
   window.clearTimeout(modelTimers[provider])
+  modelLoading[provider] = true
   modelTimers[provider] = window.setTimeout(() => {
     void loadModels(provider, key.trim())
   }, 400)
@@ -409,6 +459,7 @@ async function saveAi(): Promise<void> {
     modelTouched.gemini = true
     modelTouched.qwen = true
     modelTouched.openai = true
+    await refreshVisibleModels()
     ElMessage.success(t('common.saved'))
   } catch (e) {
     reportError(e)
@@ -447,6 +498,36 @@ watch(() => aiForm.qwen_api_key, (value) => {
 })
 watch(() => aiForm.openai_api_key, (value) => {
   if (tab.value === 'ai') scheduleModels('openai', value)
+})
+watch(() => aiForm.clear_gemini_api_key, (clearing) => {
+  if (tab.value !== 'ai') return
+  if (clearing) {
+    modelOptions.gemini = []
+    modelNote.gemini = ''
+    keyProbe.gemini = 'empty'
+    return
+  }
+  void loadModels('gemini', draftKey('gemini'))
+})
+watch(() => aiForm.clear_qwen_api_key, (clearing) => {
+  if (tab.value !== 'ai') return
+  if (clearing) {
+    modelOptions.qwen = []
+    modelNote.qwen = ''
+    keyProbe.qwen = 'empty'
+    return
+  }
+  void loadModels('qwen', draftKey('qwen'))
+})
+watch(() => aiForm.clear_openai_api_key, (clearing) => {
+  if (tab.value !== 'ai') return
+  if (clearing) {
+    modelOptions.openai = []
+    modelNote.openai = ''
+    keyProbe.openai = 'empty'
+    return
+  }
+  void loadModels('openai', draftKey('openai'))
 })
 
 watch(() => route.query.tab, syncTabFromRoute)
@@ -583,6 +664,7 @@ onMounted(load)
 
       <el-tab-pane :label="t('parent.settings.tabAi')" name="ai">
         <p class="hint top">{{ t('parent.settings.aiHint') }}</p>
+        <p class="hint top">{{ t('parent.settings.keyProbeHint') }}</p>
         <el-form label-position="top" @submit.prevent="saveAi">
           <el-form-item :label="t('parent.settings.aiProvider')">
             <el-select v-model="aiForm.provider" style="width: 100%">
@@ -601,13 +683,21 @@ onMounted(load)
             <span v-if="ai.gemini.hint"> · {{ ai.gemini.hint }}</span>
           </div>
           <el-form-item :label="t('parent.settings.apiKey')">
-            <el-input
-              v-model="aiForm.gemini_api_key"
-              type="password"
-              show-password
-              :placeholder="t('parent.settings.apiKeyPlaceholder')"
-              :disabled="aiForm.clear_gemini_api_key"
-            />
+            <div class="api-key-row">
+              <el-input
+                v-model="aiForm.gemini_api_key"
+                type="password"
+                show-password
+                :placeholder="t('parent.settings.apiKeyPlaceholder')"
+                :disabled="aiForm.clear_gemini_api_key"
+              />
+              <span
+                v-if="keyProbeLabel('gemini')"
+                class="key-probe"
+                :class="keyProbeState('gemini')"
+                :title="keyProbeLabel('gemini')"
+              >{{ keyProbeLabel('gemini') }}</span>
+            </div>
           </el-form-item>
           <el-form-item>
             <el-checkbox v-model="aiForm.clear_gemini_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
@@ -636,13 +726,21 @@ onMounted(load)
             <span v-if="ai.qwen.hint"> · {{ ai.qwen.hint }}</span>
           </div>
           <el-form-item :label="t('parent.settings.apiKey')">
-            <el-input
-              v-model="aiForm.qwen_api_key"
-              type="password"
-              show-password
-              :placeholder="t('parent.settings.apiKeyPlaceholder')"
-              :disabled="aiForm.clear_qwen_api_key"
-            />
+            <div class="api-key-row">
+              <el-input
+                v-model="aiForm.qwen_api_key"
+                type="password"
+                show-password
+                :placeholder="t('parent.settings.apiKeyPlaceholder')"
+                :disabled="aiForm.clear_qwen_api_key"
+              />
+              <span
+                v-if="keyProbeLabel('qwen')"
+                class="key-probe"
+                :class="keyProbeState('qwen')"
+                :title="keyProbeLabel('qwen')"
+              >{{ keyProbeLabel('qwen') }}</span>
+            </div>
           </el-form-item>
           <el-form-item>
             <el-checkbox v-model="aiForm.clear_qwen_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
@@ -671,13 +769,21 @@ onMounted(load)
             <span v-if="ai.openai.hint"> · {{ ai.openai.hint }}</span>
           </div>
           <el-form-item :label="t('parent.settings.apiKey')">
-            <el-input
-              v-model="aiForm.openai_api_key"
-              type="password"
-              show-password
-              :placeholder="t('parent.settings.apiKeyPlaceholder')"
-              :disabled="aiForm.clear_openai_api_key"
-            />
+            <div class="api-key-row">
+              <el-input
+                v-model="aiForm.openai_api_key"
+                type="password"
+                show-password
+                :placeholder="t('parent.settings.apiKeyPlaceholder')"
+                :disabled="aiForm.clear_openai_api_key"
+              />
+              <span
+                v-if="keyProbeLabel('openai')"
+                class="key-probe"
+                :class="keyProbeState('openai')"
+                :title="keyProbeLabel('openai')"
+              >{{ keyProbeLabel('openai') }}</span>
+            </div>
           </el-form-item>
           <el-form-item>
             <el-checkbox v-model="aiForm.clear_openai_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
@@ -780,6 +886,38 @@ onMounted(load)
   font-size: 13px;
   color: #6b6f80;
   margin: -4px 0 12px;
+}
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.api-key-row :deep(.el-input) {
+  flex: 1;
+  min-width: 0;
+}
+.key-probe {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.key-probe.checking,
+.key-probe.idle,
+.key-probe.empty {
+  color: #8b93a1;
+}
+.key-probe.ok {
+  color: #1f9d63;
+}
+.key-probe.invalid,
+.key-probe.none {
+  color: #d94848;
+}
+.key-probe.failed {
+  color: #c2811a;
 }
 .phone-list {
   display: flex;

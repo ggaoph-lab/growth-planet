@@ -32,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         CreateFamilyCommand::class,
         \App\Modules\Core\Console\PreflightCommand::class,
+        \App\Modules\English\Console\PruneEnglishSpeakAttemptsCommand::class,
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
         ApiExceptionRenderer::register($exceptions);
