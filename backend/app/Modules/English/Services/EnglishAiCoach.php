@@ -145,6 +145,156 @@ class EnglishAiCoach
     }
 
     /**
+     * Drop same-day AI/local records so a path or level change can rebuild content.
+     *
+     * @param  list<string>  $purposes
+     */
+    public function discardDayRecords(ChildProfile $child, string $date, array $purposes): int
+    {
+        if ($purposes === []) {
+            return 0;
+        }
+
+        return DB::table('english_ai_records')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->whereIn('purpose', $purposes)
+            ->delete();
+    }
+
+    /**
+     * High-vocabulary path: 1 grammar + 1 story check in the daily queue (no parent publish needed).
+     *
+     * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, path?: string}  $snapshot
+     * @return list<array<string, mixed>>
+     */
+    public function richDailyChallenges(ChildProfile $child, int $slots, array $snapshot, string $date): array
+    {
+        if ($slots < 1) {
+            return [];
+        }
+
+        $answered = DB::table('english_learning_answers')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->where(function ($query) {
+                $query->where('item_key', 'like', 'grammar:rich-%')
+                    ->orWhere('item_key', 'like', 'story:rich-%');
+            })
+            ->pluck('item_key')
+            ->all();
+
+        $record = $this->findRecord($child, 'rich_challenges', $date);
+        if ($record === null) {
+            $record = $this->createRichChallenges($child, $snapshot, $date, 1);
+        }
+
+        $cards = $this->unansweredRichCards($record, $answered, $slots);
+        if (count($cards) < $slots) {
+            $round = 2;
+            foreach ($answered as $key) {
+                if (preg_match('/:rich-(?:\d{4}-\d{2}-\d{2}-)?(\d+)$/', (string) $key, $match) === 1) {
+                    $round = max($round, ((int) $match[1]) + 1);
+                } elseif (str_contains((string) $key, ':rich-'.$date)) {
+                    $round = max($round, 2);
+                }
+            }
+            $record = $this->appendRichChallenges($child, $record, $snapshot, $date, $round);
+            $cards = $this->unansweredRichCards($record, $answered, $slots);
+        }
+
+        return $cards;
+    }
+
+    /**
+     * @param  list<string>  $answered
+     * @return list<array<string, mixed>>
+     */
+    private function unansweredRichCards(object $record, array $answered, int $slots): array
+    {
+        $items = json_decode((string) $record->items, true);
+        if (! is_array($items)) {
+            return [];
+        }
+
+        $cards = [];
+        foreach ($items as $item) {
+            if (! is_array($item) || in_array($item['key'] ?? '', $answered, true)) {
+                continue;
+            }
+            $cards[] = $item;
+            if (count($cards) >= $slots) {
+                break;
+            }
+        }
+
+        return $cards;
+    }
+
+    /**
+     * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, path?: string}  $snapshot
+     */
+    private function appendRichChallenges(ChildProfile $child, object $record, array $snapshot, string $date, int $round): object
+    {
+        $existing = json_decode((string) $record->items, true);
+        if (! is_array($existing)) {
+            $existing = [];
+        }
+        $extra = $this->buildRichChallengeCards($child, $snapshot, $date, $round);
+        $merged = [...$existing, ...$extra];
+        DB::table('english_ai_records')->where('id', $record->id)->update([
+            'items' => json_encode($merged, JSON_UNESCAPED_UNICODE),
+        ]);
+
+        return $this->findRecord($child, 'rich_challenges', $date) ?? $record;
+    }
+
+    /**
+     * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, path?: string}  $snapshot
+     * @return list<array<string, mixed>>
+     */
+    private function buildRichChallengeCards(ChildProfile $child, array $snapshot, string $date, int $round): array
+    {
+        $band = max(2, (int) ($snapshot['band'] ?? 2));
+        $suffix = $round <= 1 ? $date : $date.'-'.$round;
+        $cards = [];
+        foreach (['grammar', 'story'] as $kind) {
+            $built = $this->generateChallengeDraft($child, $kind, $snapshot + ['band' => $band, 'path' => 'rich']);
+            $payload = $built['payload'];
+            $cards[] = [
+                ...$payload,
+                'key' => $kind.':rich-'.$suffix,
+                'options' => $payload['options'],
+                'text' => (string) ($payload['text'] ?? $payload['prompt']),
+                'meaning' => (string) ($payload['question'] ?? $payload['meaning'] ?? ''),
+                'correct_answer' => (string) $payload['answer'],
+                'coach_tip' => (string) ($payload['tip'] ?? ''),
+            ];
+        }
+
+        return $cards;
+    }
+
+    /**
+     * @param  array{band: int, estimated_size: int, known_words: list<string>, missed_words: list<string>, path?: string}  $snapshot
+     */
+    private function createRichChallenges(ChildProfile $child, array $snapshot, string $date, int $round = 1): object
+    {
+        $cards = $this->buildRichChallengeCards($child, $snapshot, $date, $round);
+
+        return $this->storeRecord(
+            $child,
+            'rich_challenges',
+            $date,
+            $snapshot,
+            $cards,
+            'local',
+            $this->selectedProvider($child),
+            null,
+        );
+    }
+
+    /**
      * Retry a local fallback only after the family picks a different engine (avoids hammering a dead key).
      */
     public function shouldRetryLocal(ChildProfile $child, object $record): bool
@@ -395,17 +545,20 @@ class EnglishAiCoach
         $model = null;
         $payload = null;
 
+        $band = (int) ($snapshot['band'] ?? 1);
+        $rich = (($snapshot['path'] ?? '') === 'rich') || $band >= 4;
+        if ($kind === 'story') {
+            $system = $rich
+                ? 'Write one short English story check for a child with a large vocabulary (CEFR A2–B1 / IELTS 4.5–6.0). Weave in 1–2 high-frequency IELTS or Academic Word List words naturally (e.g. discover, journey, challenge, environment). Reply JSON only: {"prompt":"story 25-40 words with a clear detail","question":"Chinese comprehension question","options":["a","b","c"],"answer":"one option","tip":"short Chinese tip","emoji":"📖"}. Avoid baby nouns only. No personal data.'
+                : 'Write one tiny English story check for a young child. Reply JSON only: {"prompt":"story <=40 words","question":"Chinese question","options":["a","b","c"],"answer":"one option","tip":"short Chinese tip","emoji":"📖"}. No personal data.';
+        } else {
+            $system = $rich
+                ? 'Write one English grammar check for a child with a large vocabulary (IELTS-oriented). Prefer sentence frames that use common IELTS / AWL vocabulary when natural. Reply JSON only: {"prompt":"English sentence with a blank (tense, preposition, or article)","text":"same","question":"Chinese instruction","options":["opt1","opt2","opt3"],"answer":"one option","tip":"short Chinese tip","emoji":"🧩"}. Target A2–B1. No personal data.'
+                : 'Write one tiny English grammar check for a young child. Reply JSON only: {"prompt":"English sentence with a blank like I ___ happy.","text":"same or short English","question":"Chinese instruction","options":["am","is","are"],"answer":"one option","tip":"short Chinese tip","emoji":"🧩"}. No personal data.';
+        }
         $reply = $this->chatJson($child, [
-            [
-                'role' => 'system',
-                'content' => $kind === 'story'
-                    ? 'Write one tiny English story check for a young child. Reply JSON only: {"prompt":"story <=40 words","question":"Chinese question","options":["a","b","c"],"answer":"one option","tip":"short Chinese tip","emoji":"📖"}. No personal data.'
-                    : 'Write one tiny English grammar check for a young child. Reply JSON only: {"prompt":"English sentence with a blank like I ___ happy.","text":"same or short English","question":"Chinese instruction","options":["am","is","are"],"answer":"one option","tip":"short Chinese tip","emoji":"🧩"}. No personal data.',
-            ],
-            [
-                'role' => 'user',
-                'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE),
-            ],
+            ['role' => 'system', 'content' => $system],
+            ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
         ]);
 
         if ($reply !== null) {
@@ -532,7 +685,28 @@ class EnglishAiCoach
      */
     private function localChallenge(string $kind, int $band): array
     {
-        if ($kind === 'story') {
+        if ($band >= 4) {
+            if ($kind === 'story') {
+                $raw = [
+                    'prompt' => 'Maya packed her backpack carefully. She almost forgot her map, then remembered it under the chair.',
+                    'question' => 'Maya 差点忘了什么？',
+                    'options' => ['地图', '椅子', '书包'],
+                    'answer' => '地图',
+                    'tip' => 'almost forgot 表示差点忘记。',
+                    'emoji' => '📖',
+                ];
+            } else {
+                $raw = [
+                    'prompt' => 'They have ___ to the library twice this week.',
+                    'text' => 'They have ___ to the library twice this week.',
+                    'question' => '选正确的词',
+                    'options' => ['gone', 'went', 'going'],
+                    'answer' => 'gone',
+                    'tip' => 'have + 过去分词：have gone。',
+                    'emoji' => '🧩',
+                ];
+            }
+        } elseif ($kind === 'story') {
             $raw = [
                 'prompt' => 'A cat sits on a red bag. The cat is happy.',
                 'question' => '小猫怎么样？',

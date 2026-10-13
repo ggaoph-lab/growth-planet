@@ -581,6 +581,8 @@ export interface EnglishWatchLog {
   show?: EnglishShow
 }
 
+export type EnglishLabPath = 'standard' | 'rich'
+
 export interface EnglishLabProgress {
   completed_today: number
   remaining_today: number
@@ -589,7 +591,13 @@ export interface EnglishLabProgress {
   mastered: number
   total: number
   next_review: string | null
-  vocabulary: { estimated_size: number; band: number }
+  vocabulary: {
+    estimated_size: number
+    band: number
+    path?: EnglishLabPath
+    effective_band?: number
+  }
+  path?: EnglishLabPath
   accuracy_7d: number | null
   missed_words: string[]
   as_of: string

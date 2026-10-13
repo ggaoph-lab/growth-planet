@@ -23,7 +23,7 @@ class EnglishLearningTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-10-13 23:30:00', 'Asia/Shanghai'));
         $firstPlan = $service->plan($child);
         $this->assertCount(10, $firstPlan['items']);
-        $this->assertCount(3, array_values(array_filter($firstPlan['items'], fn ($item) => empty($item['probe']))));
+        $this->assertNotEmpty(array_values(array_filter($firstPlan['items'], fn ($item) => empty($item['probe']))));
         $first = $service->answer($child, 'apple', '苹果');
         $this->assertTrue($first['correct']);
         $this->assertSame(1, $first['coins']);
@@ -42,7 +42,7 @@ class EnglishLearningTest extends TestCase
         $this->assertSame('2026-10-17', $second['next_review']);
     }
 
-    public function test_wrong_answers_reset_progress_and_new_cards_are_limited(): void
+    public function test_wrong_answers_reset_progress_and_session_keeps_refilling(): void
     {
         ['family' => $family] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -57,8 +57,8 @@ class EnglishLearningTest extends TestCase
         $after = $service->plan($child);
         $this->assertSame(3, $after['completed']);
         $this->assertNotEmpty($after['items']);
-        $this->assertTrue($after['items'][0]['probe']);
-        $probe = $after['items'][0];
+        $probe = collect($after['items'])->first(fn ($item) => ! empty($item['probe']));
+        $this->assertNotNull($probe);
         $wrongOption = collect($probe['options'])->first(fn ($option) => $option !== $probe['meaning']);
         $probeResult = $service->answer($child, $probe['key'], (string) $wrongOption);
         $this->assertFalse($probeResult['correct']);

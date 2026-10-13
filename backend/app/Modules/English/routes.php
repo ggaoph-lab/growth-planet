@@ -12,6 +12,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::get('english/logs', [EnglishController::class, 'indexLogs']);
     Route::get('english/learning', [EnglishController::class, 'learning']);
     Route::get('english/learning/summary', [EnglishController::class, 'learningSummary']);
+    Route::put('english/learning/path', [EnglishController::class, 'updateLearningPath']);
     Route::get('english/learning/drafts', [EnglishController::class, 'indexDrafts']);
     Route::post('english/learning/drafts/generate', [EnglishController::class, 'generateDraft'])->middleware('throttle:20,1');
     Route::post('english/learning/drafts/{id}/publish', [EnglishController::class, 'publishDraft'])->whereNumber('id');
@@ -23,6 +24,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(function () {
     Route::get('english/learning', [EnglishLearningController::class, 'index']);
     Route::post('english/learning/answer', [EnglishLearningController::class, 'answer'])->middleware(['idempotent', 'throttle:60,1']);
+    Route::post('english/learning/words', [EnglishLearningController::class, 'addWord'])->middleware('throttle:60,1');
     Route::get('english/learning/speak', [EnglishLearningController::class, 'speakPrompt']);
     Route::post('english/learning/speak', [EnglishLearningController::class, 'speakSubmit'])->middleware(['idempotent', 'throttle:20,1']);
     Route::get('english/shows', [KidEnglishController::class, 'indexShows']);

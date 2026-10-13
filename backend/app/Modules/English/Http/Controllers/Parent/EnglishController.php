@@ -108,6 +108,17 @@ class EnglishController
         return response()->json(['data' => $this->learning->parentSummary($child)]);
     }
 
+    public function updateLearningPath(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'child_id' => ['required', 'integer'],
+            'path' => ['required', 'string', 'in:standard,rich'],
+        ]);
+        $child = $this->context->findChild((int) $data['child_id']);
+
+        return response()->json(['data' => $this->learning->setPath($child, $data['path'])]);
+    }
+
     public function indexDrafts(Request $request): JsonResponse
     {
         $data = $request->validate([

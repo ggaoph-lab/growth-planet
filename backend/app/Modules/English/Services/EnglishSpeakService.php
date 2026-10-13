@@ -13,7 +13,7 @@ class EnglishSpeakService
 {
     public const RETENTION_DAYS = 7;
 
-    public const MAX_BYTES = 1_000_000;
+    public const MAX_BYTES = 2_000_000;
 
     public const MAX_DURATION_MS = 8000;
 
@@ -22,12 +22,21 @@ class EnglishSpeakService
         'audio/webm',
         'audio/mp4',
         'audio/m4a',
+        'audio/x-m4a',
+        'audio/aac',
         'audio/mpeg',
+        'audio/mp3',
         'audio/wav',
         'audio/wave',
         'audio/x-wav',
         'audio/ogg',
+        // Chrome/Safari MediaRecorder audio/webm is often sniffed as video/webm.
+        'video/webm',
+        'application/ogg',
     ];
+
+    /** @var list<string> */
+    private const ALLOWED_EXT = ['webm', 'm4a', 'mp3', 'mp4', 'wav', 'ogg', 'aac'];
 
     public function __construct(
         private readonly Clock $clock,
@@ -70,16 +79,7 @@ class EnglishSpeakService
 
         $this->assertAudio($audio, $durationMs);
         $disk = 'local';
-        $mime = strtolower((string) ($audio->getMimeType() ?: $audio->getClientMimeType() ?: 'audio/webm'));
-        if ($mime === 'application/octet-stream') {
-            $mime = match (strtolower((string) $audio->getClientOriginalExtension())) {
-                'm4a', 'mp4' => 'audio/mp4',
-                'mp3' => 'audio/mpeg',
-                'wav' => 'audio/wav',
-                'ogg' => 'audio/ogg',
-                default => 'audio/webm',
-            };
-        }
+        $mime = $this->normalizeMime($audio);
         $ext = $this->extension($mime);
         $path = sprintf('english-speak/%d/%d/%s.%s', $child->family_id, $child->id, $today, $ext);
 
@@ -329,16 +329,58 @@ class EnglishSpeakService
         if ($audio->getSize() > self::MAX_BYTES) {
             throw ValidationException::withMessages(['audio' => '录音有点长，请说得短一些（大约 8 秒内）。']);
         }
-        $mime = strtolower((string) ($audio->getMimeType() ?: $audio->getClientMimeType()));
-        $ext = strtolower((string) $audio->getClientOriginalExtension());
-        $okMime = in_array($mime, self::ALLOWED_MIME, true)
-            || ($mime === 'application/octet-stream' && in_array($ext, ['webm', 'm4a', 'mp3', 'mp4', 'wav', 'ogg'], true));
-        if (! $okMime) {
+        if (! $this->isAllowedAudio($audio)) {
             throw ValidationException::withMessages(['audio' => '暂不支持这种录音格式。']);
         }
         if ($durationMs !== null && $durationMs > self::MAX_DURATION_MS + 500) {
             throw ValidationException::withMessages(['audio' => '录音请控制在 8 秒以内。']);
         }
+    }
+
+    private function isAllowedAudio(UploadedFile $audio): bool
+    {
+        $guessed = strtolower((string) ($audio->getMimeType() ?: ''));
+        $client = strtolower((string) ($audio->getClientMimeType() ?: ''));
+        $ext = strtolower((string) $audio->getClientOriginalExtension());
+
+        foreach ([$guessed, $client] as $mime) {
+            $base = explode(';', $mime)[0] ?? $mime;
+            if (in_array($base, self::ALLOWED_MIME, true)) {
+                return true;
+            }
+            if (str_starts_with($base, 'audio/')) {
+                return true;
+            }
+        }
+
+        // PHP finfo often mis-labels short MediaRecorder blobs (octet-stream / text/plain / video/webm).
+        return in_array($ext, self::ALLOWED_EXT, true);
+    }
+
+    private function normalizeMime(UploadedFile $audio): string
+    {
+        $guessed = strtolower((string) ($audio->getMimeType() ?: ''));
+        $client = strtolower((string) ($audio->getClientMimeType() ?: ''));
+        $ext = strtolower((string) $audio->getClientOriginalExtension());
+        $candidate = explode(';', $guessed)[0] ?: explode(';', $client)[0] ?: '';
+
+        if ($candidate === 'video/webm' || str_contains($candidate, 'webm')) {
+            return 'audio/webm';
+        }
+        if (in_array($candidate, ['audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/aac'], true)) {
+            return 'audio/mp4';
+        }
+        if (in_array($candidate, self::ALLOWED_MIME, true) && str_starts_with($candidate, 'audio/')) {
+            return $candidate;
+        }
+
+        return match ($ext) {
+            'm4a', 'mp4', 'aac' => 'audio/mp4',
+            'mp3' => 'audio/mpeg',
+            'wav' => 'audio/wav',
+            'ogg' => 'audio/ogg',
+            default => 'audio/webm',
+        };
     }
 
     /**

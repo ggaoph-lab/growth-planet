@@ -49,6 +49,9 @@ return ['bands' => [
         ['text' => 'Be quiet, please.', 'meaning' => '请安静。', 'emoji' => '🤫', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['请安静。', '今天天气很好。', '我们去图书馆。']],
         ['text' => 'quiet', 'meaning' => '安静的', 'emoji' => '🤫', 'ipa' => '/ˈkwaɪət/', 'pos' => 'adj.', 'kind' => 'word', 'options' => ['安静的', '吵闹的', '勇敢的']],
         ['text' => 'weather', 'meaning' => '天气', 'emoji' => '🌤️', 'ipa' => '/ˈweðər/', 'pos' => 'n.', 'kind' => 'word', 'options' => ['天气', '季节', '方向']],
+        ['text' => 'curious', 'meaning' => '好奇的', 'emoji' => '🧐', 'ipa' => '/ˈkjʊriəs/', 'pos' => 'adj.', 'kind' => 'word', 'options' => ['好奇的', '着急的', '无聊的']],
+        ['text' => 'She figured it out.', 'meaning' => '她弄明白了。', 'emoji' => '💡', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['她弄明白了。', '她迷路了。', '她在睡觉。']],
+        ['text' => 'I almost forgot my map.', 'meaning' => '我差点忘了地图。', 'emoji' => '🗺️', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['我差点忘了地图。', '我买了地图。', '地图在桌子上。']],
     ],
     5 => [
         ['text' => 'adventure', 'meaning' => '冒险', 'emoji' => '🧭', 'ipa' => '/ədˈventʃər/', 'pos' => 'n.', 'kind' => 'word', 'options' => ['冒险', '秘密', '礼物']],
@@ -56,5 +59,16 @@ return ['bands' => [
         ['text' => 'What a journey!', 'meaning' => '多棒的旅程啊！', 'emoji' => '🧳', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['多棒的旅程啊！', '请温柔一点。', '我发现了秘密。']],
         ['text' => 'gentle', 'meaning' => '温柔的', 'emoji' => '🕊️', 'ipa' => '/ˈdʒentl/', 'pos' => 'adj.', 'kind' => 'word', 'options' => ['温柔的', '急忙的', '粗糙的']],
         ['text' => 'journey', 'meaning' => '旅程', 'emoji' => '🧳', 'ipa' => '/ˈdʒɜːrni/', 'pos' => 'n.', 'kind' => 'word', 'options' => ['旅程', '地图', '门票']],
+        ['text' => 'promise', 'meaning' => '承诺', 'emoji' => '🤝', 'ipa' => '/ˈprɑːmɪs/', 'pos' => 'n.', 'kind' => 'word', 'options' => ['承诺', '借口', '玩笑']],
+        ['text' => 'Could you explain that again?', 'meaning' => '你能再解释一遍吗？', 'emoji' => '🗣️', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['你能再解释一遍吗？', '你能小声点吗？', '你能帮我开门吗？']],
+        ['text' => 'We should keep exploring.', 'meaning' => '我们应该继续探索。', 'emoji' => '🧭', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['我们应该继续探索。', '我们应该马上回家。', '我们应该安静等待。']],
+    ],
+    6 => [
+        ['text' => 'reluctant', 'meaning' => '不情愿的', 'emoji' => '😕', 'ipa' => '/rɪˈlʌktənt/', 'pos' => 'adj.', 'kind' => 'word', 'options' => ['不情愿的', '兴奋的', '健忘的']],
+        ['text' => 'perspective', 'meaning' => '视角', 'emoji' => '🪟', 'ipa' => '/pərˈspektɪv/', 'pos' => 'n.', 'kind' => 'word', 'options' => ['视角', '借口', '行李']],
+        ['text' => 'She hesitated before answering.', 'meaning' => '她回答前犹豫了一下。', 'emoji' => '⏳', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['她回答前犹豫了一下。', '她马上跑开了。', '她把答案写错了。']],
+        ['text' => 'That depends on the weather.', 'meaning' => '那取决于天气。', 'emoji' => '🌦️', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['那取决于天气。', '那和天气无关。', '天气已经变好了。']],
+        ['text' => 'I would rather stay curious.', 'meaning' => '我宁愿保持好奇。', 'emoji' => '✨', 'ipa' => '', 'pos' => '', 'kind' => 'sentence', 'options' => ['我宁愿保持好奇。', '我宁愿马上放弃。', '我宁愿早点睡觉。']],
+        ['text' => 'negotiate', 'meaning' => '协商', 'emoji' => '🗨️', 'ipa' => '/nɪˈɡoʊʃieɪt/', 'pos' => 'v.', 'kind' => 'word', 'options' => ['协商', '忽略', '模仿']],
     ],
 ]];

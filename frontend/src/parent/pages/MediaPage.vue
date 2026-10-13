@@ -7,6 +7,7 @@ import MoviePoster from '@/shared/MoviePoster.vue'
 import { overviewParagraphs } from '@/shared/movieOverview'
 import type {
   EnglishContentDraft,
+  EnglishLabPath,
   EnglishLabProgress,
   EnglishLabSummary,
   EnglishShow,
@@ -285,6 +286,24 @@ function playSpeak(id: number): void {
 function speakStars(score: number | null): string {
   const n = Math.max(0, Math.min(5, score ?? 0))
   return '★'.repeat(n) + '☆'.repeat(5 - n)
+}
+
+async function updateLabPath(path: EnglishLabPath): Promise<void> {
+  if (!childId.value || labBusy.value) return
+  if ((labProgress.value?.path ?? 'standard') === path) return
+  labBusy.value = true
+  try {
+    labProgress.value = await api.put<EnglishLabProgress>('/parent/english/learning/path', {
+      child_id: childId.value,
+      path,
+    })
+    await loadEnglishLab()
+    ElMessage.success(t('common.saved'))
+  } catch (e) {
+    if (e instanceof ApiError) ElMessage.error(e.message)
+  } finally {
+    labBusy.value = false
+  }
 }
 
 async function generateLabDraft(kind: 'grammar' | 'story'): Promise<void> {
@@ -672,9 +691,22 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
       <section v-else-if="tab === 'english'">
         <el-card v-if="labProgress" shadow="never" class="lab-card">
           <h3>{{ t('common.englishLabProgress') }}</h3>
+          <div class="lab-path">
+            <span class="lab-path-label">{{ t('common.englishLabPath') }}</span>
+            <el-radio-group
+              :model-value="labProgress.path ?? 'standard'"
+              :disabled="labBusy || !childId"
+              @update:model-value="(value: string | number | boolean | undefined) => updateLabPath(value === 'rich' ? 'rich' : 'standard')"
+            >
+              <el-radio-button value="standard">{{ t('common.englishLabPathStandard') }}</el-radio-button>
+              <el-radio-button value="rich">{{ t('common.englishLabPathRich') }}</el-radio-button>
+            </el-radio-group>
+          </div>
+          <p class="hint">{{ t('common.englishLabPathHint') }}</p>
           <p>
             {{ t('common.englishRemainingToday') }}：{{ labProgress.remaining_today }}
             · {{ t('common.englishAccuracy7d') }}：{{ labProgress.accuracy_7d == null ? '—' : Math.round(labProgress.accuracy_7d * 100) + '%' }}
+            · {{ t('common.englishLabBand') }}：{{ labProgress.vocabulary.effective_band ?? labProgress.vocabulary.band }}
             · {{ labProgress.learned }}/{{ labProgress.total }}
           </p>
           <p v-if="labProgress.missed_words.length">{{ t('common.englishMissedWords') }}：{{ labProgress.missed_words.join('、') }}</p>
@@ -851,6 +883,8 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .child { max-width: 220px; }
 .hint { color: #888; font-size: 13px; }
 .lab-card h3 { margin: 0 0 8px; }
+.lab-path { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 6px; }
+.lab-path-label { font-size: 14px; color: #606266; }
 .lab-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
 .lab-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .speak-audio { display: block; width: 100%; margin-top: 12px; }

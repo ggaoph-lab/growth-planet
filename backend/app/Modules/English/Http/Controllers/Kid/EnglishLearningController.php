@@ -28,6 +28,15 @@ class EnglishLearningController
         return response()->json(['data' => $this->learning->answer($this->context->child(), $data['key'], $data['answer'])]);
     }
 
+    public function addWord(Request $request): JsonResponse
+    {
+        $data = $request->validate(['word' => ['required', 'string', 'max:40']]);
+
+        return response()->json([
+            'data' => $this->learning->addLearningWord($this->context->child(), $data['word']),
+        ], 201);
+    }
+
     public function speakPrompt(): JsonResponse
     {
         return response()->json(['data' => $this->speak->prompt($this->context->child())]);
@@ -36,7 +45,8 @@ class EnglishLearningController
     public function speakSubmit(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'audio' => ['required', 'file', 'max:1024'],
+            // Kilobytes. MediaRecorder blobs are small; keep headroom for Safari mp4.
+            'audio' => ['required', 'file', 'max:2048'],
             'duration_ms' => ['nullable', 'integer', 'min:0', 'max:15000'],
         ]);
 

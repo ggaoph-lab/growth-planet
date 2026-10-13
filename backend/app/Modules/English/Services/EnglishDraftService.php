@@ -39,7 +39,8 @@ class EnglishDraftService
         $kind = $kind === 'story' ? 'story' : 'grammar';
         $profile = $this->vocabulary->profile($child);
         $snapshot = [
-            'band' => $profile['band'],
+            'band' => $profile['effective_band'],
+            'path' => $profile['path'],
             'estimated_size' => $profile['estimated_size'],
             'known_words' => array_slice($profile['known_words'], -20),
             'missed_words' => array_slice($profile['missed_words'], -10),

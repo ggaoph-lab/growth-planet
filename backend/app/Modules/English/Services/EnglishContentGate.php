@@ -15,10 +15,12 @@ class EnglishContentGate
     {
         $text = $this->expression((string) ($raw['text'] ?? ''));
         $meaning = trim((string) ($raw['meaning'] ?? ''));
-        if ($text === '' || $meaning === '' || mb_strlen($meaning) > 20) {
+        $meaningMax = $band >= 4 ? 40 : 20;
+        $textMax = $band >= 4 ? 60 : 40;
+        if ($text === '' || $meaning === '' || mb_strlen($meaning) > $meaningMax) {
             return null;
         }
-        if (preg_match('/^[A-Za-z][A-Za-z \'.?!,-]{0,39}$/', $text) !== 1) {
+        if (preg_match('/^[A-Za-z][A-Za-z \'.?!,-]{0,'.($textMax - 1).'}$/', $text) !== 1) {
             return null;
         }
         if (isset($avoid[strtolower($text)])) {
@@ -38,10 +40,7 @@ class EnglishContentGate
             return null;
         }
 
-        $emoji = trim((string) ($raw['emoji'] ?? '✨'));
-        if ($emoji === '' || mb_strlen($emoji) > 8) {
-            $emoji = '✨';
-        }
+        $emoji = $this->emojiFor($text, $kind, (string) ($raw['emoji'] ?? ''));
 
         $ipa = $this->ipa((string) ($raw['ipa'] ?? ''), $kind);
         $pos = $this->pos((string) ($raw['pos'] ?? ''), $kind);
@@ -222,6 +221,34 @@ class EnglishContentGate
         return $text;
     }
 
+    public function emojiFor(string $text, string $kind = 'word', string $provided = ''): string
+    {
+        $provided = trim($provided);
+        if ($provided !== '' && $provided !== '✨' && mb_strlen($provided) <= 8) {
+            return $provided;
+        }
+
+        $key = strtolower(trim($text));
+        $map = [
+            'apple' => '🍎', 'banana' => '🍌', 'water' => '💧', 'milk' => '🥛', 'cat' => '🐱', 'dog' => '🐶',
+            'bird' => '🐦', 'fish' => '🐟', 'tree' => '🌳', 'sun' => '☀️', 'moon' => '🌙', 'star' => '⭐',
+            'book' => '📖', 'bag' => '🎒', 'school' => '🏫', 'friend' => '🤝', 'rain' => '🌧️', 'bread' => '🍞',
+            'egg' => '🥚', 'bus' => '🚌', 'car' => '🚗', 'house' => '🏠', 'flower' => '🌸', 'happy' => '😊',
+            'sad' => '😢', 'run' => '🏃', 'big' => '🐘', 'small' => '🐭', 'red' => '🔴', 'blue' => '🔵',
+            'yellow' => '🟡', 'green' => '🟢', 'mom' => '👩', 'dad' => '👨', 'sister' => '👧', 'brother' => '👦',
+            'morning' => '🌅', 'night' => '🌙', 'window' => '🪟', 'door' => '🚪', 'chair' => '🪑', 'table' => '🪑',
+            'garden' => '🌷', 'hungry' => '🍽️', 'cloud' => '☁️', 'library' => '📚', 'quiet' => '🤫',
+            'weather' => '🌤️', 'breakfast' => '🥣', 'curious' => '🧐', 'adventure' => '🧭', 'discover' => '🔍',
+            'gentle' => '🕊️', 'journey' => '🧳', 'promise' => '🤝', 'map' => '🗺️', 'help' => '🛟',
+            'open' => '🚪', 'negotiate' => '🗨️', 'reluctant' => '😕', 'perspective' => '🪟',
+        ];
+        if (isset($map[$key])) {
+            return $map[$key];
+        }
+
+        return $kind === 'sentence' ? '💬' : '🔤';
+    }
+
     public function fitsBand(string $text, int $band): bool
     {
         $words = preg_split('/\s+/u', trim(preg_replace('/[.!?,]/', '', $text) ?? $text)) ?: [];
@@ -231,7 +258,9 @@ class EnglishContentGate
             $band <= 1 => 5,
             $band === 2 => 6,
             $band === 3 => 8,
-            default => 12,
+            $band === 4 => 14,
+            $band === 5 => 16,
+            default => 20,
         };
         if ($count > $maxWords) {
             return false;

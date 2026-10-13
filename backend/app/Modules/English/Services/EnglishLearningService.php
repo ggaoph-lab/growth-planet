@@ -40,7 +40,11 @@ class EnglishLearningService
         $catalog = collect(config('english_learning.items'))->keyBy('key');
         $profile = $this->vocabulary->profile($child);
         $accuracy = $this->recentAccuracy($child, 7);
-        $newCap = ($accuracy !== null && $accuracy < 0.6) ? 2 : 3;
+        $rich = $profile['path'] === EnglishVocabularyService::PATH_RICH;
+        // High-vocabulary path skips beginner catalog introductions; reviews still return.
+        // Standard path: up to 3 new course cards per day (2 when recent accuracy is weak),
+        // so probes/challenges still get queue slots as the catalog grows.
+        $newCap = $rich ? 0 : (($accuracy !== null && $accuracy < 0.6) ? 2 : 3);
 
         $due = $progress->filter(fn ($p) => $p->due_date <= $today && $p->completed_date !== $today)
             ->sortBy('due_date');
@@ -73,10 +77,45 @@ class EnglishLearningService
             ];
         }
 
+        $practiceBand = $this->vocabulary->practiceBand($child);
+        $snapshot = [
+            'band' => $practiceBand,
+            'path' => $profile['path'],
+            'estimated_size' => $profile['estimated_size'],
+            'known_words' => array_slice($profile['known_words'], -30),
+            'missed_words' => array_slice($profile['missed_words'], -15),
+            'learning_words' => array_slice($profile['learning_words'], -15),
+            'recent_accuracy' => $accuracy,
+        ];
+
         $slotsLeft = $remaining - count($items);
         if ($slotsLeft > 0) {
             $challenges = $this->drafts->publishedCards($child, $slotsLeft, $today);
             $items = [...$items, ...$challenges];
+            $slotsLeft = $remaining - count($items);
+        }
+        // Rich challenges only when accuracy has unlocked a higher band.
+        if ($rich && $practiceBand >= 3 && $slotsLeft > 0) {
+            $richCards = $this->coach->richDailyChallenges($child, min(2, $slotsLeft), $snapshot, $today);
+            $items = [...$items, ...$richCards];
+            $slotsLeft = $remaining - count($items);
+        }
+        if ($slotsLeft > 0) {
+            // Spelling stays until spelled correctly so kids can retry after a miss.
+            $spelledDone = DB::table('english_learning_answers')
+                ->where('child_id', $child->id)
+                ->where('business_date', $today)
+                ->where('item_key', 'like', 'spell:%')
+                ->where('correct', true)
+                ->pluck('item_key')
+                ->all();
+            $spelling = $this->vocabulary->spellingCards(
+                $child,
+                min(EnglishVocabularyService::SPELLING_DAILY_LIMIT, $slotsLeft),
+                $spelledDone,
+                $today,
+            );
+            $items = [...$items, ...$spelling];
             $slotsLeft = $remaining - count($items);
         }
         if ($slotsLeft > 0) {
@@ -88,13 +127,6 @@ class EnglishLearningService
             )];
         }
 
-        $snapshot = [
-            'band' => $profile['band'],
-            'estimated_size' => $profile['estimated_size'],
-            'known_words' => array_slice($profile['known_words'], -30),
-            'missed_words' => array_slice($profile['missed_words'], -15),
-            'recent_accuracy' => $accuracy,
-        ];
         $items = $this->coach->reorderSession($child, $items, $snapshot, $today);
         $this->coach->ensureCoachTips($child, $items, $snapshot, $today);
 
@@ -114,14 +146,25 @@ class EnglishLearningService
             // Serialize answers per child, including new progress rows and reward caps.
             ChildProfile::query()->whereKey($child->id)->lockForUpdate()->firstOrFail();
             $item = collect($this->plan($child)['items'])->firstWhere('key', $key);
-            if (! $item || ! in_array($answer, $item['options'], true)) {
+            $isSpelling = ! empty($item['spelling']) || (($item['kind'] ?? '') === 'spelling');
+            if (! $item) {
+                throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+            }
+            if ($isSpelling) {
+                $normalized = strtolower(trim($answer));
+                if ($normalized === '' || mb_strlen($normalized) > 40) {
+                    throw ValidationException::withMessages(['answer' => '请拼写完整的英文单词。']);
+                }
+            } elseif (! in_array($answer, $item['options'], true)) {
                 throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
             }
             $today = $this->clock->today($child->family->timezone);
             $date = $today->toDateString();
             $isChallenge = ! empty($item['challenge']);
             $isProbe = ! empty($item['probe']);
-            if ($isChallenge) {
+            if ($isSpelling) {
+                $correct = strtolower(trim($answer)) === strtolower((string) ($item['answer'] ?? $item['text'] ?? ''));
+            } elseif ($isChallenge) {
                 $correct = $answer === (string) ($item['correct_answer'] ?? $item['answer'] ?? '');
             } else {
                 $correct = $answer === ($item['review'] ? $item['text'] : $item['meaning']);
@@ -156,6 +199,7 @@ class EnglishLearningService
                     'plan' => $this->plan($child),
                     'probe' => $isProbe,
                     'challenge' => $isChallenge,
+                    'spelling' => $isSpelling,
                     'coach_tip' => $coachTip,
                 ];
             }
@@ -223,11 +267,32 @@ class EnglishLearningService
             'vocabulary' => [
                 'estimated_size' => $profile['estimated_size'],
                 'band' => $profile['band'],
+                'path' => $profile['path'],
+                'effective_band' => $profile['effective_band'],
             ],
+            'path' => $profile['path'],
             'accuracy_7d' => $accuracy,
             'missed_words' => array_slice($profile['missed_words'], -10),
             'as_of' => $today,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function setPath(ChildProfile $child, string $path): array
+    {
+        $this->vocabulary->setPath($child, $path);
+
+        return $this->parentProgress($child);
+    }
+
+    /**
+     * @return array{word: string, learning_words: list<string>}
+     */
+    public function addLearningWord(ChildProfile $child, string $word): array
+    {
+        return $this->vocabulary->addLearningWord($child, $word);
     }
 
     /**
@@ -241,7 +306,8 @@ class EnglishLearningService
         $accuracy = $this->recentAccuracy($child, 7);
         $themes = $this->recentMissThemes($child);
         $stats = [
-            'band' => $profile['band'],
+            'band' => $profile['effective_band'],
+            'path' => $profile['path'],
             'estimated_size' => $profile['estimated_size'],
             'known_words' => array_slice($profile['known_words'], -20),
             'missed_words' => array_slice($profile['missed_words'], -10),

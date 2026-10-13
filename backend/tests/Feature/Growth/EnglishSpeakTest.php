@@ -69,6 +69,28 @@ class EnglishSpeakTest extends TestCase
             ->assertOk();
     }
 
+    public function test_speak_accepts_browser_mislabeled_webm_mime(): void
+    {
+        Storage::fake('local');
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $learning = app(EnglishLearningService::class);
+        $speak = app(EnglishSpeakService::class);
+        $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
+        $learning->answer($child, 'apple', '苹果');
+        $learning->answer($child, 'banana', '香蕉');
+        $learning->answer($child, 'like-apples', '我喜欢苹果。');
+
+        // Chrome often sniffs MediaRecorder audio as video/webm.
+        $file = UploadedFile::fake()->create('speak.webm', 4, 'video/webm');
+        $attempt = $speak->submit($child, $file, 1500);
+        $this->assertNotSame('', $attempt['feedback']);
+        $this->assertDatabaseHas('english_speak_attempts', [
+            'child_id' => $child->id,
+            'mime' => 'audio/webm',
+        ]);
+    }
+
     public function test_prune_expired_speak_attempts(): void
     {
         Storage::fake('local');
