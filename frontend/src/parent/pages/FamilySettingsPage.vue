@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
-import type { AiSettings, Family, ParentAccount, TaskCategory } from '@/shared/api/types'
+import type { AiModelChoice, AiModelList, AiSettings, Family, ParentAccount, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 import { useIsPhone } from '@/shared/useMediaQuery'
@@ -40,16 +40,44 @@ const passwordForm = reactive({ current_password: '', password: '', password_con
 const showCreateParent = ref(false)
 const createForm = reactive({ display_name: '', username: '', password: '', password_confirmation: '' })
 
+type AiProviderName = 'gemini' | 'qwen' | 'openai'
+
 const ai = ref<AiSettings | null>(null)
 const aiForm = reactive({
   provider: 'auto',
   gemini_model: 'gemini-2.5-flash',
   qwen_model: 'qwen-turbo',
+  openai_model: 'gpt-4o-mini',
   gemini_api_key: '',
   qwen_api_key: '',
+  openai_api_key: '',
   clear_gemini_api_key: false,
   clear_qwen_api_key: false,
+  clear_openai_api_key: false,
 })
+const modelOptions = reactive<Record<AiProviderName, AiModelChoice[]>>({
+  gemini: [],
+  qwen: [],
+  openai: [],
+})
+const modelLoading = reactive<Record<AiProviderName, boolean>>({
+  gemini: false,
+  qwen: false,
+  openai: false,
+})
+const modelNote = reactive<Record<AiProviderName, string>>({
+  gemini: '',
+  qwen: '',
+  openai: '',
+})
+const modelTouched = reactive<Record<AiProviderName, boolean>>({
+  gemini: false,
+  qwen: false,
+  openai: false,
+})
+const modelRequest = { gemini: 0, qwen: 0, openai: 0 }
+const modelTimers: Record<AiProviderName, number> = { gemini: 0, qwen: 0, openai: 0 }
+const suppressModelTouch: Record<AiProviderName, boolean> = { gemini: false, qwen: false, openai: false }
 
 function reportError(e: unknown): void {
   if (e instanceof ApiError && e.code === 'SUDO_REQUIRED') return
@@ -79,10 +107,95 @@ async function loadAi(): Promise<void> {
   aiForm.provider = data.provider
   aiForm.gemini_model = data.gemini.model
   aiForm.qwen_model = data.qwen.model
+  aiForm.openai_model = data.openai.model
   aiForm.gemini_api_key = ''
   aiForm.qwen_api_key = ''
+  aiForm.openai_api_key = ''
   aiForm.clear_gemini_api_key = false
   aiForm.clear_qwen_api_key = false
+  aiForm.clear_openai_api_key = false
+  modelTouched.gemini = false
+  modelTouched.qwen = false
+  modelTouched.openai = false
+  if (tab.value === 'ai') await refreshVisibleModels()
+}
+
+function modelField(provider: AiProviderName): 'gemini_model' | 'qwen_model' | 'openai_model' {
+  if (provider === 'gemini') return 'gemini_model'
+  if (provider === 'qwen') return 'qwen_model'
+  return 'openai_model'
+}
+
+function draftKey(provider: AiProviderName): string {
+  if (provider === 'gemini') return aiForm.gemini_api_key.trim()
+  if (provider === 'qwen') return aiForm.qwen_api_key.trim()
+  return aiForm.openai_api_key.trim()
+}
+
+function clearingKey(provider: AiProviderName): boolean {
+  if (provider === 'gemini') return aiForm.clear_gemini_api_key
+  if (provider === 'qwen') return aiForm.clear_qwen_api_key
+  return aiForm.clear_openai_api_key
+}
+
+function applyModelList(provider: AiProviderName, data: AiModelList): void {
+  modelOptions[provider] = data.models
+  const field = modelField(provider)
+  const current = aiForm[field]
+  const known = data.models.some((model) => model.id === current)
+  const customized = ai.value?.[provider].model_customized === true
+  if (data.latest && !modelTouched[provider] && !customized && aiForm[field] !== data.latest) {
+    suppressModelTouch[provider] = true
+    aiForm[field] = data.latest
+    void nextTick(() => {
+      suppressModelTouch[provider] = false
+    })
+  }
+
+  if (data.error === 'invalid_key') modelNote[provider] = t('parent.settings.modelInvalidKey')
+  else if (data.error === 'upstream_failed') modelNote[provider] = t('parent.settings.modelLoadFailed')
+  else if (data.error === 'no_models') modelNote[provider] = t('parent.settings.modelNone')
+  else if (data.latest && aiForm[field] === data.latest && !customized) modelNote[provider] = t('parent.settings.modelLatest')
+  else if (customized && data.models.length > 0 && !known) modelNote[provider] = t('parent.settings.modelMissing')
+  else modelNote[provider] = ''
+}
+
+async function loadModels(provider: AiProviderName, key = ''): Promise<void> {
+  if (clearingKey(provider)) {
+    modelOptions[provider] = []
+    modelNote[provider] = ''
+    return
+  }
+  const seq = ++modelRequest[provider]
+  modelLoading[provider] = true
+  try {
+    const body: { provider: AiProviderName; api_key?: string } = { provider }
+    if (key) body.api_key = key
+    const data = await api.post<AiModelList>('/parent/ai-models', body)
+    if (seq !== modelRequest[provider]) return
+    applyModelList(provider, data)
+  } catch {
+    if (seq !== modelRequest[provider]) return
+    modelOptions[provider] = []
+    modelNote[provider] = t('parent.settings.modelLoadFailed')
+  } finally {
+    if (seq === modelRequest[provider]) modelLoading[provider] = false
+  }
+}
+
+function scheduleModels(provider: AiProviderName, key: string): void {
+  window.clearTimeout(modelTimers[provider])
+  modelTimers[provider] = window.setTimeout(() => {
+    void loadModels(provider, key.trim())
+  }, 400)
+}
+
+async function refreshVisibleModels(): Promise<void> {
+  await Promise.all([
+    loadModels('gemini', draftKey('gemini')),
+    loadModels('qwen', draftKey('qwen')),
+    loadModels('openai', draftKey('openai')),
+  ])
 }
 
 async function loadCategories(): Promise<void> {
@@ -273,20 +386,29 @@ async function saveAi(): Promise<void> {
       provider: aiForm.provider,
       gemini_model: aiForm.gemini_model,
       qwen_model: aiForm.qwen_model,
+      openai_model: aiForm.openai_model,
     }
     if (aiForm.clear_gemini_api_key) payload.clear_gemini_api_key = true
     else if (aiForm.gemini_api_key.trim()) payload.gemini_api_key = aiForm.gemini_api_key.trim()
     if (aiForm.clear_qwen_api_key) payload.clear_qwen_api_key = true
     else if (aiForm.qwen_api_key.trim()) payload.qwen_api_key = aiForm.qwen_api_key.trim()
+    if (aiForm.clear_openai_api_key) payload.clear_openai_api_key = true
+    else if (aiForm.openai_api_key.trim()) payload.openai_api_key = aiForm.openai_api_key.trim()
 
     ai.value = await api.put<AiSettings>('/parent/ai-settings', payload)
     aiForm.gemini_api_key = ''
     aiForm.qwen_api_key = ''
+    aiForm.openai_api_key = ''
     aiForm.clear_gemini_api_key = false
     aiForm.clear_qwen_api_key = false
+    aiForm.clear_openai_api_key = false
     aiForm.provider = ai.value.provider
     aiForm.gemini_model = ai.value.gemini.model
     aiForm.qwen_model = ai.value.qwen.model
+    aiForm.openai_model = ai.value.openai.model
+    modelTouched.gemini = true
+    modelTouched.qwen = true
+    modelTouched.openai = true
     ElMessage.success(t('common.saved'))
   } catch (e) {
     reportError(e)
@@ -300,6 +422,32 @@ function sourceLabel(source: string): string {
   if (source === 'env') return t('parent.settings.aiSourceEnv')
   return t('parent.settings.aiSourceNone')
 }
+
+function markModelTouched(provider: AiProviderName): void {
+  if (suppressModelTouch[provider]) return
+  modelTouched[provider] = true
+  const latest = modelOptions[provider][0]?.id
+  const customized = ai.value?.[provider].model_customized === true
+  if (!customized && latest && aiForm[modelField(provider)] === latest) {
+    modelNote[provider] = t('parent.settings.modelLatest')
+    return
+  }
+  modelNote[provider] = ''
+}
+
+watch(tab, (name) => {
+  if (name === 'ai' && ai.value) void refreshVisibleModels()
+})
+
+watch(() => aiForm.gemini_api_key, (value) => {
+  if (tab.value === 'ai') scheduleModels('gemini', value)
+})
+watch(() => aiForm.qwen_api_key, (value) => {
+  if (tab.value === 'ai') scheduleModels('qwen', value)
+})
+watch(() => aiForm.openai_api_key, (value) => {
+  if (tab.value === 'ai') scheduleModels('openai', value)
+})
 
 watch(() => route.query.tab, syncTabFromRoute)
 
@@ -441,6 +589,7 @@ onMounted(load)
               <el-option :label="t('parent.settings.aiProviderAuto')" value="auto" />
               <el-option label="Gemini" value="gemini" />
               <el-option :label="t('common.homeworkParserQwen')" value="qwen" />
+              <el-option label="ChatGPT" value="openai" />
               <el-option :label="t('common.homeworkParserRules')" value="rules" />
             </el-select>
             <div class="hint">{{ t('parent.settings.aiProviderHint') }}</div>
@@ -464,7 +613,21 @@ onMounted(load)
             <el-checkbox v-model="aiForm.clear_gemini_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
           </el-form-item>
           <el-form-item :label="t('parent.settings.model')">
-            <el-input v-model="aiForm.gemini_model" maxlength="64" />
+            <el-select
+              v-if="modelOptions.gemini.length > 0 || modelLoading.gemini"
+              v-model="aiForm.gemini_model"
+              filterable
+              allow-create
+              default-first-option
+              style="width: 100%"
+              :loading="modelLoading.gemini"
+              :placeholder="t('parent.settings.modelsLoading')"
+              @change="markModelTouched('gemini')"
+            >
+              <el-option v-for="model in modelOptions.gemini" :key="model.id" :label="model.label === model.id ? model.id : `${model.label} · ${model.id}`" :value="model.id" />
+            </el-select>
+            <el-input v-else v-model="aiForm.gemini_model" maxlength="128" @input="markModelTouched('gemini')" />
+            <div v-if="modelNote.gemini" class="hint">{{ modelNote.gemini }}</div>
           </el-form-item>
 
           <el-divider content-position="left">{{ t('common.homeworkParserQwen') }}</el-divider>
@@ -485,7 +648,56 @@ onMounted(load)
             <el-checkbox v-model="aiForm.clear_qwen_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
           </el-form-item>
           <el-form-item :label="t('parent.settings.model')">
-            <el-input v-model="aiForm.qwen_model" maxlength="64" />
+            <el-select
+              v-if="modelOptions.qwen.length > 0 || modelLoading.qwen"
+              v-model="aiForm.qwen_model"
+              filterable
+              allow-create
+              default-first-option
+              style="width: 100%"
+              :loading="modelLoading.qwen"
+              :placeholder="t('parent.settings.modelsLoading')"
+              @change="markModelTouched('qwen')"
+            >
+              <el-option v-for="model in modelOptions.qwen" :key="model.id" :label="model.label === model.id ? model.id : `${model.label} · ${model.id}`" :value="model.id" />
+            </el-select>
+            <el-input v-else v-model="aiForm.qwen_model" maxlength="128" @input="markModelTouched('qwen')" />
+            <div v-if="modelNote.qwen" class="hint">{{ modelNote.qwen }}</div>
+          </el-form-item>
+
+          <el-divider content-position="left">ChatGPT</el-divider>
+          <div v-if="ai" class="ai-status">
+            {{ sourceLabel(ai.openai.source) }}
+            <span v-if="ai.openai.hint"> · {{ ai.openai.hint }}</span>
+          </div>
+          <el-form-item :label="t('parent.settings.apiKey')">
+            <el-input
+              v-model="aiForm.openai_api_key"
+              type="password"
+              show-password
+              :placeholder="t('parent.settings.apiKeyPlaceholder')"
+              :disabled="aiForm.clear_openai_api_key"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="aiForm.clear_openai_api_key">{{ t('parent.settings.clearFamilyKey') }}</el-checkbox>
+          </el-form-item>
+          <el-form-item :label="t('parent.settings.model')">
+            <el-select
+              v-if="modelOptions.openai.length > 0 || modelLoading.openai"
+              v-model="aiForm.openai_model"
+              filterable
+              allow-create
+              default-first-option
+              style="width: 100%"
+              :loading="modelLoading.openai"
+              :placeholder="t('parent.settings.modelsLoading')"
+              @change="markModelTouched('openai')"
+            >
+              <el-option v-for="model in modelOptions.openai" :key="model.id" :label="model.label === model.id ? model.id : `${model.label} · ${model.id}`" :value="model.id" />
+            </el-select>
+            <el-input v-else v-model="aiForm.openai_model" maxlength="128" @input="markModelTouched('openai')" />
+            <div v-if="modelNote.openai" class="hint">{{ modelNote.openai }}</div>
           </el-form-item>
 
           <el-button type="primary" :loading="savingAi" native-type="submit">{{ t('common.save') }}</el-button>

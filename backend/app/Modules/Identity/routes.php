@@ -38,6 +38,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::put('parents/me/password', [ParentAccountController::class, 'updatePassword'])->middleware('sudo');
 
     Route::get('ai-settings', [AiSettingsController::class, 'show']);
+    Route::post('ai-models', [AiSettingsController::class, 'models']);
     Route::put('ai-settings', [AiSettingsController::class, 'update'])->middleware('sudo');
 
     Route::get('children', [ChildController::class, 'index']);

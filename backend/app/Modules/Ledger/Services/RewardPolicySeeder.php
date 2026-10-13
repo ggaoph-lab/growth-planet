@@ -20,7 +20,7 @@ class RewardPolicySeeder
             ['code' => 'movie.completion', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_subject' => 1],
             ['code' => 'movie.viewing', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_subject' => 4],
             ['code' => 'movie.cross_movie', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_week' => 5],
-            ['code' => 'english.practice', 'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => 8],
+            ['code' => 'english.practice', 'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.log', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.active_choice', 'xp_amount' => 0, 'coin_amount' => 3, 'requires_approval' => false, 'max_per_day' => 6],
         ];

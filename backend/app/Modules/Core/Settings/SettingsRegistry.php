@@ -22,13 +22,15 @@ class SettingsRegistry
             'ai.provider' => [
                 'type' => 'string',
                 'default' => 'auto',
-                'enum' => ['auto', 'gemini', 'qwen', 'rules'],
-                'label' => '作业解析 AI 引擎',
+                'enum' => ['auto', 'gemini', 'qwen', 'openai', 'rules'],
+                'label' => '默认 AI 引擎',
             ],
             'ai.gemini_api_key' => ['type' => 'secret', 'default' => '', 'label' => 'Gemini API Key'],
             'ai.gemini_model' => ['type' => 'string', 'default' => 'gemini-2.5-flash', 'label' => 'Gemini 模型'],
             'ai.qwen_api_key' => ['type' => 'secret', 'default' => '', 'label' => '通义千问 API Key'],
             'ai.qwen_model' => ['type' => 'string', 'default' => 'qwen-turbo', 'label' => '通义千问模型'],
+            'ai.openai_api_key' => ['type' => 'secret', 'default' => '', 'label' => 'ChatGPT API Key'],
+            'ai.openai_model' => ['type' => 'string', 'default' => 'gpt-4o-mini', 'label' => 'ChatGPT 模型'],
         ];
     }
 

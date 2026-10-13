@@ -9,6 +9,7 @@ use App\Modules\Identity\Models\FamilyMember;
 use App\Modules\Identity\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SystemSettingsTest extends TestCase
@@ -106,7 +107,120 @@ class SystemSettingsTest extends TestCase
             ->getJson('/api/v1/parent/ai-settings')
             ->assertOk()
             ->assertJsonPath('data.gemini.configured', true)
+            ->assertJsonPath('data.openai.configured', false)
             ->assertJsonMissingPath('data.gemini.api_key');
+    }
+
+    public function test_ai_settings_store_chatgpt_key(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        config(['services.openai.api_key' => '']);
+
+        $this->actingAsParent($parent, sudo: true)
+            ->putJson('/api/v1/parent/ai-settings', [
+                'provider' => 'openai',
+                'openai_api_key' => 'sk-family-chatgpt',
+                'openai_model' => 'gpt-4o-mini',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.provider', 'openai')
+            ->assertJsonPath('data.openai.configured', true)
+            ->assertJsonPath('data.openai.source', 'family')
+            ->assertJsonMissingPath('data.openai.api_key');
+
+        $this->assertSame('sk-family-chatgpt', app(Settings::class)->get('ai.openai_api_key', $family->id));
+    }
+
+    public function test_ai_model_list_defaults_to_the_newest_chat_model(): void
+    {
+        ['parent' => $parent] = $this->makeFamily();
+        config([
+            'services.gemini.api_key' => 'gemini-test',
+            'services.gemini.base_url' => 'https://generativelanguage.example/v1beta',
+            'services.qwen.api_key' => '',
+            'services.qwen.base_url' => 'https://dashscope.example/compatible-mode/v1',
+            'services.openai.api_key' => 'sk-test',
+            'services.openai.base_url' => 'https://openai.example/v1',
+        ]);
+
+        $this->actingAsParent($parent)
+            ->getJson('/api/v1/parent/ai-settings')
+            ->assertOk()
+            ->assertJsonPath('data.gemini.model_customized', false);
+
+        Http::fake([
+            'https://generativelanguage.example/*' => Http::response([
+                'models' => [
+                    ['name' => 'models/gemini-2.5-flash', 'displayName' => 'Gemini 2.5 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.8-flash', 'displayName' => 'Gemini 3.8 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.8-pro', 'displayName' => 'Gemini 3.8 Pro', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.8-flash-lite', 'displayName' => 'Gemini 3.8 Flash Lite', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.8-flash-tts', 'displayName' => 'TTS', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-embedding-001', 'displayName' => 'Embed', 'supportedGenerationMethods' => ['embedContent']],
+                ],
+            ]),
+            'https://dashscope.example/*' => Http::response([
+                'data' => [
+                    ['id' => 'qwen-turbo', 'created' => 0],
+                    ['id' => 'qwen3-max', 'created' => 0],
+                    ['id' => 'qwen3.8-max', 'created' => 0],
+                    ['id' => 'qwen3-tts-flash', 'created' => 0],
+                    ['id' => 'text-embedding-v3', 'created' => 0],
+                ],
+            ]),
+            'https://openai.example/*' => Http::response([
+                'data' => [
+                    ['id' => 'gpt-4o-mini', 'created' => 100],
+                    ['id' => 'gpt-5.4', 'created' => 800],
+                    ['id' => 'gpt-4o-mini-tts', 'created' => 900],
+                    ['id' => 'text-embedding-3-small', 'created' => 950],
+                    ['id' => 'whisper-1', 'created' => 50],
+                ],
+            ]),
+        ]);
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-models', ['provider' => 'gemini'])
+            ->assertOk()
+            ->assertJsonPath('data.latest', 'gemini-3.8-pro')
+            ->assertJsonPath('data.models.0.id', 'gemini-3.8-pro')
+            ->assertJsonMissing(['id' => 'gemini-3.8-flash-tts'])
+            ->assertJsonMissing(['id' => 'gemini-embedding-001']);
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-models', [
+                'provider' => 'qwen',
+                'api_key' => 'sk-draft-qwen',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.latest', 'qwen3.8-max')
+            ->assertJsonMissing(['id' => 'qwen3-tts-flash']);
+
+        Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer sk-draft-qwen'));
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-models', ['provider' => 'openai'])
+            ->assertOk()
+            ->assertJsonPath('data.latest', 'gpt-5.4')
+            ->assertJsonMissing(['id' => 'gpt-4o-mini-tts'])
+            ->assertJsonMissing(['id' => 'whisper-1']);
+    }
+
+    public function test_ai_model_list_reports_a_missing_key(): void
+    {
+        ['parent' => $parent] = $this->makeFamily();
+        config([
+            'services.gemini.api_key' => '',
+            'services.qwen.api_key' => '',
+            'services.openai.api_key' => '',
+        ]);
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-models', ['provider' => 'openai'])
+            ->assertOk()
+            ->assertJsonPath('data.models', [])
+            ->assertJsonPath('data.latest', null)
+            ->assertJsonPath('data.error', 'not_configured');
     }
 
     public function test_ai_settings_require_sudo_to_update(): void

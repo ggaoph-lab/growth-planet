@@ -14,6 +14,7 @@ class HomeworkLlmRouter
     public function __construct(
         private readonly GeminiClient $gemini,
         private readonly QwenClient $qwen,
+        private readonly OpenAiClient $openai,
         private readonly FamilyAiConfig $aiConfig,
     ) {}
 
@@ -29,6 +30,9 @@ class HomeworkLlmRouter
         }
         if ($cfg['qwen_configured']) {
             $names[] = 'qwen';
+        }
+        if ($cfg['openai_configured']) {
+            $names[] = 'openai';
         }
 
         return $names;
@@ -74,22 +78,48 @@ class HomeworkLlmRouter
         }
 
         $available = $this->availableClients($cfg);
-        if ($choice === 'gemini' || $choice === 'qwen') {
+        $order = ['gemini', 'qwen', 'openai'];
+        if (in_array($choice, $order, true)) {
             if (! isset($available[$choice])) {
                 return [null, null];
             }
             $primaryName = $choice;
-        } elseif (isset($available['gemini'])) {
-            $primaryName = 'gemini';
-        } elseif (isset($available['qwen'])) {
-            $primaryName = 'qwen';
         } else {
-            return [null, null];
+            $primaryName = null;
+            foreach ($order as $name) {
+                if (isset($available[$name])) {
+                    $primaryName = $name;
+                    break;
+                }
+            }
+            if ($primaryName === null) {
+                return [null, null];
+            }
         }
 
-        $fallbackName = $primaryName === 'gemini' ? 'qwen' : 'gemini';
+        $fallbackName = null;
+        $seenPrimary = false;
+        foreach ($order as $name) {
+            if ($name === $primaryName) {
+                $seenPrimary = true;
 
-        return [$available[$primaryName], $available[$fallbackName] ?? null];
+                continue;
+            }
+            if ($seenPrimary && isset($available[$name])) {
+                $fallbackName = $name;
+                break;
+            }
+        }
+        if ($fallbackName === null) {
+            foreach ($order as $name) {
+                if ($name !== $primaryName && isset($available[$name])) {
+                    $fallbackName = $name;
+                    break;
+                }
+            }
+        }
+
+        return [$available[$primaryName], $fallbackName === null ? null : $available[$fallbackName]];
     }
 
     /**
@@ -132,6 +162,16 @@ class HomeworkLlmRouter
                 'config' => [
                     'api_key' => $cfg['qwen_api_key'],
                     'model' => $cfg['qwen_model'],
+                ],
+            ];
+        }
+        if ($cfg['openai_configured']) {
+            $available['openai'] = [
+                'client' => $this->openai,
+                'config' => [
+                    'api_key' => $cfg['openai_api_key'],
+                    'model' => $cfg['openai_model'],
+                    'base_url' => $cfg['openai_base_url'],
                 ],
             ];
         }

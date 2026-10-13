@@ -105,7 +105,7 @@ const homeworkConfirming = ref(false)
 const homeworkPreview = ref<HomeworkParseResult | null>(null)
 const homeworkChildId = ref<number | undefined>(undefined)
 const homeworkWithParent = ref(false)
-const homeworkProvider = ref<'auto' | 'gemini' | 'qwen' | 'rules'>('auto')
+const homeworkProvider = ref<'auto' | 'gemini' | 'qwen' | 'openai' | 'rules'>('auto')
 const homeworkDraft = ref({
   subject: '其他' as HomeworkSubject | string,
   task_date: '',
@@ -122,18 +122,20 @@ const homeworkDraft = ref({
 function homeworkParserLabel(parser: string): string {
   if (parser === 'gemini') return t('common.homeworkParserGemini')
   if (parser === 'qwen') return t('common.homeworkParserQwen')
+  if (parser === 'openai') return 'ChatGPT'
   return t('common.homeworkParserRules')
 }
 
 function homeworkAiHint(parser: string, aiConfigured: boolean): string {
   if (parser === 'gemini') return t('common.homeworkAiGeminiOn')
   if (parser === 'qwen') return t('common.homeworkAiQwenOn')
+  if (parser === 'openai') return 'ChatGPT'
   if (aiConfigured) return t('common.homeworkAiOn')
   return t('common.homeworkAiOff')
 }
 
 const homeworkUsedAi = computed(
-  () => homeworkDraft.value.parser === 'gemini' || homeworkDraft.value.parser === 'qwen',
+  () => homeworkDraft.value.parser === 'gemini' || homeworkDraft.value.parser === 'qwen' || homeworkDraft.value.parser === 'openai',
 )
 
 watch(
@@ -517,7 +519,7 @@ async function openHomework(): Promise<void> {
   homeworkProvider.value = 'auto'
   try {
     const settings = await api.get<AiSettings>('/parent/ai-settings')
-    if (settings.provider === 'gemini' || settings.provider === 'qwen' || settings.provider === 'rules' || settings.provider === 'auto') {
+    if (settings.provider === 'gemini' || settings.provider === 'qwen' || settings.provider === 'openai' || settings.provider === 'rules' || settings.provider === 'auto') {
       homeworkProvider.value = settings.provider
     }
   } catch {
@@ -1026,6 +1028,7 @@ onMounted(load)
             <el-option :label="t('common.homeworkProviderAuto')" value="auto" />
             <el-option label="Gemini" value="gemini" />
             <el-option :label="t('common.homeworkParserQwen')" value="qwen" />
+            <el-option label="ChatGPT" value="openai" />
             <el-option :label="t('common.homeworkParserRules')" value="rules" />
           </el-select>
           <div class="hint-inline">{{ t('common.homeworkProviderHint') }}</div>

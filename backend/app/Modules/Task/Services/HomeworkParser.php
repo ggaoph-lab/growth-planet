@@ -55,8 +55,8 @@ class HomeworkParser
             $requested = strtolower(trim((string) $provider));
             $choice = $this->llm->chosenProvider($provider, $familyId);
             $note = null;
-            if (in_array($choice, ['gemini', 'qwen'], true)) {
-                $note = in_array($requested, ['gemini', 'qwen'], true)
+            if (in_array($choice, ['gemini', 'qwen', 'openai'], true)) {
+                $note = in_array($requested, ['gemini', 'qwen', 'openai'], true)
                     ? '所选解析引擎未配置密钥，已使用规则解析，请仔细核对'
                     : '默认解析引擎未配置密钥，已使用规则解析，请仔细核对';
             }
@@ -84,7 +84,7 @@ class HomeworkParser
             return $this->parseWithRules($text, $todayDate, $familyId, '连接超时，已使用规则解析，请仔细核对');
         }
 
-        $label = $primary['client']->name() === 'qwen' ? '千问' : 'Gemini';
+        $label = $this->providerLabel($primary['client']->name());
 
         return $this->parseWithRules($text, $todayDate, $familyId, $label.' 解析失败，已使用规则解析，请仔细核对');
     }
@@ -95,13 +95,22 @@ class HomeworkParser
      */
     private function annotateTimeoutFallback(array $result, string $from, string $to): array
     {
-        $fromLabel = $from === 'qwen' ? '千问' : 'Gemini';
-        $toLabel = $to === 'qwen' ? '千问' : 'Gemini';
+        $fromLabel = $this->providerLabel($from);
+        $toLabel = $this->providerLabel($to);
         $extra = $fromLabel.' 连接超时，已改用'.$toLabel;
         $notes = trim((string) ($result['notes'] ?? ''));
         $result['notes'] = mb_substr($notes === '' ? $extra : $notes.' '.$extra, 0, 500);
 
         return $result;
+    }
+
+    private function providerLabel(string $name): string
+    {
+        return match ($name) {
+            'qwen' => '千问',
+            'openai' => 'ChatGPT',
+            default => 'Gemini',
+        };
     }
 
     /**

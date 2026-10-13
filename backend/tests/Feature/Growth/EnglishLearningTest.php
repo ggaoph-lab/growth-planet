@@ -21,7 +21,9 @@ class EnglishLearningTest extends TestCase
         $child = $this->makeChild($family);
         $service = app(EnglishLearningService::class);
         $this->travelTo(CarbonImmutable::parse('2026-10-13 23:30:00', 'Asia/Shanghai'));
-        $this->assertCount(3, $service->plan($child)['items']);
+        $firstPlan = $service->plan($child);
+        $this->assertCount(10, $firstPlan['items']);
+        $this->assertCount(3, array_values(array_filter($firstPlan['items'], fn ($item) => empty($item['probe']))));
         $first = $service->answer($child, 'apple', '苹果');
         $this->assertTrue($first['correct']);
         $this->assertSame(1, $first['coins']);
@@ -52,8 +54,17 @@ class EnglishLearningTest extends TestCase
         $this->assertTrue($service->answer($child, 'apple', 'apple')['correct']);
         $service->answer($child, 'banana', '香蕉');
         $service->answer($child, 'like-apples', '我喜欢苹果。');
-        $this->assertCount(0, $service->plan($child)['items']);
-        $this->assertSame(3, $service->plan($child)['completed']);
+        $after = $service->plan($child);
+        $this->assertSame(3, $after['completed']);
+        $this->assertNotEmpty($after['items']);
+        $this->assertTrue($after['items'][0]['probe']);
+        $probe = $after['items'][0];
+        $wrongOption = collect($probe['options'])->first(fn ($option) => $option !== $probe['meaning']);
+        $probeResult = $service->answer($child, $probe['key'], (string) $wrongOption);
+        $this->assertFalse($probeResult['correct']);
+        $this->assertSame(0, $probeResult['coins']);
+        $this->assertSame(3, $probeResult['plan']['completed']);
+        $this->assertGreaterThan(0, $probeResult['plan']['vocabulary']['estimated_size']);
         $other = $this->makeChild($family, ['nickname' => '另一个孩子']);
         $this->assertSame(0, $service->plan($other)['learned']);
     }
@@ -64,10 +75,10 @@ class EnglishLearningTest extends TestCase
         $child = $this->makeChild($family);
         RewardPolicy::query()->where('family_id', $family->id)->where('code', 'english.practice')->update(['is_active' => false]);
         $service = app(EnglishLearningService::class);
-        foreach (array_slice(config('english_learning.items'), 0, 10) as $item) {
+        foreach (array_slice(config('english_learning.items'), 0, 12) as $item) {
             DB::table('english_learning_progress')->insert(['child_id' => $child->id, 'item_key' => $item['key'], 'stage' => 1, 'introduced_date' => '2026-01-01', 'due_date' => '2026-01-02']);
         }
-        for ($i = 0; $i < 8; $i++) {
+        for ($i = 0; $i < 10; $i++) {
             $card = $service->plan($child)['items'][0];
             $answer = $service->answer($child, $card['key'], $card['text']);
             $this->assertSame(0, $answer['coins']);
@@ -82,7 +93,7 @@ class EnglishLearningTest extends TestCase
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
         [$device, $token] = $this->makeDevice($family, $parent);
-        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/english/learning')->assertOk()->assertJsonCount(3, 'data.items');
+        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/english/learning')->assertOk()->assertJsonCount(10, 'data.items');
         $key = (string) Str::uuid();
         for ($i = 0; $i < 2; $i++) {
             $this->withHeader('Idempotency-Key', $key)->postJson('/api/v1/kid/english/learning/answer', ['key' => 'apple', 'answer' => '苹果'])->assertOk()->assertJsonPath('data.correct', true);

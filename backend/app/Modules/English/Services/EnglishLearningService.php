@@ -13,14 +13,20 @@ use Illuminate\Validation\ValidationException;
 
 class EnglishLearningService
 {
-    public function __construct(private Clock $clock, private RewardGrantService $rewards) {}
+    public const DAILY_LIMIT = 10;
+
+    public function __construct(
+        private Clock $clock,
+        private RewardGrantService $rewards,
+        private EnglishVocabularyService $vocabulary,
+    ) {}
 
     public function plan(ChildProfile $child): array
     {
         $today = $this->clock->today($child->family->timezone)->toDateString();
         $progress = DB::table('english_learning_progress')->where('child_id', $child->id)->get()->keyBy('item_key');
         $completed = $progress->where('completed_date', $today)->count();
-        $remaining = max(0, 8 - $completed);
+        $remaining = max(0, self::DAILY_LIMIT - $completed - $this->vocabulary->answeredToday($child, $today));
         $catalog = collect(config('english_learning.items'))->keyBy('key');
         $due = $progress->filter(fn ($p) => $p->due_date <= $today && $p->completed_date !== $today)
             ->sortBy('due_date');
@@ -36,12 +42,22 @@ class EnglishLearningService
         foreach ($catalog->reject(fn ($item) => $progress->has($item['key']))->take($newLimit) as $item) {
             $items[] = [...$item, 'review' => false, 'stage' => 0];
         }
+        $probeSlots = $remaining - count($items);
+        if ($probeSlots > 0) {
+            $items = [...$items, ...$this->vocabulary->probes(
+                $child,
+                $probeSlots,
+                array_map(fn ($item) => (string) $item['text'], $items),
+                $today,
+            )];
+        }
 
         return [
             'items' => $items, 'completed' => $completed, 'due' => $due->count(),
             'mastered' => $progress->filter(fn ($p) => $p->stage >= 4)->count(),
             'learned' => $progress->count(), 'total' => $catalog->count(),
             'next_review' => $progress->where('due_date', '>', $today)->min('due_date'),
+            'vocabulary' => $this->vocabulary->summary($child),
         ];
     }
 
@@ -57,6 +73,16 @@ class EnglishLearningService
             $today = $this->clock->today($child->family->timezone);
             $date = $today->toDateString();
             $correct = $answer === ($item['review'] ? $item['text'] : $item['meaning']);
+            $this->vocabulary->observe($child, (string) $item['text'], $correct);
+            if (! empty($item['probe'])) {
+                DB::table('english_learning_answers')->insert([
+                    'child_id' => $child->id, 'item_key' => $key, 'business_date' => $date,
+                    'correct' => $correct, 'created_at' => $this->clock->now(),
+                ]);
+
+                return ['correct' => $correct, 'meaning' => $item['meaning'], 'xp' => 0, 'coins' => 0,
+                    'next_review' => $date, 'plan' => $this->plan($child), 'probe' => true];
+            }
             $query = DB::table('english_learning_progress')->where('child_id', $child->id)->where('item_key', $key);
             $old = $query->first();
             $stage = $correct ? min(4, ($old->stage ?? 0) + 1) : 0;
@@ -74,7 +100,7 @@ class EnglishLearningService
             $coins = 0;
             if ($correct) {
                 $policy = RewardPolicy::query()->firstOrCreate(['family_id' => $child->family_id, 'code' => 'english.practice'], [
-                    'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => 8, 'is_active' => true,
+                    'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => self::DAILY_LIMIT, 'is_active' => true,
                 ]);
                 if ($policy->is_active && ! $policy->requires_approval) {
                     $grant = $this->rewards->grant(new RewardIntent(

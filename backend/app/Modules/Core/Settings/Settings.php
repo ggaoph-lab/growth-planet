@@ -69,6 +69,14 @@ class Settings
         DB::table('system_settings')->where('id', $existing->id)->update($payload);
     }
 
+    public function has(string $key, ?int $familyId = null): bool
+    {
+        return DB::table('system_settings')
+            ->where('key', $key)
+            ->where(fn ($q) => $familyId === null ? $q->whereNull('family_id') : $q->where('family_id', $familyId))
+            ->exists();
+    }
+
     public function forget(string $key, ?int $familyId = null): void
     {
         DB::table('system_settings')

@@ -93,13 +93,27 @@ export interface AiProviderStatus {
   configured: boolean
   source: 'family' | 'env' | 'none' | string
   model: string
+  model_customized: boolean
   hint: string | null
+}
+
+export interface AiModelChoice {
+  id: string
+  label: string
+}
+
+export interface AiModelList {
+  provider: string
+  models: AiModelChoice[]
+  latest: string | null
+  error: string | null
 }
 
 export interface AiSettings {
   provider: string
   gemini: AiProviderStatus
   qwen: AiProviderStatus
+  openai: AiProviderStatus
 }
 
 export interface KidLoginProfile {
@@ -208,7 +222,7 @@ export interface HomeworkItemPreview {
   suggested_xp: number
 }
 
-export type HomeworkParserKind = 'gemini' | 'qwen' | 'rules'
+export type HomeworkParserKind = 'gemini' | 'qwen' | 'openai' | 'rules'
 
 export interface HomeworkParseResult {
   parser: HomeworkParserKind | string

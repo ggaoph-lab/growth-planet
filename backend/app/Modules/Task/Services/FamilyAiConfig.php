@@ -19,10 +19,15 @@ class FamilyAiConfig
      *   gemini_model: string,
      *   qwen_api_key: string,
      *   qwen_model: string,
+     *   openai_api_key: string,
+     *   openai_model: string,
+     *   openai_base_url: string,
      *   gemini_configured: bool,
      *   qwen_configured: bool,
+     *   openai_configured: bool,
      *   gemini_source: 'family'|'env'|'none',
-     *   qwen_source: 'family'|'env'|'none'
+     *   qwen_source: 'family'|'env'|'none',
+     *   openai_source: 'family'|'env'|'none'
      * }
      */
     public function resolve(?int $familyId): array
@@ -41,6 +46,11 @@ class FamilyAiConfig
             'ai.qwen_api_key',
             (string) config('services.qwen.api_key', ''),
         );
+        [$openaiKey, $openaiSource] = $this->resolveSecret(
+            $familyId,
+            'ai.openai_api_key',
+            (string) config('services.openai.api_key', ''),
+        );
 
         $geminiModel = $familyId !== null
             ? (string) $this->settings->get('ai.gemini_model', $familyId)
@@ -48,12 +58,18 @@ class FamilyAiConfig
         $qwenModel = $familyId !== null
             ? (string) $this->settings->get('ai.qwen_model', $familyId)
             : (string) config('services.qwen.model', 'qwen-turbo');
+        $openaiModel = $familyId !== null
+            ? (string) $this->settings->get('ai.openai_model', $familyId)
+            : (string) config('services.openai.model', 'gpt-4o-mini');
 
         if ($geminiModel === '') {
             $geminiModel = (string) config('services.gemini.model', 'gemini-2.5-flash');
         }
         if ($qwenModel === '') {
             $qwenModel = (string) config('services.qwen.model', 'qwen-turbo');
+        }
+        if ($openaiModel === '') {
+            $openaiModel = (string) config('services.openai.model', 'gpt-4o-mini');
         }
 
         return [
@@ -62,10 +78,15 @@ class FamilyAiConfig
             'gemini_model' => $geminiModel,
             'qwen_api_key' => $qwenKey,
             'qwen_model' => $qwenModel,
+            'openai_api_key' => $openaiKey,
+            'openai_model' => $openaiModel,
+            'openai_base_url' => (string) config('services.openai.base_url', 'https://api.openai.com/v1'),
             'gemini_configured' => $geminiKey !== '',
             'qwen_configured' => $qwenKey !== '',
+            'openai_configured' => $openaiKey !== '',
             'gemini_source' => $geminiSource,
             'qwen_source' => $qwenSource,
+            'openai_source' => $openaiSource,
         ];
     }
 
@@ -84,13 +105,22 @@ class FamilyAiConfig
                 'configured' => $cfg['gemini_configured'],
                 'source' => $cfg['gemini_source'],
                 'model' => $cfg['gemini_model'],
+                'model_customized' => $familyId !== null && $this->settings->has('ai.gemini_model', $familyId),
                 'hint' => $this->maskHint($cfg['gemini_api_key']),
             ],
             'qwen' => [
                 'configured' => $cfg['qwen_configured'],
                 'source' => $cfg['qwen_source'],
                 'model' => $cfg['qwen_model'],
+                'model_customized' => $familyId !== null && $this->settings->has('ai.qwen_model', $familyId),
                 'hint' => $this->maskHint($cfg['qwen_api_key']),
+            ],
+            'openai' => [
+                'configured' => $cfg['openai_configured'],
+                'source' => $cfg['openai_source'],
+                'model' => $cfg['openai_model'],
+                'model_customized' => $familyId !== null && $this->settings->has('ai.openai_model', $familyId),
+                'hint' => $this->maskHint($cfg['openai_api_key']),
             ],
         ];
     }
