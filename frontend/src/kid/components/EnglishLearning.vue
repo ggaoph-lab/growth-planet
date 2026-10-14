@@ -36,6 +36,8 @@ type Plan = {
   next_review: string | null
   vocabulary?: { estimated_size: number; band: number; effective_band?: number; learning_words?: string[] }
   ai_status?: 'ok' | 'failed' | 'off'
+  /** Sanitized backend code when ai_status is failed (e.g. http_429, timeout). */
+  ai_error?: string | null
 }
 type Result = { correct: boolean; meaning: string; xp: number; coins: number; next_review: string; plan: Plan; coach_tip?: string; probe?: boolean; challenge?: boolean }
 type SpeakAttempt = {
@@ -74,9 +76,42 @@ const audioSupported = canSpeak()
 const SPELL_SKIP = new Set(['a', 'an', 'the', 'is', 'am', 'are', 'was', 'were', 'be', 'to', 'of', 'and', 'or', 'in', 'on', 'at', 'my', 'your', 'i', 'you', 'we', 'he', 'she', 'it', 'they', 'this', 'that', 'do', 'does', 'did', 'can', 'will'])
 const finished = computed(() => plan.value && !current.value)
 const aiConnected = computed(() => plan.value?.ai_status === 'ok')
+function aiErrorDetail(code: string | null | undefined): string {
+  switch (code) {
+    case 'no_key':
+      return label('未配置密钥或引擎不可用', 'API key missing or engine unavailable')
+    case 'timeout':
+      return label('连接超时，稍后再试', 'Connection timed out — try again later')
+    case 'unreachable':
+      return label('网络连不上 AI 服务', 'Could not reach the AI service')
+    case 'http_401':
+      return label('密钥无效或模型无权访问', 'Invalid key or model not allowed')
+    case 'http_429':
+      return label('请求过多，请稍后再试', 'Too many requests — try again later')
+    case 'http_4xx':
+      return label('模型不可用或请求被拒绝', 'Model unavailable or request rejected')
+    case 'http_5xx':
+      return label('AI 服务暂时异常', 'AI service temporarily unavailable')
+    case 'empty':
+      return label('AI 返回空内容，已用本地题', 'AI returned empty content — using local cards')
+    case 'unavailable':
+      return label('今天暂未连上，稍后会自动重试', 'Not connected today — will retry automatically')
+    default:
+      return code ? label(`原因：${code}`, `Reason: ${code}`) : ''
+  }
+}
 const aiStatusTitle = computed(() => {
-  if (plan.value?.ai_status === 'ok') return label('AI 已接入', 'AI connected')
-  if (plan.value?.ai_status === 'failed') return label('AI 接入失败，已用本地内容', 'AI unavailable — using local cards')
+  if (!plan.value) {
+    return busy.value
+      ? label('正在连接…', 'Connecting…')
+      : label('准备中…', 'Getting ready…')
+  }
+  if (plan.value.ai_status === 'ok') return label('AI 已接入', 'AI connected')
+  if (plan.value.ai_status === 'failed') {
+    const detail = aiErrorDetail(plan.value.ai_error)
+    const base = label('AI 接入失败，已用本地内容', 'AI unavailable — using local cards')
+    return detail ? `${base} · ${detail}` : base
+  }
   return label('未选择 AI 引擎', 'No AI engine selected')
 })
 
@@ -239,8 +274,8 @@ function choose(item?: Item) {
   if (item?.meaning && !item.challenge) warmPhrases([item.meaning], 'zh-CN')
   const chineseChoices = choices.value.filter(isChineseText)
   if (chineseChoices.length) warmPhrases(chineseChoices, 'zh-CN')
-  // Auto-read English when it is on screen; skip review recall and spelling so the answer is not given away.
-  if (item?.text && audioSupported && !item.review && !isSpellingCard(item)) void playCurrentText()
+  // Auto-read English for normal cards and spelling (dictation). Skip review recall so answers stay hidden.
+  if (item?.text && audioSupported && !item.review) void playCurrentText()
 }
 async function load() {
   busy.value = true

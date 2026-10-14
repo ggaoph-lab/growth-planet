@@ -3,6 +3,7 @@
 namespace App\Modules\Task\Services;
 
 use App\Modules\Task\Contracts\HomeworkLlmClient;
+use App\Modules\Task\Support\LlmFailureTracker;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +28,8 @@ class GeminiClient implements HomeworkLlmClient
     {
         $apiKey = $this->apiKey($config);
         if ($apiKey === '') {
+            LlmFailureTracker::set('no_key');
+
             return null;
         }
 
@@ -80,12 +83,14 @@ class GeminiClient implements HomeworkLlmClient
                 ->post($url, $payload);
         } catch (ConnectionException $e) {
             HomeworkLlmTimeoutException::throwIfTimeout($this->name(), $e);
+            LlmFailureTracker::set('unreachable');
             Log::warning('gemini.connection_failed', ['error' => $e->getMessage()]);
 
             return null;
         }
 
         if (! $response->successful()) {
+            LlmFailureTracker::set(LlmFailureTracker::fromHttpStatus($response->status()));
             Log::warning('gemini.chat_failed', [
                 'status' => $response->status(),
                 'body' => mb_substr($response->body(), 0, 500),
@@ -105,6 +110,7 @@ class GeminiClient implements HomeworkLlmClient
         }
 
         if (trim($content) === '') {
+            LlmFailureTracker::set('empty');
             Log::warning('gemini.empty_content', ['json' => $response->json()]);
 
             return null;

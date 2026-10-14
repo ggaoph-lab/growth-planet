@@ -3,6 +3,7 @@
 namespace App\Modules\Task\Services;
 
 use App\Modules\Task\Contracts\HomeworkLlmClient;
+use App\Modules\Task\Support\LlmFailureTracker;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +28,8 @@ class QwenClient implements HomeworkLlmClient
     {
         $apiKey = $this->apiKey($config);
         if ($apiKey === '') {
+            LlmFailureTracker::set('no_key');
+
             return null;
         }
 
@@ -46,12 +49,14 @@ class QwenClient implements HomeworkLlmClient
                 ]);
         } catch (ConnectionException $e) {
             HomeworkLlmTimeoutException::throwIfTimeout($this->name(), $e);
+            LlmFailureTracker::set('unreachable');
             Log::warning('qwen.connection_failed', ['error' => $e->getMessage()]);
 
             return null;
         }
 
         if (! $response->successful()) {
+            LlmFailureTracker::set(LlmFailureTracker::fromHttpStatus($response->status()));
             Log::warning('qwen.chat_failed', [
                 'status' => $response->status(),
                 'body' => mb_substr($response->body(), 0, 500),
@@ -62,6 +67,7 @@ class QwenClient implements HomeworkLlmClient
 
         $content = data_get($response->json(), 'choices.0.message.content');
         if (! is_string($content) || trim($content) === '') {
+            LlmFailureTracker::set('empty');
             Log::warning('qwen.empty_content', ['json' => $response->json()]);
 
             return null;

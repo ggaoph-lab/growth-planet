@@ -44,6 +44,13 @@ return [
         'provider' => env('HOMEWORK_LLM_PROVIDER', 'auto'),
     ],
 
+    // English Lab kid paths (plan / coach tips / probes). Keep short so a slow engine cannot stall the UI.
+    'english_lab' => [
+        'timeout' => (int) env('ENGLISH_LAB_TIMEOUT', 12),
+        // Re-attempt the same engine after a local fallback this many minutes (or sooner if model/provider changes).
+        'retry_after_minutes' => (int) env('ENGLISH_LAB_RETRY_AFTER_MINUTES', 10),
+    ],
+
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
         'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),

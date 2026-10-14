@@ -88,6 +88,19 @@ describe('English learning', () => {
     wrapper.unmount()
   })
 
+  it('auto-reads English on spelling cards', async () => {
+    const spell = {
+      key: 'spell:garden', theme: '拼写填空', kind: 'spelling', text: 'garden', meaning: '花园',
+      emoji: '✍️', options: [], review: false, stage: 0, spelling: true, blank_hint: 'g _ r _ e n',
+    }
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [spell] })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('根据意思，把单词拼写出来')
+    expect(speakPhrase).toHaveBeenCalledWith('garden', 'en-US')
+    wrapper.unmount()
+  })
+
   it('plays Chinese meaning after a miss on the study step', async () => {
     vi.mocked(api.postIdempotent).mockResolvedValue({
       correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13',
@@ -257,6 +270,33 @@ describe('English learning', () => {
     expect(wrapper.find('h3').text()).toContain('apple')
     expect(wrapper.find('.word-emoji').exists()).toBe(true)
     expect(wrapper.find('.word-emoji').text()).toContain('🍎')
+    wrapper.unmount()
+  })
+
+  it('shows connecting status while the mission plan is still loading', async () => {
+    let release!: () => void
+    const pending = new Promise<typeof plan>(resolve => { release = () => resolve(plan) })
+    vi.mocked(api.get).mockImplementationOnce(() => pending)
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在准备探索任务')
+    expect(wrapper.text()).toContain('正在连接')
+    expect(wrapper.text()).not.toContain('未选择 AI 引擎')
+    release()
+    await flushPromises()
+    expect(wrapper.find('.ai-dot').classes()).toContain('on')
+    expect(wrapper.text()).toContain('AI 已接入')
+    wrapper.unmount()
+  })
+
+  it('shows a sanitized AI failure reason on the status chip', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...plan, ai_status: 'failed', ai_error: 'http_429' })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.find('.ai-dot').classes()).toContain('off')
+    expect(wrapper.text()).toContain('AI 接入失败，已用本地内容')
+    expect(wrapper.text()).toContain('请求过多，请稍后再试')
+    expect(wrapper.find('.ai-status-chip').attributes('title')).toContain('请求过多')
     wrapper.unmount()
   })
 

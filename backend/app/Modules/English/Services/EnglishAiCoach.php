@@ -7,6 +7,8 @@ use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Task\Services\FamilyAiConfig;
 use App\Modules\Task\Services\HomeworkLlmRouter;
 use App\Modules\Task\Services\HomeworkLlmTimeoutException;
+use App\Modules\Task\Support\LlmFailureTracker;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -27,6 +29,23 @@ class EnglishAiCoach
         $choice = strtolower(trim((string) ($cfg['provider'] ?? 'auto')));
 
         return in_array($choice, ['gemini', 'qwen', 'openai'], true) ? $choice : null;
+    }
+
+    public function selectedModel(ChildProfile $child): ?string
+    {
+        $provider = $this->selectedProvider($child);
+        if ($provider === null) {
+            return null;
+        }
+
+        $cfg = $this->ai->resolve((int) $child->family_id);
+
+        return match ($provider) {
+            'gemini' => trim((string) ($cfg['gemini_model'] ?? '')) ?: null,
+            'qwen' => trim((string) ($cfg['qwen_model'] ?? '')) ?: null,
+            'openai' => trim((string) ($cfg['openai_model'] ?? '')) ?: null,
+            default => null,
+        };
     }
 
     /**
@@ -56,30 +75,78 @@ class EnglishAiCoach
     }
 
     /**
+     * Sanitized failure code for the kid UI when ai_status is failed (null when ok/off).
+     */
+    public function failureHint(ChildProfile $child, string $date): ?string
+    {
+        if ($this->connectionStatus($child, $date) !== 'failed') {
+            return null;
+        }
+
+        $rows = DB::table('english_ai_records')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->where('status', 'local')
+            ->orderByDesc('id')
+            ->get(['profile_snapshot']);
+
+        foreach ($rows as $row) {
+            $snap = json_decode((string) ($row->profile_snapshot ?? ''), true);
+            $error = is_array($snap) ? trim((string) ($snap['error'] ?? '')) : '';
+            if ($error !== '') {
+                return $error;
+            }
+        }
+
+        return 'unavailable';
+    }
+
+    /**
      * @param  list<array{role: string, content: string}>  $messages
      * @return array{content: string, provider: string, model: string}|null
      */
     public function chatJson(ChildProfile $child, array $messages): ?array
     {
+        LlmFailureTracker::clear();
+
         $choice = $this->selectedProvider($child);
         if ($choice === null) {
+            LlmFailureTracker::set('no_key');
+
             return null;
         }
 
         [$primary] = $this->llm->attemptsFor($choice, (int) $child->family_id);
         if ($primary === null) {
+            LlmFailureTracker::set('no_key');
+
             return null;
         }
 
+        // Kid plan/answer paths must fail soft quickly; homework can keep the longer default.
+        $config = $primary['config'];
+        $config['timeout'] = max(5, min(
+            (int) ($config['timeout'] ?? config('services.'.$choice.'.timeout', 30)),
+            (int) config('services.english_lab.timeout', 12),
+        ));
+
         try {
-            $result = $primary['client']->chatJson($messages, $primary['config']);
+            $result = $primary['client']->chatJson($messages, $config);
         } catch (HomeworkLlmTimeoutException) {
+            LlmFailureTracker::set('timeout');
+
             return null;
         }
 
         if ($result === null || trim((string) ($result['content'] ?? '')) === '') {
+            if (LlmFailureTracker::peek() === null) {
+                LlmFailureTracker::set('empty');
+            }
+
             return null;
         }
+
+        LlmFailureTracker::clear();
 
         return [
             'content' => (string) $result['content'],
@@ -102,6 +169,18 @@ class EnglishAiCoach
         ?string $provider = null,
         ?string $model = null,
     ): object {
+        if ($status === 'local') {
+            $error = LlmFailureTracker::pull();
+            if ($error !== null) {
+                $snapshot['error'] = $error;
+            }
+            if ($model === null || trim((string) $model) === '') {
+                $model = $this->selectedModel($child);
+            }
+        } else {
+            LlmFailureTracker::clear();
+        }
+
         $id = DB::table('english_ai_records')->insertGetId([
             'child_id' => $child->id,
             'provider' => $provider,
@@ -295,7 +374,8 @@ class EnglishAiCoach
     }
 
     /**
-     * Retry a local fallback only after the family picks a different engine (avoids hammering a dead key).
+     * Retry a local fallback when the family changes engine/model, or after a cooldown.
+     * Avoids hammering a dead key on every page open.
      */
     public function shouldRetryLocal(ChildProfile $child, object $record): bool
     {
@@ -308,7 +388,27 @@ class EnglishAiCoach
             return false;
         }
 
-        return $selected !== strtolower(trim((string) ($record->provider ?? '')));
+        if ($selected !== strtolower(trim((string) ($record->provider ?? '')))) {
+            return true;
+        }
+
+        $selectedModel = strtolower(trim((string) ($this->selectedModel($child) ?? '')));
+        $recordModel = strtolower(trim((string) ($record->model ?? '')));
+        if ($selectedModel !== '' && $recordModel !== '' && $selectedModel !== $recordModel) {
+            return true;
+        }
+
+        $created = $record->created_at ?? null;
+        if ($created === null) {
+            return false;
+        }
+
+        $minutes = max(1, (int) config('services.english_lab.retry_after_minutes', 10));
+        $createdAt = $created instanceof CarbonImmutable
+            ? $created
+            : CarbonImmutable::parse((string) $created);
+
+        return $createdAt->lte($this->clock->now()->subMinutes($minutes));
     }
 
     /**

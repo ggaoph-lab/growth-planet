@@ -137,52 +137,76 @@ class EnglishLearningService
             'next_review' => $progress->where('due_date', '>', $today)->min('due_date'),
             'vocabulary' => $this->vocabulary->summary($child),
             'ai_status' => $this->coach->connectionStatus($child, $today),
+            'ai_error' => $this->coach->failureHint($child, $today),
         ];
     }
 
     public function answer(ChildProfile $child, string $key, string $answer): array
     {
-        return DB::transaction(function () use ($child, $key, $answer) {
+        // Resolve the card (may call AI) before opening a DB transaction so we never hold
+        // locks across HTTP. Concurrent GET /learning was stuck behind answer()+AI.
+        $item = collect($this->plan($child)['items'])->firstWhere('key', $key);
+        $isSpelling = ! empty($item['spelling']) || (($item['kind'] ?? '') === 'spelling');
+        if (! $item) {
+            throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+        }
+        if ($isSpelling) {
+            $normalized = strtolower(trim($answer));
+            if ($normalized === '' || mb_strlen($normalized) > 40) {
+                throw ValidationException::withMessages(['answer' => '请拼写完整的英文单词。']);
+            }
+        } elseif (! in_array($answer, $item['options'], true)) {
+            throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+        }
+        $today = $this->clock->today($child->family->timezone);
+        $date = $today->toDateString();
+        $isChallenge = ! empty($item['challenge']);
+        $isProbe = ! empty($item['probe']);
+        if ($isSpelling) {
+            $correct = strtolower(trim($answer)) === strtolower((string) ($item['answer'] ?? $item['text'] ?? ''));
+        } elseif ($isChallenge) {
+            $correct = $answer === (string) ($item['correct_answer'] ?? $item['answer'] ?? '');
+        } else {
+            $correct = $answer === ($item['review'] ? $item['text'] : $item['meaning']);
+        }
+
+        $saved = DB::transaction(function () use ($child, $key, $item, $correct, $today, $date, $isSpelling, $isChallenge, $isProbe) {
             // Serialize answers per child, including new progress rows and reward caps.
             ChildProfile::query()->whereKey($child->id)->lockForUpdate()->firstOrFail();
-            $item = collect($this->plan($child)['items'])->firstWhere('key', $key);
-            $isSpelling = ! empty($item['spelling']) || (($item['kind'] ?? '') === 'spelling');
-            if (! $item) {
-                throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
-            }
-            if ($isSpelling) {
-                $normalized = strtolower(trim($answer));
-                if ($normalized === '' || mb_strlen($normalized) > 40) {
-                    throw ValidationException::withMessages(['answer' => '请拼写完整的英文单词。']);
-                }
-            } elseif (! in_array($answer, $item['options'], true)) {
-                throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
-            }
-            $today = $this->clock->today($child->family->timezone);
-            $date = $today->toDateString();
-            $isChallenge = ! empty($item['challenge']);
-            $isProbe = ! empty($item['probe']);
-            if ($isSpelling) {
-                $correct = strtolower(trim($answer)) === strtolower((string) ($item['answer'] ?? $item['text'] ?? ''));
-            } elseif ($isChallenge) {
-                $correct = $answer === (string) ($item['correct_answer'] ?? $item['answer'] ?? '');
-            } else {
-                $correct = $answer === ($item['review'] ? $item['text'] : $item['meaning']);
-            }
-            $this->vocabulary->observe($child, (string) $item['text'], $correct);
 
-            $coachTip = $correct
-                ? $this->coach->encouragement()
-                : $this->coach->tipFor(
-                    $child,
-                    $key,
-                    $date,
-                    (string) $item['text'],
-                    (string) ($item['meaning'] ?? $item['question'] ?? ''),
-                );
-            if (! $correct && $isChallenge && ! empty($item['coach_tip'])) {
-                $coachTip = (string) $item['coach_tip'];
+            // Cheap re-check: the outer plan may be stale if another answer finished first.
+            // Spelling first — those cards may also carry probe=true but still allow retries until correct.
+            if ($isSpelling) {
+                $alreadyCorrect = DB::table('english_learning_answers')
+                    ->where('child_id', $child->id)
+                    ->where('business_date', $date)
+                    ->where('item_key', $key)
+                    ->where('correct', true)
+                    ->exists();
+                if ($alreadyCorrect) {
+                    throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+                }
+            } elseif ($isProbe || $isChallenge) {
+                $already = DB::table('english_learning_answers')
+                    ->where('child_id', $child->id)
+                    ->where('business_date', $date)
+                    ->where('item_key', $key)
+                    ->exists();
+                if ($already) {
+                    throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+                }
+            } else {
+                $done = DB::table('english_learning_progress')
+                    ->where('child_id', $child->id)
+                    ->where('item_key', $key)
+                    ->where('completed_date', $date)
+                    ->exists();
+                if ($done) {
+                    throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
+                }
             }
+
+            $this->vocabulary->observe($child, (string) $item['text'], $correct);
 
             if ($isProbe || $isChallenge) {
                 DB::table('english_learning_answers')->insert([
@@ -196,16 +220,13 @@ class EnglishLearningService
                     'xp' => 0,
                     'coins' => 0,
                     'next_review' => $date,
-                    'plan' => $this->plan($child),
                     'probe' => $isProbe,
                     'challenge' => $isChallenge,
                     'spelling' => $isSpelling,
-                    'coach_tip' => $coachTip,
                 ];
             }
 
-            $query = DB::table('english_learning_progress')->where('child_id', $child->id)->where('item_key', $key);
-            $old = $query->first();
+            $old = DB::table('english_learning_progress')->where('child_id', $child->id)->where('item_key', $key)->first();
             $stage = $correct ? min(4, ($old->stage ?? 0) + 1) : 0;
             $days = $correct ? [1 => 1, 2 => 3, 3 => 7, 4 => 14][$stage] : 0;
             DB::table('english_learning_progress')->updateOrInsert(['child_id' => $child->id, 'item_key' => $key], [
@@ -240,10 +261,28 @@ class EnglishLearningService
                 'xp' => $xp,
                 'coins' => $coins,
                 'next_review' => $today->addDays($days)->toDateString(),
-                'plan' => $this->plan($child),
-                'coach_tip' => $coachTip,
             ];
         });
+
+        // Coach tips may call the LLM — keep them outside the answer transaction.
+        $coachTip = $saved['correct']
+            ? $this->coach->encouragement()
+            : $this->coach->tipFor(
+                $child,
+                $key,
+                $date,
+                (string) $item['text'],
+                (string) ($item['meaning'] ?? $item['question'] ?? ''),
+            );
+        if (! $saved['correct'] && $isChallenge && ! empty($item['coach_tip'])) {
+            $coachTip = (string) $item['coach_tip'];
+        }
+
+        return [
+            ...$saved,
+            'plan' => $this->plan($child),
+            'coach_tip' => $coachTip,
+        ];
     }
 
     /**

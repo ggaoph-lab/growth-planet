@@ -98,12 +98,75 @@ class EnglishLabCoachTest extends TestCase
         $child = $this->makeChild($family);
         $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
 
-        $local = (object) ['status' => 'local', 'provider' => 'openai'];
+        $local = (object) ['status' => 'local', 'provider' => 'openai', 'model' => 'gpt-4o-mini', 'created_at' => now()];
         $this->assertFalse($coach->shouldRetryLocal($child, $local));
 
         app(\App\Modules\Core\Settings\Settings::class)->set('ai.provider', 'qwen', (int) $family->id, null);
         $this->assertTrue($coach->shouldRetryLocal($child, $local));
-        $this->assertFalse($coach->shouldRetryLocal($child, (object) ['status' => 'ai', 'provider' => 'openai']));
+        $this->assertFalse($coach->shouldRetryLocal($child, (object) ['status' => 'ai', 'provider' => 'openai', 'model' => 'gpt-4o-mini', 'created_at' => now()]));
+    }
+
+    public function test_local_ai_record_retries_after_model_change_or_cooldown(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $settings = app(\App\Modules\Core\Settings\Settings::class);
+        $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
+        $this->travelTo(CarbonImmutable::parse('2026-10-14 10:00:00', 'Asia/Shanghai'));
+
+        $settings->set('ai.provider', 'gemini', (int) $family->id, null);
+        $settings->set('ai.gemini_model', 'gemini-2.5-flash', (int) $family->id, null);
+
+        $freshLocal = (object) [
+            'status' => 'local',
+            'provider' => 'gemini',
+            'model' => 'gemini-2.5-flash',
+            'created_at' => '2026-10-14 09:55:00',
+        ];
+        $this->assertFalse($coach->shouldRetryLocal($child, $freshLocal));
+
+        $settings->set('ai.gemini_model', 'gemini-2.5-flash-lite', (int) $family->id, null);
+        $this->assertTrue($coach->shouldRetryLocal($child, $freshLocal));
+
+        $settings->set('ai.gemini_model', 'gemini-2.5-flash', (int) $family->id, null);
+        $staleLocal = (object) [
+            'status' => 'local',
+            'provider' => 'gemini',
+            'model' => 'gemini-2.5-flash',
+            'created_at' => app(\App\Modules\Core\Support\Clock::class)->now()->subMinutes(15),
+        ];
+        $this->assertTrue($coach->shouldRetryLocal($child, $staleLocal));
+    }
+
+    public function test_failure_hint_and_plan_expose_sanitized_ai_error(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $settings = app(\App\Modules\Core\Settings\Settings::class);
+        $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
+        $settings->set('ai.provider', 'gemini', (int) $family->id, null);
+        $this->travelTo(CarbonImmutable::parse('2026-10-14 10:00:00', 'Asia/Shanghai'));
+
+        DB::table('english_ai_records')->insert([
+            'child_id' => $child->id,
+            'provider' => 'gemini',
+            'model' => 'gemini-2.5-flash',
+            'purpose' => 'session_plan',
+            'business_date' => '2026-10-14',
+            'profile_snapshot' => json_encode(['error' => 'http_429'], JSON_UNESCAPED_UNICODE),
+            'items' => json_encode(['order' => ['apple']], JSON_UNESCAPED_UNICODE),
+            'status' => 'local',
+            'created_at' => '2026-10-14 09:55:00',
+        ]);
+
+        $this->assertSame('failed', $coach->connectionStatus($child, '2026-10-14'));
+        $this->assertSame('http_429', $coach->failureHint($child, '2026-10-14'));
+
+        config(['services.gemini.api_key' => '']);
+        $plan = app(EnglishLearningService::class)->plan($child);
+        $this->assertSame('failed', $plan['ai_status']);
+        $this->assertIsString($plan['ai_error']);
+        $this->assertNotSame('', $plan['ai_error']);
     }
 
     public function test_published_grammar_enters_kid_queue_without_coins(): void
