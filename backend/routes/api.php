@@ -27,6 +27,7 @@ require base_path('app/Modules/Task/routes.php');
 require base_path('app/Modules/Habit/routes.php');
 require base_path('app/Modules/Shop/routes.php');
 require base_path('app/Modules/Item/routes.php');
+require base_path('app/Modules/Schedule/routes.php');
 require base_path('app/Modules/Exploration/routes.php');
 require base_path('app/Modules/Food/routes.php');
 require base_path('app/Modules/Movie/routes.php');

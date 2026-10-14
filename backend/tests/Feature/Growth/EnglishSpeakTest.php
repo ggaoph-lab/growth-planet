@@ -29,9 +29,15 @@ class EnglishSpeakTest extends TestCase
         $speak = app(EnglishSpeakService::class);
         $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
 
-        $learning->answer($child, 'apple', '苹果');
-        $learning->answer($child, 'banana', '香蕉');
-        $learning->answer($child, 'like-apples', '我喜欢苹果。');
+        foreach (['apple', 'banana', 'like-apples'] as $key) {
+            DB::table('english_learning_answers')->insert([
+                'child_id' => $child->id,
+                'item_key' => $key,
+                'business_date' => '2026-10-13',
+                'correct' => true,
+                'created_at' => now(),
+            ]);
+        }
 
         $prompt = $speak->prompt($child);
         $this->assertTrue($prompt['available']);
@@ -77,9 +83,15 @@ class EnglishSpeakTest extends TestCase
         $learning = app(EnglishLearningService::class);
         $speak = app(EnglishSpeakService::class);
         $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
-        $learning->answer($child, 'apple', '苹果');
-        $learning->answer($child, 'banana', '香蕉');
-        $learning->answer($child, 'like-apples', '我喜欢苹果。');
+        foreach (['apple', 'banana', 'like-apples'] as $key) {
+            DB::table('english_learning_answers')->insert([
+                'child_id' => $child->id,
+                'item_key' => $key,
+                'business_date' => '2026-10-13',
+                'correct' => true,
+                'created_at' => now(),
+            ]);
+        }
 
         // Chrome often sniffs MediaRecorder audio as video/webm.
         $file = UploadedFile::fake()->create('speak.webm', 4, 'video/webm');

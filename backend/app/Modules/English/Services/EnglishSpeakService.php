@@ -42,6 +42,7 @@ class EnglishSpeakService
         private readonly Clock $clock,
         private readonly EnglishAiCoach $coach,
         private readonly EnglishSpeakStt $stt,
+        private readonly EnglishVocabularyService $vocabulary,
     ) {}
 
     /**
@@ -266,6 +267,17 @@ class EnglishSpeakService
                     } else {
                         $words[] = $probe;
                     }
+                }
+            }
+            if (str_starts_with((string) $key, 'word:')) {
+                $wordCard = $this->vocabulary->resolveWordCard($child, (string) $key);
+                if ($wordCard !== null) {
+                    $words[] = [
+                        'key' => (string) $wordCard['key'],
+                        'text' => (string) $wordCard['text'],
+                        'meaning' => (string) $wordCard['meaning'],
+                        'kind' => 'word',
+                    ];
                 }
             }
         }

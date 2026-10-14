@@ -355,4 +355,190 @@ class ParentTaskApiTest extends TestCase
             'schedules' => [['frequency' => 'once']],
         ])->assertStatus(422);
     }
+
+    public function test_weekly_schedule_requires_weekdays(): void
+    {
+        ['parent' => $parent] = $this->makeFamily('mama_weekly_req');
+
+        $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '缺星期',
+            'kind' => 'standard',
+            'start_date' => '2026-10-12',
+            'end_date' => '2026-12-31',
+            'schedules' => [['frequency' => 'weekly', 'weekdays' => []]],
+        ])->assertStatus(422);
+    }
+
+    public function test_multi_weekday_weekly_task_generates_on_each_selected_day(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily('mama_multi_wd');
+        $child = $this->makeChild($family);
+
+        $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '周一三练琴',
+            'kind' => 'standard',
+            'start_date' => '2026-10-12',
+            'end_date' => '2026-12-31',
+            'child_id' => $child->id,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1, 3],
+                'due_time' => '16:00',
+            ]],
+        ])->assertCreated()
+            ->assertJsonPath('data.schedules.0.weekdays', [1, 3]);
+
+        $generator = app(TaskInstanceGenerator::class);
+        // 2026-10-12 Mon, 2026-10-13 Tue, 2026-10-14 Wed
+        $this->assertCount(1, $generator->ensureForChildOnDate($family, $child, '2026-10-12'));
+        $this->assertCount(0, $generator->ensureForChildOnDate($family, $child, '2026-10-13'));
+        $this->assertCount(1, $generator->ensureForChildOnDate($family, $child, '2026-10-14'));
+    }
+
+    public function test_edit_scope_this_day_patches_only_that_pending_instance(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily('mama_this_day');
+        $child = $this->makeChild($family);
+
+        $created = $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '阅读',
+            'kind' => 'standard',
+            'start_date' => '2026-10-06',
+            'end_date' => '2026-12-31',
+            'child_id' => $child->id,
+            'xp_reward' => 5,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1],
+                'due_time' => '15:00',
+            ]],
+        ])->assertCreated()->json('data');
+
+        $generator = app(TaskInstanceGenerator::class);
+        $generator->ensureForChildOnDate($family, $child, '2026-10-12'); // Mon
+        $generator->ensureForChildOnDate($family, $child, '2026-10-19'); // next Mon
+
+        $this->actingAsParent($parent)->putJson('/api/v1/parent/tasks/'.$created['id'], [
+            'title' => '加长阅读',
+            'xp_reward' => 20,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1],
+                'due_time' => '17:30',
+            ]],
+            'edit_scope' => 'this_day',
+            'scope_date' => '2026-10-12',
+        ])->assertOk()
+            ->assertJsonPath('data.title', '阅读');
+
+        $first = TaskInstance::query()
+            ->where('task_id', $created['id'])
+            ->whereDate('task_date', '2026-10-12')
+            ->first();
+        $second = TaskInstance::query()
+            ->where('task_id', $created['id'])
+            ->whereDate('task_date', '2026-10-19')
+            ->first();
+
+        $this->assertNotNull($first);
+        $this->assertNotNull($second);
+        $this->assertSame('加长阅读', $first->snapshot['title']);
+        $this->assertSame(20, $first->snapshot['xp_reward']);
+        $this->assertTrue(str_starts_with((string) $first->snapshot['due_time'], '17:30'));
+        $this->assertSame('阅读', $second->snapshot['title']);
+        $this->assertSame(5, $second->snapshot['xp_reward']);
+    }
+
+    public function test_edit_scope_weekday_forward_updates_template_and_same_weekday_pending(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily('mama_wd_fwd');
+        $child = $this->makeChild($family);
+
+        $created = $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '作业',
+            'kind' => 'standard',
+            'start_date' => '2026-10-05',
+            'end_date' => '2026-12-31',
+            'child_id' => $child->id,
+            'xp_reward' => 4,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1, 3],
+                'due_time' => '14:00',
+            ]],
+        ])->assertCreated()->json('data');
+
+        $generator = app(TaskInstanceGenerator::class);
+        // Mon 10-12, Wed 10-14, Mon 10-19
+        $generator->ensureForChildOnDate($family, $child, '2026-10-12');
+        $generator->ensureForChildOnDate($family, $child, '2026-10-14');
+        $generator->ensureForChildOnDate($family, $child, '2026-10-19');
+
+        $this->actingAsParent($parent)->putJson('/api/v1/parent/tasks/'.$created['id'], [
+            'title' => '新作业',
+            'xp_reward' => 9,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1, 3],
+                'due_time' => '18:00',
+            ]],
+            'edit_scope' => 'weekday_forward',
+            'scope_date' => '2026-10-12', // Monday
+        ])->assertOk()
+            ->assertJsonPath('data.title', '新作业')
+            ->assertJsonPath('data.xp_reward', 9);
+
+        $monFirst = TaskInstance::query()->where('task_id', $created['id'])->whereDate('task_date', '2026-10-12')->first();
+        $wed = TaskInstance::query()->where('task_id', $created['id'])->whereDate('task_date', '2026-10-14')->first();
+        $monLater = TaskInstance::query()->where('task_id', $created['id'])->whereDate('task_date', '2026-10-19')->first();
+
+        $this->assertNotNull($monFirst);
+        $this->assertNotNull($wed);
+        $this->assertNotNull($monLater);
+        $this->assertSame('新作业', $monFirst->snapshot['title']);
+        $this->assertSame(9, $monFirst->snapshot['xp_reward']);
+        $this->assertSame('新作业', $monLater->snapshot['title']);
+        $this->assertSame('作业', $wed->snapshot['title']);
+        $this->assertSame(4, $wed->snapshot['xp_reward']);
+    }
+
+    public function test_weekday_forward_removes_pending_for_dropped_weekdays(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily('mama_drop_wd');
+        $child = $this->makeChild($family);
+
+        $created = $this->actingAsParent($parent)->postJson('/api/v1/parent/tasks', [
+            'title' => '训练',
+            'kind' => 'standard',
+            'start_date' => '2026-10-05',
+            'end_date' => '2026-12-31',
+            'child_id' => $child->id,
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1, 3],
+            ]],
+        ])->assertCreated()->json('data');
+
+        $generator = app(TaskInstanceGenerator::class);
+        $generator->ensureForChildOnDate($family, $child, '2026-10-12'); // Mon
+        $generator->ensureForChildOnDate($family, $child, '2026-10-14'); // Wed
+
+        $this->actingAsParent($parent)->putJson('/api/v1/parent/tasks/'.$created['id'], [
+            'title' => '训练',
+            'schedules' => [[
+                'frequency' => 'weekly',
+                'weekdays' => [1],
+            ]],
+            'edit_scope' => 'weekday_forward',
+            'scope_date' => '2026-10-12',
+        ])->assertOk()
+            ->assertJsonPath('data.schedules.0.weekdays', [1]);
+
+        $this->assertNotNull(
+            TaskInstance::query()->where('task_id', $created['id'])->whereDate('task_date', '2026-10-12')->first()
+        );
+        $this->assertNull(
+            TaskInstance::query()->where('task_id', $created['id'])->whereDate('task_date', '2026-10-14')->first()
+        );
+    }
 }

@@ -46,4 +46,55 @@ class ItemChecklistController
 
         return response()->json(['data' => $updated]);
     }
+
+    public function addBroughtItem(int $id, Request $request): JsonResponse
+    {
+        $child = $this->context->child();
+        $checklist = ItemChecklist::query()->where('child_id', $child->id)->findOrFail($id);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:128'],
+        ]);
+        $name = trim($data['name']);
+        if ($name === '') {
+            abort(422, '物品名称不能为空');
+        }
+
+        $created = $this->checklists->addBroughtItem(
+            $checklist,
+            $name,
+            $this->context->user(),
+            $child,
+        );
+
+        return response()->json(['data' => $created], 201);
+    }
+
+    public function complete(int $id, Request $request): JsonResponse
+    {
+        $child = $this->context->child();
+        $checklist = ItemChecklist::query()->where('child_id', $child->id)->findOrFail($id);
+        $data = $request->validate([
+            'placements' => ['sometimes', 'array'],
+            'placements.*.item_id' => ['required', 'integer'],
+            'placements.*.location_id' => ['nullable', 'integer'],
+        ]);
+
+        $result = $this->checklists->complete(
+            $checklist,
+            $child,
+            $this->context->user(),
+            $data['placements'] ?? null,
+        );
+
+        return response()->json(['data' => $result]);
+    }
+
+    public function reopen(int $id): JsonResponse
+    {
+        $child = $this->context->child();
+        $checklist = ItemChecklist::query()->where('child_id', $child->id)->findOrFail($id);
+        $reopened = $this->checklists->reopen($checklist, $child);
+
+        return response()->json(['data' => ['checklist' => $reopened]]);
+    }
 }

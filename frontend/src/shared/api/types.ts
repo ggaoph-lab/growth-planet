@@ -386,10 +386,55 @@ export interface ItemChecklist {
   lines?: ItemChecklistLine[]
 }
 
+export interface ChecklistCompleteResult {
+  checklist: ItemChecklist
+  reward: { xp: number; coins: number } | null
+}
+
+export interface RewardPolicy {
+  id: number
+  family_id: number
+  code: string
+  xp_amount: number
+  coin_amount: number
+  requires_approval: boolean
+  max_per_event: number | null
+  max_per_day: number | null
+  max_per_week: number | null
+  max_per_subject: number | null
+  is_active: boolean
+}
+
 export interface KidBag {
   items: ParentItem[]
   locations: ItemLocation[]
   checklists: ItemChecklist[]
+}
+
+export interface ItemEventLocation {
+  id: number
+  name: string
+  kind: string
+}
+
+export interface ItemEvent {
+  id: number
+  item_id: number
+  event_type: string
+  from_location_id: number | null
+  to_location_id: number | null
+  from_location?: ItemEventLocation | null
+  to_location?: ItemEventLocation | null
+  from_status: string | null
+  to_status: string | null
+  checklist_line_id: number | null
+  occurred_at: string | null
+  note: string | null
+}
+
+export interface ItemFlowHistory {
+  item: ParentItem
+  events: ItemEvent[]
 }
 
 export interface ExplorationProject {
@@ -674,4 +719,79 @@ export interface CollectionStamp {
   key: string
   title: string
   earned: boolean
+}
+
+export interface SchoolPeriodCell {
+  id?: number
+  weekday: number
+  period_index: number
+  subject: string
+  start_time?: string | null
+  end_time?: string | null
+  room?: string | null
+}
+
+export interface SchoolSchedule {
+  id: number
+  child_id: number
+  title: string
+  period_count: number
+  effective_from: string
+  effective_to: string | null
+  periods: SchoolPeriodCell[]
+}
+
+export type ScheduleExceptionType = 'no_school' | 'makeup_day' | 'custom'
+
+export interface ScheduleException {
+  id: number
+  family_id: number
+  child_id: number | null
+  exception_date: string
+  type: ScheduleExceptionType
+  follow_weekday: number | null
+  custom_periods: SchoolPeriodCell[] | null
+  note: string | null
+}
+
+export interface SubjectItemRequirement {
+  id: number
+  family_id: number
+  child_id: number
+  subject: string
+  item_id: number
+  quantity: number
+  item?: ParentItem
+}
+
+export interface BagExtraRequirement {
+  id: number
+  family_id: number
+  child_id: number
+  target_date: string
+  item_id: number | null
+  label: string | null
+  quantity: number
+  note: string | null
+  item?: ParentItem | null
+}
+
+export interface ResolvedDaySchedule {
+  date: string
+  is_school_day: boolean
+  periods: SchoolPeriodCell[]
+  subjects: string[]
+  schedule_id: number | null
+  exception: {
+    id: number
+    type: ScheduleExceptionType
+    follow_weekday: number | null
+    note: string | null
+    child_id: number | null
+  } | null
+}
+
+export interface KidScheduleOverview {
+  today: ResolvedDaySchedule
+  tomorrow: ResolvedDaySchedule
 }

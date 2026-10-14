@@ -62,7 +62,9 @@
 
 ## 5. 课程表与日期例外
 
-见 `DATABASE.md` §6 的解析算法。示例：
+**已实现**（`Schedule` 模块 + `ScheduleResolver`）：周课表、日期例外、科目→物品、临时加带；书包清单按解析结果生成。详见 `database.md` §8.1、`api.md` 课程表行。
+
+示例：
 
 | 日期 | 例外 | 结果 |
 |---|---|---|
@@ -71,55 +73,51 @@
 | 2026-10-10（周六） | `makeup_day`，`follow_weekday=5` | 按周五课表，生成书包清单 |
 | 2026-10-20（周二） | `custom`：语文、语文、体育、秋游 | 使用临时课表 |
 
-## 6. 书包清单生成（`ChecklistGenerator`）
+## 6. 书包清单生成（`ItemChecklistService` + `ScheduleResolver`）
 
-**输入**：孩子、目标日期（次日）。
+**已实现**（V1 表名为 `item_checklists` / `item_checklist_lines`，字段 `carry_daily` 对应规划中的每日必带）。
+
+**输入**：孩子、目标日期（`before_school`=次日，`after_school`=今日）。
 
 **步骤**：
 
-1. 用 `ScheduleResolver` 解析目标日期课程。非上学日 → 不生成（若已生成且尚未开始则标记作废）。
+1. 用 `ScheduleResolver` 解析目标日期课程。非上学日 → 不生成（若已生成且仍为 `open` 则标 `cancelled`）。未配置任何周课表时，视为上学日且科目为空（仅每日必带，兼容旧行为）。
 2. 收集候选行：
-   - 每日必带：`needs_daily_check = true` 且 `allow_stay_at_school = false` 的物品（如校牌、水杯、文具盒）。
-   - 科目所需：每门课 → `subject_item_requirements`（如数学 → 数学课本、口算本）。
-   - 家长临时要求：`bag_extra_requirements` 中 `target_date` 匹配的记录（有物品或纯文字）。
-3. 合并：同一物品多来源合并为一行，`sources` 记录全部来源，数量取最大值。
-4. 排除：当前已确认在学校且允许留校的物品不需要放入。
-5. 写入 `bag_checklists` + `bag_checklist_lines`，`generated_from` 保存课程快照。
-6. 若存在 `form=item_check, checklist_kind=pack_for_school` 的任务实例，建立关联。
+   - 每日必带：`carry_daily = true`。
+   - 科目所需：当日科目 → `subject_item_requirements`。
+   - 家长临时要求：`bag_extra_requirements`（有物品或纯文字；文字会物化为一次性物品）。
+3. 合并：同一物品多来源合并为一行，`sources` 记录全部来源。
+4. 排除：`before_school` 时当前位置已在学校的物品。
+5. 写入清单行，`generated_from` 保存课程快照。
 
-**重新生成**（课表或临时要求变化后）：已有结果（packed/missing）的行保留；新增行追加；已不需要的行标记 `not_needed`（不删除）。幂等：UNIQUE(`child_id`, `kind`, `target_date`)。
+**重新生成**：已有 `present`/`not_found`/`left_at_school` 保留；新增追加；不再需要的 `pending` → `not_needed`。幂等：UNIQUE(`child_id`, `kind`, `target_date`)。
 
-## 7. 打包流程（孩子端）
+## 7. 孩子端四框拖拽（现行）
 
-```
-清单卡片（大图标 + 物品照片）
-  ├─ 点"放好了 ✓" → packed → 事件 packed（位置=书包，已确认）
-  └─ 点"找不到 ?" → missing → 事件 pack_missing（待确认）
-         ├─ "我去找找"：显示物品照片、最后确认位置和时间（帮助回忆）
-         ├─ 写寻找备注（可选，语音转文字由系统输入法完成）
-         └─ 找到了 → "放好了 ✓"（packed）
-全部处理完 → "完成整理" → 清单 completed / completed_with_issues
-            → 关联任务自动提交 → 家长审核（可在审核时记录提醒次数）
-```
+孩子书包星球展示四个（可更多）框：
 
-缺失项**不会**自动变成疑似遗失。家长在审核中心看到 `completed_with_issues` 后可以：帮助寻找、标记疑似遗失、或备注"已知放在奶奶家"（`location_confirmed` 到 `other`）。
+| 框 | 含义 |
+|---|---|
+| **我的物品** | 暂存区（系统「家里」/书桌等未分到其它框的物品） |
+| **家里** | 家里地点（系统框 + 家长自定义，如奶奶家） |
+| **书包** | 书包地点（系统框 + 家长自定义，如体育袋） |
+| **学校里** | 学校 |
 
-## 8. 放学回家核对
+**上学前**：把要带的物品从「我的物品」拖进「书包」，点一次「完成核对」→ 更新位置并发放 `item.checklist.before_school` 奖励。
 
-**默认核对项**（初始化时作为物品模板创建，家长可修改）：校牌、水杯、课本、作业本、文具盒，以及家长自定义物品。
+**放学后**：检查书包，带回的拖进「家里」，留下的拖进「学校」，再点一次「完成」→ 发放 `item.checklist.after_school` 奖励。
 
-生成规则：上学日 15:30（可配置）生成 `return_home` 清单，包含：
-- 当天打包清单中 `packed` 的物品；
-- `needs_daily_check = true` 的物品；
-- 允许留校的物品默认预选"留校"，孩子可改。
+完成接口可提交 `placements: [{ item_id, location_id }]`（`location_id: null` = 我的物品 → 默认家里）。
 
-| 结果 | 含义 | 产生事件 |
+家长可在生活页增减「家里」「书包」框（`POST/DELETE /parent/item-locations`，系统地点不可删）。
+
+## 8. 放学回家核对（事件语义）
+
+| 拖到 | 含义 | 事件 |
 |---|---|---|
-| 已带回 `brought_home` | 在家里 | `brought_home` |
-| 留校 `left_at_school` | 主动放在学校 | `left_at_school` |
-| 不确定 `unsure` | 想不起来 | `marked_unsure`（待确认，**不是丢失**） |
-| 疑似遗失 `suspected_missing` | 家长判断可能丢了 | `marked_suspected_missing`（仅家长） |
-| 已找回 `found` | 之前不确定/疑似遗失，现在找到了 | `found` |
+| 家里 / 我的物品 | 带回家里 | `brought_home` / `checked` |
+| 学校 | 留在学校 | `left_at_school`（result） |
+| 书包 | 仍在书包 | `checked` |
 
 ## 9. 遗失与找回闭环
 
@@ -133,8 +131,10 @@ pending/unsure ──(家长判断)──▶ suspected ──▶ searching ─�
 
 ## 10. 与积分、成就的关系
 
-- 完成打包清单（`pack_bag` 任务）按任务规则发放金币和 XP；**清单中有缺失项不扣分**，只影响自主加成（由家长根据提醒次数确认）。
-- 遗失物品不自动扣分。
+- 孩子完成核对（`POST /kid/item-checklists/{id}/complete`）时按家庭奖励策略发放 XP 与成长币：`item.checklist.before_school` / `item.checklist.after_school`（默认各 5 XP / 2 币；`grant_key` 保证每份清单只发一次）；金额可在家长「系统设置 → 书包星球」调整。
+- 完成后可 `POST /kid/item-checklists/{id}/reopen` 重新核对：状态回到 `open`，行结果回到 `pending`，物品停在当前地点；再次完成不再发奖。
+- **清单中有缺失项不扣分**（仍可完成核对并发奖）；遗失物品不自动扣分。
+- 也可另建 `pack_bag` 任务按任务规则发放；与核对完成奖励相互独立。
 - 徽章"书包小管家"：7 天中 5 天自主完成打包清单（弹性窗口）。
 
 ## 11. 测试要点

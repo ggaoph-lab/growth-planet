@@ -13,6 +13,7 @@ use App\Modules\Identity\Services\DeviceTokens;
 use App\Modules\Identity\Services\Sudo;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\GrowthFixtures;
 
 abstract class TestCase extends BaseTestCase
@@ -71,6 +72,26 @@ abstract class TestCase extends BaseTestCase
             'theme_color' => '#5B8DEF',
             'pin' => '1234',
         ], $overrides))->load(['family', 'member.user']);
+    }
+
+    /** Marks today's fairy tale heard so reviews / probes may enter the learning queue. */
+    protected function markEnglishFairyHeard(ChildProfile $child, string $date): void
+    {
+        $exists = DB::table('english_learning_answers')
+            ->where('child_id', $child->id)
+            ->where('business_date', $date)
+            ->where('item_key', 'fairy-tale:heard')
+            ->exists();
+        if ($exists) {
+            return;
+        }
+        DB::table('english_learning_answers')->insert([
+            'child_id' => $child->id,
+            'item_key' => 'fairy-tale:heard',
+            'business_date' => $date,
+            'correct' => true,
+            'created_at' => now(),
+        ]);
     }
 
     /**

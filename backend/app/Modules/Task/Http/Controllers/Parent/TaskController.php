@@ -2,6 +2,9 @@
 
 namespace App\Modules\Task\Http\Controllers\Parent;
 
+use App\Modules\Identity\Enums\ChildStatus;
+use App\Modules\Identity\Models\ChildProfile;
+use App\Modules\Identity\Models\Family;
 use App\Modules\Identity\Support\CurrentContext;
 use App\Modules\Task\Enums\ScheduleFrequency;
 use App\Modules\Task\Enums\TaskInstanceStatus;
@@ -11,14 +14,21 @@ use App\Modules\Task\Models\TaskInstance;
 use App\Modules\Task\Models\TaskInstanceStep;
 use App\Modules\Task\Models\TaskSchedule;
 use App\Modules\Task\Models\TaskStep;
+use App\Modules\Task\Services\TaskInstanceGenerator;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class TaskController
 {
-    public function __construct(private readonly CurrentContext $context) {}
+    public function __construct(
+        private readonly CurrentContext $context,
+        private readonly TaskInstanceGenerator $generator,
+    ) {}
 
     public function index(): JsonResponse
     {
@@ -72,9 +82,31 @@ class TaskController
     {
         $task = Task::query()->where('family_id', $this->context->familyId())->findOrFail($id);
         $data = $this->validateTask($request, partial: true);
+        $editScope = $data['edit_scope'] ?? null;
+        $scopeDate = isset($data['scope_date']) ? (string) $data['scope_date'] : null;
 
-        $task = DB::transaction(function () use ($task, $data) {
-            $task->fill(collect($data)->except(['steps', 'schedules', 'subtasks', 'requires_approval'])->all());
+        $task = DB::transaction(function () use ($task, $data, $editScope, $scopeDate) {
+            if ($editScope === 'this_day') {
+                $this->patchThisDayInstances($task, $data, (string) $scopeDate);
+
+                return $this->present($task->fresh() ?? $task);
+            }
+
+            $family = $this->context->family();
+            $oldWeekdaysByTaskId = $this->collectLeafWeekdays($task);
+            $onlyWeekday = $editScope === 'weekday_forward'
+                ? CarbonImmutable::createFromFormat('!Y-m-d', (string) $scopeDate, $family->timezone)->isoWeekday()
+                : null;
+            $fromDate = $editScope === 'weekday_forward' ? $scopeDate : null;
+
+            $task->fill(collect($data)->except([
+                'steps',
+                'schedules',
+                'subtasks',
+                'requires_approval',
+                'edit_scope',
+                'scope_date',
+            ])->all());
             $task->requires_approval = false;
             $task->version++;
             $task->save();
@@ -86,9 +118,9 @@ class TaskController
                 $this->syncSchedules($task, $data['schedules'] ?? []);
             }
             if (array_key_exists('subtasks', $data) && $task->parent_id === null) {
-                $this->syncSubtasks($task, $data['subtasks'] ?? []);
+                $this->syncSubtasks($task, $data['subtasks'] ?? [], $fromDate, $onlyWeekday, $family->timezone);
             } elseif ($task->parent_id === null) {
-                $this->propagateToChildren($task);
+                $this->propagateToChildren($task, $fromDate, $onlyWeekday, $family->timezone);
             }
 
             if ($task->children()->exists()) {
@@ -96,8 +128,24 @@ class TaskController
                     ->where('task_id', $task->id)
                     ->where('status', TaskInstanceStatus::Pending)
                     ->delete();
+
+                if ($editScope === 'weekday_forward') {
+                    $this->cleanupRemovedWeekdaysForChildren(
+                        $task,
+                        $oldWeekdaysByTaskId,
+                        (string) $scopeDate,
+                        $family->timezone,
+                    );
+                }
             } else {
-                $this->refreshPendingInstances($task);
+                if ($editScope === 'weekday_forward') {
+                    $newWeekdays = $this->weekdaysFromSchedules($task->fresh()?->schedules ?? $task->schedules);
+                    $removed = array_values(array_diff($oldWeekdaysByTaskId[$task->id] ?? [], $newWeekdays));
+                    if ($removed !== []) {
+                        $this->deletePendingForWeekdays($task, (string) $scopeDate, $removed, $family->timezone);
+                    }
+                }
+                $this->refreshPendingInstances($task, $fromDate, $onlyWeekday, $family->timezone);
             }
 
             return $this->present($task);
@@ -128,7 +176,7 @@ class TaskController
     {
         $familyId = $this->context->familyId();
 
-        return $request->validate([
+        $data = $request->validate([
             'child_id' => ['nullable', 'integer'],
             'category' => ['nullable', 'string', 'max:32'],
             'category_id' => [
@@ -148,6 +196,8 @@ class TaskController
             'requires_approval' => ['nullable', 'boolean'],
             'requires_self_check' => ['nullable', 'boolean'],
             'with_parent' => ['nullable', 'boolean'],
+            'edit_scope' => ['nullable', Rule::in(['this_day', 'weekday_forward'])],
+            'scope_date' => ['required_with:edit_scope', 'nullable', 'date'],
             'steps' => ['nullable', 'array'],
             'steps.*.title' => ['required_with:steps', 'string', 'max:128'],
             'steps.*.is_required' => ['nullable', 'boolean'],
@@ -178,6 +228,39 @@ class TaskController
             'subtasks.*.schedules.*.dates.*' => ['date'],
             'subtasks.*.schedules.*.due_time' => ['nullable', 'date_format:H:i'],
         ]);
+
+        $this->assertWeeklySchedulesHaveWeekdays($data['schedules'] ?? null, 'schedules');
+        foreach ($data['subtasks'] ?? [] as $i => $sub) {
+            $this->assertWeeklySchedulesHaveWeekdays($sub['schedules'] ?? null, "subtasks.$i.schedules");
+        }
+
+        return $data;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>|null  $schedules
+     */
+    private function assertWeeklySchedulesHaveWeekdays(?array $schedules, string $prefix): void
+    {
+        if ($schedules === null) {
+            return;
+        }
+
+        foreach ($schedules as $i => $schedule) {
+            $frequency = $schedule['frequency'] ?? null;
+            $frequencyValue = $frequency instanceof ScheduleFrequency
+                ? $frequency->value
+                : (string) $frequency;
+            if ($frequencyValue !== ScheduleFrequency::Weekly->value) {
+                continue;
+            }
+            $weekdays = $schedule['weekdays'] ?? [];
+            if (! is_array($weekdays) || $weekdays === []) {
+                throw ValidationException::withMessages([
+                    "{$prefix}.{$i}.weekdays" => ['Weekly schedules require at least one weekday (1–7).'],
+                ]);
+            }
+        }
     }
 
     /**
@@ -208,10 +291,15 @@ class TaskController
             if (is_string($dueTime) && strlen($dueTime) === 5) {
                 $dueTime .= ':00';
             }
+            $weekdays = $schedule['weekdays'] ?? null;
+            if (is_array($weekdays)) {
+                $weekdays = array_values(array_unique(array_map('intval', $weekdays)));
+                sort($weekdays);
+            }
             TaskSchedule::query()->create([
                 'task_id' => $task->id,
                 'frequency' => $schedule['frequency'],
-                'weekdays' => $schedule['weekdays'] ?? null,
+                'weekdays' => $weekdays,
                 'dates' => $schedule['dates'] ?? null,
                 'due_time' => $dueTime,
             ]);
@@ -222,8 +310,13 @@ class TaskController
     /**
      * @param  list<array<string, mixed>>  $subtasks
      */
-    private function syncSubtasks(Task $parent, array $subtasks): void
-    {
+    private function syncSubtasks(
+        Task $parent,
+        array $subtasks,
+        ?string $fromDate = null,
+        ?int $onlyWeekday = null,
+        ?string $timezone = null,
+    ): void {
         $keptIds = [];
         foreach (array_values($subtasks) as $sub) {
             $child = null;
@@ -258,7 +351,7 @@ class TaskController
             }
 
             $this->syncSchedules($child, $this->schedulesForSubtask($parent, $sub));
-            $this->refreshPendingInstances($child);
+            $this->refreshPendingInstances($child, $fromDate, $onlyWeekday, $timezone);
             $keptIds[] = $child->id;
         }
 
@@ -268,14 +361,18 @@ class TaskController
             ->delete();
     }
 
-    private function propagateToChildren(Task $parent): void
-    {
+    private function propagateToChildren(
+        Task $parent,
+        ?string $fromDate = null,
+        ?int $onlyWeekday = null,
+        ?string $timezone = null,
+    ): void {
         $children = Task::query()->where('parent_id', $parent->id)->get();
         foreach ($children as $child) {
             $child->fill($this->sharedParentAttributes($parent));
             $child->version++;
             $child->save();
-            $this->refreshPendingInstances($child);
+            $this->refreshPendingInstances($child, $fromDate, $onlyWeekday, $timezone);
         }
     }
 
@@ -349,8 +446,155 @@ class TaskController
         return $task->load(['steps', 'schedules', 'taskCategory', 'children.schedules', 'children.steps']);
     }
 
-    private function refreshPendingInstances(Task $task): void
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function patchThisDayInstances(Task $task, array $data, string $scopeDate): void
     {
+        $family = $this->context->family();
+
+        if (! empty($data['subtasks']) && $task->parent_id === null) {
+            $task->loadMissing('children');
+            if ($task->children->isEmpty()) {
+                $sub = $data['subtasks'][0] ?? null;
+                if (is_array($sub)) {
+                    $this->ensureAndPatchLeafForDate(
+                        $task,
+                        $family,
+                        $scopeDate,
+                        $this->snapshotOverlayFromPayload($task, $sub),
+                    );
+                }
+
+                return;
+            }
+
+            foreach ($data['subtasks'] as $sub) {
+                if (empty($sub['id']) || ! is_array($sub)) {
+                    continue;
+                }
+                $child = Task::query()
+                    ->where('family_id', $task->family_id)
+                    ->where('parent_id', $task->id)
+                    ->whereKey($sub['id'])
+                    ->first();
+                if ($child === null) {
+                    continue;
+                }
+                $this->ensureAndPatchLeafForDate($child, $family, $scopeDate, $this->snapshotOverlayFromPayload($child, $sub));
+            }
+
+            return;
+        }
+
+        $this->ensureAndPatchLeafForDate($task, $family, $scopeDate, $this->snapshotOverlayFromPayload($task, $data));
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function snapshotOverlayFromPayload(Task $task, array $payload): array
+    {
+        $snapshot = $task->instanceSnapshot();
+
+        if (array_key_exists('title', $payload) && is_string($payload['title'])) {
+            $snapshot['title'] = $payload['title'];
+        }
+        if (array_key_exists('description', $payload)) {
+            $snapshot['description'] = $payload['description'];
+        }
+        if (array_key_exists('xp_reward', $payload)) {
+            $snapshot['xp_reward'] = (int) $payload['xp_reward'];
+        }
+        if (array_key_exists('coin_reward', $payload)) {
+            $snapshot['coin_reward'] = (int) $payload['coin_reward'];
+        }
+        if (array_key_exists('with_parent', $payload)) {
+            $snapshot['with_parent'] = (bool) $payload['with_parent'];
+        }
+
+        $dueTime = null;
+        if (! empty($payload['schedules'][0]['due_time']) && is_string($payload['schedules'][0]['due_time'])) {
+            $dueTime = substr($payload['schedules'][0]['due_time'], 0, 5);
+        } elseif (! empty($payload['due_time']) && is_string($payload['due_time'])) {
+            $dueTime = substr($payload['due_time'], 0, 5);
+        }
+        if ($dueTime !== null) {
+            $snapshot['due_time'] = strlen($dueTime) === 5 ? $dueTime.':00' : $dueTime;
+        }
+
+        return $snapshot;
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function ensureAndPatchLeafForDate(Task $task, Family $family, string $scopeDate, array $snapshot): void
+    {
+        $children = $this->targetChildrenForTask($task, $family);
+        foreach ($children as $child) {
+            $this->generator->ensureForChildOnDate($family, $child, $scopeDate);
+        }
+
+        $instances = TaskInstance::query()
+            ->where('task_id', $task->id)
+            ->whereDate('task_date', $scopeDate)
+            ->where('status', TaskInstanceStatus::Pending)
+            ->get();
+
+        foreach ($instances as $instance) {
+            $this->applySnapshotToInstance($instance, $snapshot, $task->version);
+        }
+    }
+
+    /**
+     * @return Collection<int, ChildProfile>
+     */
+    private function targetChildrenForTask(Task $task, Family $family)
+    {
+        $query = ChildProfile::query()
+            ->where('family_id', $family->id)
+            ->where('status', ChildStatus::Active);
+
+        if ($task->child_id !== null) {
+            $query->whereKey($task->child_id);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function applySnapshotToInstance(TaskInstance $instance, array $snapshot, int $taskVersion): void
+    {
+        $instance->snapshot = $snapshot;
+        $instance->task_version = $taskVersion;
+        $instance->save();
+
+        TaskInstanceStep::query()->where('task_instance_id', $instance->id)->delete();
+        foreach ($snapshot['steps'] ?? [] as $step) {
+            if (! is_array($step) || ! isset($step['title'])) {
+                continue;
+            }
+            TaskInstanceStep::query()->create([
+                'task_instance_id' => $instance->id,
+                'task_step_id' => $step['id'] ?? null,
+                'title' => $step['title'],
+                'is_required' => $step['is_required'] ?? true,
+                'is_self_check' => $step['is_self_check'] ?? false,
+                'sort' => $step['sort'] ?? 0,
+            ]);
+        }
+    }
+
+    private function refreshPendingInstances(
+        Task $task,
+        ?string $fromDate = null,
+        ?int $onlyWeekday = null,
+        ?string $timezone = null,
+    ): void {
         $task->unsetRelation('schedules');
         $task->unsetRelation('steps');
         $task->unsetRelation('parent');
@@ -359,23 +603,118 @@ class TaskController
         $instances = TaskInstance::query()
             ->where('task_id', $task->id)
             ->where('status', TaskInstanceStatus::Pending)
+            ->when($fromDate !== null, fn ($q) => $q->whereDate('task_date', '>=', $fromDate))
+            ->get();
+
+        $tz = $timezone ?? $this->context->family()->timezone;
+
+        foreach ($instances as $instance) {
+            if ($onlyWeekday !== null) {
+                $date = $instance->task_date?->toDateString();
+                if ($date === null) {
+                    continue;
+                }
+                $weekday = CarbonImmutable::createFromFormat('!Y-m-d', $date, $tz)->isoWeekday();
+                if ($weekday !== $onlyWeekday) {
+                    continue;
+                }
+            }
+
+            $this->applySnapshotToInstance($instance, $snapshot, $task->version);
+        }
+    }
+
+    /**
+     * @return array<int, list<int>>
+     */
+    private function collectLeafWeekdays(Task $task): array
+    {
+        $task->loadMissing(['schedules', 'children.schedules']);
+        $map = [];
+
+        if ($task->children->isNotEmpty()) {
+            foreach ($task->children as $child) {
+                $map[(int) $child->id] = $this->weekdaysFromSchedules($child->schedules);
+            }
+
+            return $map;
+        }
+
+        $map[(int) $task->id] = $this->weekdaysFromSchedules($task->schedules);
+
+        return $map;
+    }
+
+    /**
+     * @param  Collection<int, TaskSchedule>|iterable<int, TaskSchedule>  $schedules
+     * @return list<int>
+     */
+    private function weekdaysFromSchedules(iterable $schedules): array
+    {
+        $weekdays = [];
+        foreach ($schedules as $schedule) {
+            if ($schedule->frequency !== ScheduleFrequency::Weekly) {
+                continue;
+            }
+            foreach ($schedule->weekdays ?? [] as $day) {
+                $weekdays[] = (int) $day;
+            }
+        }
+
+        $weekdays = array_values(array_unique($weekdays));
+        sort($weekdays);
+
+        return $weekdays;
+    }
+
+    /**
+     * @param  array<int, list<int>>  $oldWeekdaysByTaskId
+     */
+    private function cleanupRemovedWeekdaysForChildren(
+        Task $parent,
+        array $oldWeekdaysByTaskId,
+        string $scopeDate,
+        string $timezone,
+    ): void {
+        $parent->load('children.schedules');
+        foreach ($parent->children as $child) {
+            $old = $oldWeekdaysByTaskId[(int) $child->id] ?? [];
+            $new = $this->weekdaysFromSchedules($child->schedules);
+            $removed = array_values(array_diff($old, $new));
+            if ($removed === []) {
+                continue;
+            }
+            $this->deletePendingForWeekdays($child, $scopeDate, $removed, $timezone);
+        }
+    }
+
+    /**
+     * @param  list<int>  $weekdays
+     */
+    private function deletePendingForWeekdays(
+        Task $task,
+        string $fromDate,
+        array $weekdays,
+        string $timezone,
+    ): void {
+        if ($weekdays === []) {
+            return;
+        }
+
+        $instances = TaskInstance::query()
+            ->where('task_id', $task->id)
+            ->where('status', TaskInstanceStatus::Pending)
+            ->whereDate('task_date', '>=', $fromDate)
             ->get();
 
         foreach ($instances as $instance) {
-            $instance->snapshot = $snapshot;
-            $instance->task_version = $task->version;
-            $instance->save();
-
-            TaskInstanceStep::query()->where('task_instance_id', $instance->id)->delete();
-            foreach ($snapshot['steps'] as $step) {
-                TaskInstanceStep::query()->create([
-                    'task_instance_id' => $instance->id,
-                    'task_step_id' => $step['id'],
-                    'title' => $step['title'],
-                    'is_required' => $step['is_required'],
-                    'is_self_check' => $step['is_self_check'],
-                    'sort' => $step['sort'],
-                ]);
+            $date = $instance->task_date?->toDateString();
+            if ($date === null) {
+                continue;
+            }
+            $weekday = CarbonImmutable::createFromFormat('!Y-m-d', $date, $timezone)->isoWeekday();
+            if (in_array($weekday, $weekdays, true)) {
+                $instance->delete();
             }
         }
     }

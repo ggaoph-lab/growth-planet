@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
-import type { AiModelChoice, AiModelList, AiSettings, Family, ParentAccount, TaskCategory } from '@/shared/api/types'
+import type { AiModelChoice, AiModelList, AiSettings, Family, ParentAccount, RewardPolicy, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 import { useIsPhone } from '@/shared/useMediaQuery'
@@ -13,7 +13,7 @@ const { t } = useI18n()
 const isPhone = useIsPhone()
 const route = useRoute()
 const session = useSessionStore()
-const tab = ref<'family' | 'accounts' | 'ai' | 'categories'>('family')
+const tab = ref<'family' | 'accounts' | 'ai' | 'categories' | 'bag-rewards'>('family')
 const loading = ref(true)
 const savingFamily = ref(false)
 const savingPassword = ref(false)
@@ -21,10 +21,14 @@ const savingProfile = ref(false)
 const savingAi = ref(false)
 const creatingParent = ref(false)
 const savingCategory = ref(false)
+const savingBagReward = ref<string | null>(null)
 const categories = ref<TaskCategory[]>([])
+const bagRewardPolicies = ref<RewardPolicy[]>([])
 const showCategoryForm = ref(false)
 const editingCategoryId = ref<number | null>(null)
 const categoryName = ref('')
+
+const BAG_REWARD_CODES = ['item.checklist.before_school', 'item.checklist.after_school'] as const
 
 const timezones = Intl.supportedValuesOf('timeZone')
 const localeOptions = computed(() => [
@@ -255,15 +259,45 @@ async function loadCategories(): Promise<void> {
   categories.value = await api.get<TaskCategory[]>('/parent/task-categories')
 }
 
+async function loadBagRewards(): Promise<void> {
+  const policies = await api.get<RewardPolicy[]>('/parent/reward-policies')
+  bagRewardPolicies.value = policies.filter((p) => (BAG_REWARD_CODES as readonly string[]).includes(p.code))
+}
+
+function bagRewardLabel(code: string): string {
+  if (code === 'item.checklist.before_school') return t('parent.settings.bagBeforeSchool')
+  if (code === 'item.checklist.after_school') return t('parent.settings.bagAfterSchool')
+  return code
+}
+
+async function saveBagReward(policy: RewardPolicy): Promise<void> {
+  savingBagReward.value = policy.code
+  try {
+    const updated = await api.put<RewardPolicy>('/parent/reward-policies', {
+      code: policy.code,
+      xp_amount: Number(policy.xp_amount) || 0,
+      coin_amount: Number(policy.coin_amount) || 0,
+      is_active: policy.is_active,
+    })
+    bagRewardPolicies.value = bagRewardPolicies.value.map((row) => (row.code === updated.code ? updated : row))
+    ElMessage.success(t('parent.settings.bagRewardSaved'))
+  } catch (e) {
+    reportError(e)
+  } finally {
+    savingBagReward.value = null
+  }
+}
+
 function syncTabFromRoute(): void {
   if (route.query.tab === 'categories') tab.value = 'categories'
+  if (route.query.tab === 'bag-rewards') tab.value = 'bag-rewards'
 }
 
 async function load(): Promise<void> {
   loading.value = true
   try {
     syncTabFromRoute()
-    await Promise.all([loadFamily(), loadParents(), loadAi(), loadCategories()])
+    await Promise.all([loadFamily(), loadParents(), loadAi(), loadCategories(), loadBagRewards()])
   } catch (e) {
     reportError(e)
   } finally {
@@ -665,6 +699,61 @@ onMounted(load)
         </div>
       </el-tab-pane>
 
+      <el-tab-pane :label="t('parent.settings.tabBagRewards')" name="bag-rewards">
+        <p class="hint top">{{ t('parent.settings.bagRewardsHint') }}</p>
+        <el-table v-if="!isPhone" :data="bagRewardPolicies" stripe>
+          <el-table-column :label="t('parent.settings.bagRewardDirectory')" min-width="160">
+            <template #default="{ row }">
+              {{ bagRewardLabel((row as RewardPolicy).code) }}
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('parent.settings.bagRewardXp')" width="120">
+            <template #default="{ row }">
+              <el-input-number v-model="(row as RewardPolicy).xp_amount" :min="0" :max="100" controls-position="right" />
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('parent.settings.bagRewardCoins')" width="120">
+            <template #default="{ row }">
+              <el-input-number v-model="(row as RewardPolicy).coin_amount" :min="0" :max="100" controls-position="right" />
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('parent.settings.bagRewardActive')" width="100">
+            <template #default="{ row }">
+              <el-switch v-model="(row as RewardPolicy).is_active" />
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('common.actions')" width="100">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                :loading="savingBagReward === (row as RewardPolicy).code"
+                @click="saveBagReward(row as RewardPolicy)"
+              >
+                {{ t('common.save') }}
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-else class="phone-list">
+          <article v-for="row in bagRewardPolicies" :key="row.code" class="phone-card bag-reward-card">
+            <div class="phone-title">{{ bagRewardLabel(row.code) }}</div>
+            <el-form label-position="top" class="bag-reward-form" @submit.prevent="saveBagReward(row)">
+              <el-form-item :label="t('parent.settings.bagRewardXp')">
+                <el-input-number v-model="row.xp_amount" :min="0" :max="100" controls-position="right" />
+              </el-form-item>
+              <el-form-item :label="t('parent.settings.bagRewardCoins')">
+                <el-input-number v-model="row.coin_amount" :min="0" :max="100" controls-position="right" />
+              </el-form-item>
+              <el-form-item :label="t('parent.settings.bagRewardActive')">
+                <el-switch v-model="row.is_active" />
+              </el-form-item>
+              <el-button type="primary" :loading="savingBagReward === row.code" native-type="submit">{{ t('common.save') }}</el-button>
+            </el-form>
+          </article>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane :label="t('parent.settings.tabAi')" name="ai">
         <p class="hint top">{{ t('parent.settings.aiHint') }}</p>
         <p class="hint top">{{ t('parent.settings.keyProbeHint') }}</p>
@@ -950,6 +1039,13 @@ onMounted(load)
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+.bag-reward-card {
+  flex-direction: column;
+  align-items: stretch;
+}
+.bag-reward-form {
+  width: 100%;
 }
 @media (max-width: 767px) {
   .settings {

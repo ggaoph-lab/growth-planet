@@ -23,6 +23,9 @@ class RewardPolicySeeder
             ['code' => 'english.practice', 'xp_amount' => 2, 'coin_amount' => 1, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.log', 'xp_amount' => 5, 'coin_amount' => 5, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.active_choice', 'xp_amount' => 0, 'coin_amount' => 3, 'requires_approval' => false, 'max_per_day' => 6],
+            // max_per_day caps sum of coins that day (not grant count); grant_key already ensures once per checklist.
+            ['code' => 'item.checklist.before_school', 'xp_amount' => 5, 'coin_amount' => 2, 'requires_approval' => false, 'max_per_day' => 10],
+            ['code' => 'item.checklist.after_school', 'xp_amount' => 5, 'coin_amount' => 2, 'requires_approval' => false, 'max_per_day' => 10],
         ];
     }
 

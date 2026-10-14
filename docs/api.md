@@ -87,7 +87,7 @@
 
 | 资源 | 家长 | 孩子 |
 |---|---|---|
-| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`、`due_time`、`end_date`、`with_parent`；更新可同步 steps/schedules 并刷新 pending 实例快照）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`；孩子提交后立即完成并发放奖励，不进入审核中心）、`/parent/task-instances?date=` | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，同一条 Edge 连接）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit|withdraw` 🔁 |
+| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`（ISO 1–7，weekly 必填）、`due_time`、`end_date`、`with_parent`；更新可带 `edit_scope=this_day|weekday_forward` + `scope_date`：`this_day` 只改当天 pending 快照不改模板，`weekday_forward` 改模板并只刷新 `scope_date` 起同一周几的 pending；无 `edit_scope` 时仍刷新全部 pending）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`；孩子提交后立即完成并发放奖励，不进入审核中心）、`/parent/task-instances?date=` | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，同一条 Edge 连接）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit|withdraw` 🔁 |
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
 | 账本 | `GET /parent/children/{id}/ledger?asset=xp|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus` 🔁🔐 | `GET /kid/wallet` |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |
@@ -98,7 +98,8 @@
 
 | 资源 | 家长 | 孩子 |
 |---|---|---|
-| 书包 | `/parent/items`、`/parent/item-locations`、`/parent/items/{id}/events`、`/parent/item-checklists` | `GET /kid/bag`、`POST /kid/item-checklists/{id}/lines/{lid}` 🔁、`POST /kid/items/{id}/report-missing|found` 🔁 |
+| 书包 | `/parent/items`、`GET/POST/PUT/DELETE /parent/item-locations`（家长可增减家里/书包框；系统地点不可删）、`/parent/items/{id}/events`、`/parent/item-checklists`；核对奖励经 `GET/PUT /parent/reward-policies`（`item.checklist.before_school` / `item.checklist.after_school`）🔐 | `GET /kid/bag`、`POST /kid/item-checklists/{id}/lines/{lid}` 🔁、`POST /kid/item-checklists/{id}/brought-items` 🔁、`POST /kid/item-checklists/{id}/complete` 🔁（可带 `placements: [{item_id, location_id|null}]`：拖框放置后一次完成并发奖；`location_id` 为 null 表示「我的物品」→ 默认家里；响应 `{ checklist, reward }`）、`POST /kid/item-checklists/{id}/reopen` 🔁（完成后重新打开，物品位置保留，奖励不重复发放）、`GET /kid/items/{id}/events`、`POST /kid/items/{id}/report-missing|found` 🔁 |
+| 课程表 | `GET/PUT /parent/children/{id}/school-schedule`、`GET /parent/children/{id}/schedule?date=`（解析预览）、`CRUD /parent/schedule-exceptions`（`child_id` null=全家）、`CRUD /parent/subject-item-requirements`、`CRUD /parent/bag-extra-requirements` | `GET /kid/schedule`（今日+明日）、`GET /kid/schedule/week`（只读周课表） |
 | 勇敢探索 | `/parent/explorations`、`/parent/explorations/{id}/events` | `GET/POST /kid/explorations`、`POST /kid/explorations/{id}/events` 🔁 |
 | 食物日记 | `/parent/foods`、`/parent/food-records` | `GET /kid/foods`、`POST /kid/food-records` 🔁 |
 

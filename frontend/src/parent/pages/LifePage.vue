@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
@@ -30,6 +30,9 @@ const foodRecords = ref<FoodExplorationRecord[]>([])
 
 const itemDialog = ref(false)
 const itemForm = ref({ name: '', carry_daily: true, location_id: undefined as number | undefined })
+const locationDialog = ref(false)
+const locationForm = ref<{ name: string; kind: 'home' | 'bag' }>({ name: '', kind: 'home' })
+const locationBusy = ref(false)
 const exploreDialog = ref(false)
 const exploreForm = ref({ title: '', category: 'activity' })
 const foodDialog = ref(false)
@@ -115,6 +118,46 @@ async function moveItem(item: ParentItem, locationId: number): Promise<void> {
   }
 }
 
+const managedLocations = computed(() =>
+  locations.value.filter((l) => l.kind === 'home' || l.kind === 'bag'),
+)
+
+function openAddLocation(kind: 'home' | 'bag'): void {
+  locationForm.value = { name: '', kind }
+  locationDialog.value = true
+}
+
+async function createLocation(): Promise<void> {
+  const name = locationForm.value.name.trim()
+  if (!name || locationBusy.value) return
+  locationBusy.value = true
+  try {
+    const created = await api.post<ItemLocation>('/parent/item-locations', {
+      name,
+      kind: locationForm.value.kind,
+    })
+    locations.value = [...locations.value, created].sort((a, b) => a.sort - b.sort || a.id - b.id)
+    locationDialog.value = false
+    ElMessage.success(t('common.locationBoxAdded'))
+  } catch (e) {
+    reportError(e)
+  } finally {
+    locationBusy.value = false
+  }
+}
+
+async function removeLocation(loc: ItemLocation): Promise<void> {
+  if (loc.is_system) return
+  try {
+    await api.delete(`/parent/item-locations/${loc.id}`)
+    locations.value = locations.value.filter((l) => l.id !== loc.id)
+    ElMessage.success(t('common.locationBoxRemoved'))
+    await loadItems()
+  } catch (e) {
+    reportError(e)
+  }
+}
+
 async function createExplore(): Promise<void> {
   if (!childId.value || !exploreForm.value.title.trim()) return
   try {
@@ -181,6 +224,32 @@ onMounted(loadAll)
           </el-select>
           <el-button type="primary" @click="itemDialog = true">{{ t('common.addItem') }}</el-button>
         </div>
+
+        <h3 class="sub">{{ t('common.locationBoxes') }}</h3>
+        <p class="hint">{{ t('common.locationBoxesHint') }}</p>
+        <div class="loc-actions">
+          <el-button size="small" @click="openAddLocation('home')">{{ t('common.addHomeBox') }}</el-button>
+          <el-button size="small" @click="openAddLocation('bag')">{{ t('common.addBagBox') }}</el-button>
+        </div>
+        <div class="loc-list">
+          <article v-for="loc in managedLocations" :key="loc.id" class="loc-card">
+            <div>
+              <strong>{{ loc.name }}</strong>
+              <span class="loc-kind">{{ loc.kind === 'home' ? t('common.locationKindHome') : t('common.locationKindBag') }}</span>
+              <el-tag v-if="loc.is_system" size="small" type="info">{{ t('common.systemLocation') }}</el-tag>
+            </div>
+            <el-button
+              v-if="!loc.is_system"
+              link
+              type="danger"
+              size="small"
+              @click="removeLocation(loc)"
+            >
+              {{ t('common.deleteLocationBox') }}
+            </el-button>
+          </article>
+        </div>
+
         <el-table v-if="!isPhone" :data="items" stripe>
           <el-table-column prop="name" :label="t('common.name')" />
           <el-table-column :label="t('common.location')">
@@ -296,6 +365,25 @@ onMounted(loadAll)
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="locationDialog"
+      :title="locationForm.kind === 'home' ? t('common.addHomeBox') : t('common.addBagBox')"
+      width="400px"
+    >
+      <el-form label-width="80px" @submit.prevent="createLocation">
+        <el-form-item :label="t('common.name')">
+          <el-input
+            v-model="locationForm.name"
+            :placeholder="locationForm.kind === 'home' ? t('common.homeBoxNamePlaceholder') : t('common.bagBoxNamePlaceholder')"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="locationDialog = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="locationBusy" @click="createLocation">{{ t('common.save') }}</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="exploreDialog" :title="t('common.newExploreTitle')" width="400px">
       <el-form label-width="60px">
         <el-form-item :label="t('common.title')"><el-input v-model="exploreForm.title" /></el-form-item>
@@ -408,5 +496,32 @@ onMounted(loadAll)
 .phone-select {
   width: 100%;
   max-width: 220px;
+}
+.loc-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.loc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.loc-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+}
+.loc-kind {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #888;
 }
 </style>

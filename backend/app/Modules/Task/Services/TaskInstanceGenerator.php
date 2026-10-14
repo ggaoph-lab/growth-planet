@@ -141,6 +141,9 @@ class TaskInstanceGenerator
             $task->title = mb_substr(trim($parts[1]), 0, 128);
             $task->description = mb_substr(trim($parts[2]), 0, 2000);
             $task->save();
+            $snapshot['title'] = $task->title;
+            $snapshot['description'] = $task->description;
+            $changed = true;
         }
 
         $groupId = $task->parent_id !== null ? (int) $task->parent_id : null;
@@ -151,12 +154,13 @@ class TaskInstanceGenerator
             $changed = true;
         }
 
-        $description = $task->description;
-        if (($snapshot['description'] ?? null) !== $description) {
-            $snapshot['description'] = $description;
+        // Only backfill missing snapshot fields. Do not overwrite title/description/
+        // rewards — parent "this day" edits own the frozen snapshot.
+        if (! array_key_exists('description', $snapshot)) {
+            $snapshot['description'] = $task->description;
             $changed = true;
         }
-        if (($snapshot['title'] ?? null) !== $task->title) {
+        if (! array_key_exists('title', $snapshot) || $snapshot['title'] === null || $snapshot['title'] === '') {
             $snapshot['title'] = $task->title;
             $changed = true;
         }

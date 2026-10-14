@@ -163,10 +163,10 @@ class KidLoginTest extends TestCase
             ->assertJsonMissingPath('data.profile.birth_date')
             ->json('data.planets');
 
-        $this->assertCount(11, $planets);
+        $this->assertCount(10, $planets);
         $available = [
-            'today_tasks', 'wallet', 'level', 'task_planet', 'shop',
-            'bag_planet', 'explore_planet', 'food_diary',
+            'task_planet', 'wallet', 'shop',
+            'bag_planet', 'schedule_planet', 'explore_planet', 'food_diary',
             'movie_planet', 'english_planet', 'collection',
         ];
         foreach ($planets as $planet) {

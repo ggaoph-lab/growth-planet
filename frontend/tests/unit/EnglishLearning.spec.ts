@@ -1,9 +1,13 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
 import { speakPhrase, warmPhrases } from '@/shared/speak'
+
+function answerButton(wrapper: VueWrapper, label: string) {
+  return wrapper.findAll('.answers .answer').find(button => button.find('.answer-main').text() === label)
+}
 
 vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: { get: vi.fn(), post: vi.fn().mockResolvedValue({ items: [] }), postIdempotent: vi.fn(), upload: vi.fn() } }))
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
@@ -14,7 +18,19 @@ vi.mock('@/shared/speak', () => ({
   warmPhrases: vi.fn(),
 }))
 const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', ipa: '/ˈæpl/', pos: 'n.', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
-const plan = { items: [card], completed: 0, due: 0, mastered: 0, learned: 0, total: 18, next_review: null, ai_status: 'ok' as const }
+const plan = {
+  items: [card],
+  completed: 0,
+  due: 0,
+  mastered: 0,
+  learned: 0,
+  total: 18,
+  next_review: null,
+  ai_status: 'ok' as const,
+  new_words_goal: 10,
+  new_words_completed: 0,
+  fairy_tale_unlocked: false,
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -27,6 +43,33 @@ beforeEach(() => {
         target: { key: 'like-apples', text: 'I like apples.', meaning: '我喜欢苹果。', kind: 'sentence' },
         attempt: null,
         retention_days: 7,
+      }
+    }
+    if (path === '/kid/english/learning/fairy-tale' || path.startsWith('/kid/english/learning/fairy-tale?')) {
+      return {
+        available: false,
+        reason: 'need_new_words',
+        new_words_completed: 0,
+        new_words_goal: 10,
+        heard: false,
+        tale: null,
+      }
+    }
+    if (path === '/kid/english/learning/records') {
+      return {
+        as_of: '2026-10-13',
+        completed_today: [],
+        new_words_today: [
+          { key: 'word:apple', text: 'apple', meaning: '苹果', emoji: '🍎', status: 'pending' },
+        ],
+        learned: [],
+        mastered: [],
+        known_words: [],
+        fairy_tales: [],
+        new_words_goal: 10,
+        new_words_completed: 0,
+        fairy_tales_heard: 0,
+        estimated_size: 0,
       }
     }
     return plan
@@ -46,7 +89,7 @@ describe('English learning', () => {
     expect(wrapper.findAll('.answers .answer').length).toBeGreaterThan(0)
     let finish!: (value: unknown) => void
     vi.mocked(api.postIdempotent).mockImplementation(() => new Promise(resolve => { finish = resolve }))
-    await wrapper.findAll('.answers .answer').find(button => button.text() === '苹果')!.trigger('click')
+    await answerButton(wrapper, '苹果')!.trigger('click')
     expect(wrapper.find('.answers .answer').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).not.toContain('+2 XP')
     finish({ correct: true, meaning: '苹果', xp: 2, coins: 1, next_review: '2026-10-14', plan: { ...plan, items: [], completed: 1 } })
@@ -66,7 +109,7 @@ describe('English learning', () => {
     })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    await wrapper.findAll('.answers .answer').find(button => button.text() === '苹果')!.trigger('click')
+    await answerButton(wrapper, '苹果')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('答对了')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['banana']), 'en-US')
@@ -78,6 +121,36 @@ describe('English learning', () => {
     expect(wrapper.find('h3').text()).toContain('banana')
     expect(wrapper.find('.word-emoji').text()).toContain('🍌')
     expect(speakPhrase).toHaveBeenCalledWith('banana', 'en-US')
+    wrapper.unmount()
+  })
+
+  it('after a correct answer follows plan order even if a same-text rematch is first', async () => {
+    vi.useFakeTimers()
+    const yellowRematch = {
+      ...card, key: 'probe:yellow:r2', text: 'yellow', meaning: '黄色', emoji: '🟡',
+      options: ['黄色', '紫色', '黑色'], probe: true,
+    }
+    const cloud = {
+      ...card, key: 'probe:cloud', text: 'cloud', meaning: '云', emoji: '☁️',
+      options: ['云', '河', '山'], probe: true,
+    }
+    vi.mocked(api.get).mockResolvedValue({
+      ...plan,
+      items: [{ ...card, key: 'probe:yellow', text: 'yellow', meaning: '黄色', emoji: '🟡', options: ['黄色', '紫色', '黑色'], probe: true }],
+    })
+    vi.mocked(api.postIdempotent).mockResolvedValue({
+      correct: true, meaning: '黄色', xp: 0, coins: 0, next_review: '2026-10-13',
+      plan: { ...plan, items: [yellowRematch, cloud], completed: 1 },
+      probe: true,
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    await answerButton(wrapper, '黄色')!.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    // Plan order wins — do not skip yellow rematch to ping-pong onto cloud.
+    expect(wrapper.find('h3').text()).toContain('yellow')
     wrapper.unmount()
   })
 
@@ -97,28 +170,47 @@ describe('English learning', () => {
     const wrapper = mount(EnglishLearning)
     await flushPromises()
     expect(wrapper.text()).toContain('根据意思，把单词拼写出来')
+    expect(wrapper.text()).toContain('我不会')
+    expect(wrapper.text()).toContain('听中文')
+    expect(wrapper.text()).not.toContain('听中文意思')
     expect(speakPhrase).toHaveBeenCalledWith('garden', 'en-US')
     wrapper.unmount()
   })
 
-  it('plays Chinese meaning after a miss on the study step', async () => {
+  it('records a spelling skip and reveals the word', async () => {
+    const spell = {
+      key: 'spell:garden', theme: '拼写填空', kind: 'spelling', text: 'garden', meaning: '花园',
+      emoji: '✍️', options: [], review: false, stage: 0, spelling: true, blank_hint: 'g _ r _ e n', probe: true,
+    }
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [spell] })
+    vi.mocked(api.postIdempotent).mockResolvedValue({
+      correct: false, meaning: '花园', xp: 0, coins: 0, next_review: '2026-10-13',
+      plan: { ...plan, items: [spell] }, spelling: true,
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '我不会')!.trigger('click')
+    await flushPromises()
+    expect(api.postIdempotent).toHaveBeenCalledWith('/kid/english/learning/answer', { key: 'spell:garden', answer: '__skip__' })
+    expect(wrapper.text()).toContain('garden')
+    expect(wrapper.text()).toContain('词汇小测试')
+    wrapper.unmount()
+  })
+
+  it('keeps the quiz on screen and marks a wrong Chinese option red', async () => {
     vi.mocked(api.postIdempotent).mockResolvedValue({
       correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13',
       plan: { ...plan, items: [card] },
     })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    await wrapper.findAll('.answers .answer').find(button => button.text() === '香蕉')!.trigger('click')
+    await answerButton(wrapper, '香蕉')!.trigger('click')
     await flushPromises()
-    await wrapper.find('.primary').trigger('click')
-    expect(wrapper.text()).toContain('刚才没答对')
-    expect(wrapper.find('.meaning').text()).toBe('苹果')
-    vi.mocked(speakPhrase).mockClear()
-    const chinese = wrapper.findAll('.listen-row .secondary').find(button => button.text().includes('听中文'))
-    expect(chinese).toBeTruthy()
-    await chinese!.trigger('click')
-    await flushPromises()
-    expect(speakPhrase).toHaveBeenCalledWith('苹果', 'zh-CN')
+    expect(wrapper.find('h3').text()).toContain('apple')
+    expect(answerButton(wrapper, '香蕉')!.classes()).toContain('wrong')
+    expect(wrapper.text()).toContain('不对，再选一次')
+    expect(wrapper.text()).not.toContain('刚才没答对')
+    expect(answerButton(wrapper, '苹果')).toBeTruthy()
     wrapper.unmount()
   })
 
@@ -136,16 +228,26 @@ describe('English learning', () => {
     wrapper.unmount()
   })
 
+  it('shows pinyin under Chinese meaning options', async () => {
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    const pinyinLines = wrapper.findAll('.answer-pinyin').map(node => node.text())
+    expect(pinyinLines.some(text => /píng\s*guǒ/i.test(text))).toBe(true)
+    expect(pinyinLines.some(text => /xiāng\s*jiāo/i.test(text))).toBe(true)
+    wrapper.unmount()
+  })
+
   it('hides option speakers for English review choices', async () => {
     const review = { ...card, review: true, options: ['apple', 'banana', 'water'] }
     vi.mocked(api.get).mockResolvedValue({ ...plan, items: [review] })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
     expect(wrapper.findAll('.answers .option-speak').length).toBe(0)
+    expect(wrapper.findAll('.answer-pinyin').length).toBe(0)
     wrapper.unmount()
   })
 
-  it('starts reviews with recall and gives a learning step after a mistake', async () => {
+  it('starts reviews with Chinese recall and marks a wrong English option red', async () => {
     const review = { ...card, review: true, options: ['apple', 'banana', 'water'] }
     vi.mocked(api.get).mockResolvedValue({ ...plan, items: [review] })
     vi.mocked(api.postIdempotent).mockResolvedValue({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [review] }, coach_tip: '再听一遍：apple 意思是「苹果」。' })
@@ -155,16 +257,13 @@ describe('English learning', () => {
     expect(speakPhrase).not.toHaveBeenCalledWith('apple', 'en-US')
     expect(wrapper.find('h3').text()).toBe('苹果')
     expect(wrapper.find('.meaning').exists()).toBe(false)
-    await wrapper.findAll('.answers .answer').find(button => button.text() === 'banana')!.trigger('click')
+    await answerButton(wrapper, 'banana')!.trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('答错不扣分')
-    expect(wrapper.find('.coach').text()).toContain('apple')
-    vi.mocked(speakPhrase).mockClear()
-    await wrapper.find('.primary').trigger('click')
-    expect(wrapper.find('.meaning').text()).toBe('苹果')
-    expect(wrapper.find('h3').text()).toContain('apple')
-    expect(wrapper.find('.emoji').text()).toContain('🍎')
-    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US')
+    expect(wrapper.find('h3').text()).toBe('苹果')
+    expect(answerButton(wrapper, 'banana')!.classes()).toContain('wrong')
+    expect(wrapper.text()).toContain('不对，再选一次')
+    expect(wrapper.find('.feedback').exists()).toBe(false)
+    expect(answerButton(wrapper, 'apple')).toBeTruthy()
     wrapper.unmount()
   })
 
@@ -241,24 +340,26 @@ describe('English learning', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('探索挑战')
     expect(wrapper.findAll('.answers .answer').length).toBeGreaterThan(0)
-    await wrapper.findAll('.answers .answer').find(button => button.text() === 'am')!.trigger('click')
+    await answerButton(wrapper, 'am')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('不发金币')
     expect(wrapper.find('.coach').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('uses the refreshed review choices when retrying the only missed new card', async () => {
-    vi.mocked(api.postIdempotent).mockResolvedValue({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [{ ...card, review: true, options: ['apple', 'banana', 'water'] }] } })
+  it('lets the child pick again after a miss without leaving the quiz', async () => {
+    vi.mocked(api.postIdempotent)
+      .mockResolvedValueOnce({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [{ ...card, review: true, options: ['apple', 'banana', 'water'] }] } })
+      .mockResolvedValueOnce({ correct: true, meaning: '苹果', xp: 2, coins: 1, next_review: '2026-10-14', plan: { ...plan, items: [] } })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    await wrapper.findAll('.answers .answer').find(button => button.text() === '香蕉')!.trigger('click')
+    await answerButton(wrapper, '香蕉')!.trigger('click')
     await flushPromises()
-    await wrapper.find('.primary').trigger('click')
-    expect(wrapper.text()).toContain('再挑战一次')
-    await wrapper.find('.primary').trigger('click')
-    expect(wrapper.find('h3').text()).toBe('苹果')
-    expect(wrapper.findAll('.answers .answer').map(button => button.text())).toContain('apple')
+    expect(answerButton(wrapper, '香蕉')!.classes()).toContain('wrong')
+    expect(wrapper.find('h3').text()).toContain('apple')
+    await answerButton(wrapper, '苹果')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('答对了')
     wrapper.unmount()
   })
 
@@ -322,6 +423,259 @@ describe('English learning', () => {
     expect(wrapper.find('.emoji-quiz').exists()).toBe(false)
     expect(wrapper.find('h3').text()).toContain('🍎')
     expect(wrapper.find('h3').text()).toContain('apple')
+    wrapper.unmount()
+  })
+
+  it('shows today’s new-word progress chip', async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/kid/english/learning/records') {
+        return {
+          as_of: '2026-10-13',
+          completed_today: [],
+          new_words_today: [{ key: 'word:apple', text: 'apple', meaning: '苹果', emoji: '🍎', status: 'done' }],
+          learned: [{ key: 'word:apple', text: 'apple', meaning: '苹果', emoji: '🍎', stage: 1 }],
+          mastered: [],
+          known_words: [{ key: 'known:apple', text: 'apple', meaning: '', emoji: '📖' }],
+          fairy_tales: [],
+          new_words_goal: 10,
+          new_words_completed: 3,
+          fairy_tales_heard: 0,
+          estimated_size: 1,
+        }
+      }
+      return { ...plan, new_words_completed: 3, new_words_goal: 10, fairy_tales_heard: 0 }
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('今日新词')
+    expect(wrapper.text()).toContain('3/10')
+    expect(wrapper.text()).toContain('已读童话')
+    await wrapper.findAll('.stat-chip').find(btn => btn.text().includes('今日新词'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('今日新词记录')
+    expect(wrapper.text()).toContain('apple')
+    wrapper.unmount()
+  })
+
+  it('opens fairy-tale history and plays Chinese or English from title actions', async () => {
+    const tale = {
+      id: 'red-riding-hood',
+      title_zh: '小红帽',
+      title_en: 'Little Red Riding Hood',
+      source: '格林童话',
+      zh_lines: ['从前有一个小女孩。'],
+      en_lines: ['Once there was a little girl.'],
+    }
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/kid/english/learning/records') {
+        return {
+          as_of: '2026-10-13',
+          completed_today: [],
+          new_words_today: [],
+          learned: [],
+          mastered: [],
+          known_words: [],
+          fairy_tales: [{ date: '2026-10-12', id: 'red-riding-hood', title_zh: '小红帽', title_en: 'Little Red Riding Hood', source: '格林童话', heard: true }],
+          new_words_goal: 10,
+          new_words_completed: 10,
+          fairy_tales_heard: 1,
+          estimated_size: 0,
+        }
+      }
+      if (path.startsWith('/kid/english/learning/fairy-tale?')) {
+        return { available: true, reason: null, new_words_completed: 10, new_words_goal: 10, heard: true, tale, date: '2026-10-12' }
+      }
+      return { ...plan, items: [], new_words_completed: 10, fairy_tale_unlocked: true, fairy_tales_heard: 1 }
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    await wrapper.findAll('.stat-chip').find(btn => btn.text().includes('已读童话'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已读童话')
+    await wrapper.find('.record-title-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('再读一遍')
+    expect(wrapper.find('.fairy-head .fairy-actions').exists()).toBe(true)
+    vi.mocked(speakPhrase).mockClear()
+    await wrapper.findAll('.fairy-actions button')[0].trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledWith('从前有一个小女孩。', 'zh-CN')
+    vi.mocked(speakPhrase).mockClear()
+    await wrapper.findAll('.fairy-actions button')[1].trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledWith('Once there was a little girl.', 'en-US')
+    wrapper.unmount()
+  })
+
+  it('shows centered fairy-tale panel and marks heard after English', async () => {
+    const tale = {
+      id: 'red-riding-hood',
+      title_zh: '小红帽',
+      title_en: 'Little Red Riding Hood',
+      source: '格林童话',
+      source_en: 'Grimm',
+      zh_lines: ['从前有一个小女孩。', '她去看望奶奶。'],
+      en_lines: ['Once there was a little girl.', 'She went to see Grandma.'],
+    }
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/kid/english/learning/speak') {
+        return { available: false, target: null, attempt: null, retention_days: 7 }
+      }
+      if (path === '/kid/english/learning/fairy-tale') {
+        return {
+          available: true,
+          reason: null,
+          new_words_completed: 10,
+          new_words_goal: 10,
+          heard: false,
+          tale,
+        }
+      }
+      return { ...plan, items: [], completed: 10, new_words_completed: 10, fairy_tale_unlocked: true }
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('童话时间')
+    expect(wrapper.find('.fairy-head').exists()).toBe(true)
+    expect(wrapper.findAll('.fairy-box .word-chip').map(button => button.text())).toEqual(
+      expect.arrayContaining(['Little', 'girl', 'Grandma']),
+    )
+    expect(wrapper.findAll('.fairy-actions button')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('先听中文再听英文')
+    const titleChars = wrapper.findAll('.fairy-title .fairy-char').map(node => node.text())
+    expect(titleChars.join('')).toBe('小红帽')
+    expect(wrapper.find('.fairy-title .fairy-pinyin').text()).toMatch(/xiǎo/i)
+    expect(wrapper.find('.fairy-title .fairy-en-text').text()).toBe('Little Red Riding Hood')
+    expect(wrapper.find('.fairy-body .fairy-pinyin').exists()).toBe(true)
+    expect(wrapper.find('.fairy-body .fairy-pinyin').text()).toMatch(/cóng/i)
+    const lines = wrapper.findAll('.fairy-body .fairy-line')
+    expect(lines).toHaveLength(2)
+    const firstChars = lines[0].findAll('.fairy-char').map(node => node.text())
+    expect(firstChars.join('')).toBe('从前有一个小女孩。')
+    expect(lines[0].find('.fairy-en-text').text()).toBe('Once there was a little girl.')
+    expect(lines[1].find('.fairy-en-text').text()).toBe('She went to see Grandma.')
+    vi.mocked(speakPhrase).mockClear()
+    await wrapper.findAll('.fairy-actions button')[0].trigger('click')
+    await flushPromises()
+    expect(vi.mocked(speakPhrase).mock.calls.map(call => [String(call[0]), call[1]])).toEqual([
+      ['从前有一个小女孩。', 'zh-CN'],
+      ['她去看望奶奶。', 'zh-CN'],
+    ])
+    expect(api.postIdempotent).not.toHaveBeenCalledWith('/kid/english/learning/fairy-tale/heard', {})
+    vi.mocked(speakPhrase).mockClear()
+    await wrapper.findAll('.fairy-actions button')[1].trigger('click')
+    await flushPromises()
+    expect(vi.mocked(speakPhrase).mock.calls.map(call => [String(call[0]), call[1]])).toEqual([
+      ['Once there was a little girl.', 'en-US'],
+      ['She went to see Grandma.', 'en-US'],
+    ])
+    expect(api.postIdempotent).toHaveBeenCalledWith('/kid/english/learning/fairy-tale/heard', {})
+    wrapper.unmount()
+  })
+
+  it('adds a tapped fairy-tale word and continues it from today’s new words', async () => {
+    const tale = {
+      id: 'red-riding-hood',
+      title_zh: '小红帽',
+      title_en: 'Little Red Riding Hood',
+      source: '格林童话',
+      source_en: 'Grimm',
+      zh_lines: ['她穿过森林。'],
+      en_lines: ['She walked through the forest.'],
+    }
+    const forest = {
+      key: 'word:forest',
+      theme: '今日新词',
+      kind: 'word',
+      text: 'forest',
+      meaning: '森林',
+      emoji: '🌲',
+      options: ['森林', '海洋', '沙漠'],
+      review: false,
+      stage: 0,
+      daily_word: true,
+      collected: true,
+    }
+    vi.mocked(api.get).mockImplementation(async (path: string, query?: { prefer?: string }) => {
+      if (path === '/kid/english/learning/speak') {
+        return { available: false, target: null, attempt: null, retention_days: 7 }
+      }
+      if (path === '/kid/english/learning/fairy-tale') {
+        return {
+          available: true,
+          reason: null,
+          new_words_completed: 10,
+          new_words_goal: 10,
+          heard: true,
+          tale,
+          pack_words: [],
+        }
+      }
+      if (path === '/kid/english/learning/records') {
+        return {
+          as_of: '2026-10-13',
+          completed_today: [],
+          new_words_today: [
+            { key: 'word:shoemaker', text: 'shoemaker', meaning: '鞋匠', emoji: '👞', status: 'pending', collected: true },
+            { key: 'word:forest', text: 'forest', meaning: '森林', emoji: '🌲', status: 'pending', collected: true },
+          ],
+          learned: [],
+          mastered: [],
+          known_words: [],
+          fairy_tales: [],
+          new_words_goal: 10,
+          new_words_completed: 10,
+          fairy_tales_heard: 1,
+          estimated_size: 0,
+        }
+      }
+      const resumed = query?.prefer === 'word:forest'
+      return {
+        ...plan,
+        items: resumed ? [forest] : query?.prefer === 'word:shoemaker' ? [{
+          key: 'word:shoemaker',
+          theme: '今日新词',
+          kind: 'word',
+          text: 'shoemaker',
+          meaning: '鞋匠',
+          emoji: '👞',
+          options: ['鞋匠', '厨师', '老师'],
+          review: false,
+          stage: 0,
+          daily_word: true,
+          collected: true,
+        }] : [],
+        completed: 10,
+        new_words_completed: 10,
+        fairy_tale_unlocked: true,
+        fairy_tale_heard_today: true,
+      }
+    })
+    vi.mocked(api.post).mockResolvedValue({
+      word: 'forest',
+      added: true,
+      already: false,
+      learned: false,
+      pack_words: ['forest'],
+    })
+
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    const chip = wrapper.findAll('.fairy-box .word-chip').find(button => button.text() === 'forest')
+    expect(chip).toBeTruthy()
+    await chip!.trigger('click')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('/kid/english/learning/fairy-tale/words', { word: 'forest' })
+    expect(wrapper.text()).toContain('已把「forest」加入今日新词')
+    expect(chip!.classes()).toContain('added')
+
+    await wrapper.findAll('.stat-chip').find(button => button.text().includes('今日新词'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('继续学习（2）')
+    await wrapper.find('.records-continue').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.lesson h3').text()).toContain('forest')
+    expect(wrapper.text()).toContain('森林')
     wrapper.unmount()
   })
 })

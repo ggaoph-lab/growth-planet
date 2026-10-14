@@ -16,9 +16,13 @@ class EnglishLearningController
         private EnglishSpeakService $speak,
     ) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        return response()->json(['data' => $this->learning->plan($this->context->child())]);
+        $prefer = $request->query('prefer');
+
+        return response()->json([
+            'data' => $this->learning->plan($this->context->child(), is_string($prefer) ? $prefer : null),
+        ]);
     }
 
     public function answer(Request $request): JsonResponse
@@ -35,6 +39,42 @@ class EnglishLearningController
         return response()->json([
             'data' => $this->learning->addLearningWord($this->context->child(), $data['word']),
         ], 201);
+    }
+
+    public function fairyTale(Request $request): JsonResponse
+    {
+        $date = $request->query('date');
+        if (is_string($date) && $date !== '') {
+            return response()->json(['data' => $this->learning->fairyTaleOnDate($this->context->child(), $date)]);
+        }
+
+        return response()->json(['data' => $this->learning->fairyTale($this->context->child())]);
+    }
+
+    public function fairyTaleHeard(): JsonResponse
+    {
+        return response()->json(['data' => $this->learning->fairyTaleHeard($this->context->child())]);
+    }
+
+    public function fairyTaleWord(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'word' => ['required', 'string', 'max:40'],
+            'date' => ['nullable', 'string', 'date_format:Y-m-d'],
+        ]);
+
+        return response()->json([
+            'data' => $this->learning->collectFairyTaleWord(
+                $this->context->child(),
+                $data['word'],
+                $data['date'] ?? null,
+            ),
+        ]);
+    }
+
+    public function records(): JsonResponse
+    {
+        return response()->json(['data' => $this->learning->records($this->context->child())]);
     }
 
     public function speakPrompt(): JsonResponse

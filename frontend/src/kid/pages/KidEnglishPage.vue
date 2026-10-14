@@ -116,12 +116,9 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page { padding: 0 16px 32px; max-width: 720px; margin: 0 auto; }
+.page { padding: 0 16px 32px; max-width: 1120px; margin: 0 auto; }
 @media (min-width: 768px) {
   .page { padding: 0 24px 40px; }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .back { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; }

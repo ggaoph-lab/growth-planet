@@ -14,12 +14,11 @@ const router = useRouter()
 const session = useSessionStore()
 
 const planetRoutes: Record<string, string> = {
-  today_tasks: 'kid-tasks',
   task_planet: 'kid-tasks',
   wallet: 'kid-wallet',
-  level: 'kid-wallet',
   shop: 'kid-shop',
   bag_planet: 'kid-bag',
+  schedule_planet: 'kid-schedule',
   explore_planet: 'kid-explore',
   food_diary: 'kid-food',
   movie_planet: 'kid-movies',

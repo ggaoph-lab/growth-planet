@@ -26,6 +26,7 @@ const primaryNav = computed(() => [
   { name: 'parent-habits', label: t('parent.nav.habits'), icon: '🌱' },
   { name: 'parent-shop', label: t('parent.nav.shop'), icon: '🎁' },
   { name: 'parent-life', label: t('parent.nav.life'), icon: '🎒' },
+  { name: 'parent-schedule', label: t('parent.nav.schedule'), icon: '📅' },
   { name: 'parent-media', label: t('parent.nav.media'), icon: '🎬' },
   { name: 'parent-children', label: t('parent.nav.children'), icon: '🧒' },
 ])

@@ -21,7 +21,10 @@ class EnglishRichPathTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
 
         $standard = $service->plan($child);
-        $this->assertTrue(collect($standard['items'])->contains(fn ($item) => ($item['key'] ?? '') === 'apple'));
+        $this->assertTrue(collect($standard['items'])->contains(
+            fn ($item) => ! empty($item['daily_word']) || str_starts_with((string) ($item['key'] ?? ''), 'word:')
+        ));
+        $this->assertFalse(collect($standard['items'])->contains(fn ($item) => ($item['key'] ?? '') === 'apple'));
 
         $response = $this->actingAsParent($parent)->putJson('/api/v1/parent/english/learning/path', [
             'child_id' => $child->id,
@@ -35,6 +38,19 @@ class EnglishRichPathTest extends TestCase
         $profile = DB::table('english_vocabulary_profiles')->where('child_id', $child->id)->first();
         $this->assertSame('rich', $profile->path);
         $this->assertGreaterThanOrEqual(2, (int) $profile->band);
+
+        for ($i = 0; $i < EnglishVocabularyService::NEW_WORDS_DAILY_GOAL; $i++) {
+            DB::table('english_learning_progress')->updateOrInsert(
+                ['child_id' => $child->id, 'item_key' => 'word:rich-seed'.$i],
+                [
+                    'stage' => 1,
+                    'introduced_date' => '2026-10-13',
+                    'due_date' => '2026-10-14',
+                    'completed_date' => '2026-10-13',
+                ],
+            );
+        }
+        $this->markEnglishFairyHeard($child, '2026-10-13');
 
         $plan = $service->plan($child);
         $this->assertSame('rich', $plan['vocabulary']['path']);
@@ -55,10 +71,29 @@ class EnglishRichPathTest extends TestCase
         $vocab = app(EnglishVocabularyService::class);
         $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
 
-        $service->answer($child, 'apple', '苹果');
+        DB::table('english_learning_progress')->insert([
+            'child_id' => $child->id,
+            'item_key' => 'apple',
+            'stage' => 1,
+            'introduced_date' => '2026-10-13',
+            'due_date' => '2026-10-14',
+            'completed_date' => '2026-10-13',
+        ]);
         $vocab->setPath($child, EnglishVocabularyService::PATH_RICH);
 
         $this->travelTo(CarbonImmutable::parse('2026-10-14 10:00:00', 'Asia/Shanghai'));
+        for ($i = 0; $i < EnglishVocabularyService::NEW_WORDS_DAILY_GOAL; $i++) {
+            DB::table('english_learning_progress')->updateOrInsert(
+                ['child_id' => $child->id, 'item_key' => 'word:goal-seed'.$i],
+                [
+                    'stage' => 1,
+                    'introduced_date' => '2026-10-14',
+                    'due_date' => '2026-10-15',
+                    'completed_date' => '2026-10-14',
+                ],
+            );
+        }
+        $this->markEnglishFairyHeard($child, '2026-10-14');
         $plan = $service->plan($child);
         $review = collect($plan['items'])->firstWhere('key', 'apple');
         $this->assertNotNull($review);

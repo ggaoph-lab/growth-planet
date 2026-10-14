@@ -39,6 +39,9 @@ const instanceDate = ref('')
 const showForm = ref(false)
 const editingId = ref<number | null>(null)
 const showHomework = ref(false)
+const showEditScope = ref(false)
+const editScopeDate = ref('')
+const pendingSavePayload = ref<Record<string, unknown> | null>(null)
 
 const childMap = computed(() => new Map(children.value.map((c) => [c.id, c])))
 
@@ -51,11 +54,17 @@ type SubtaskForm = {
   start_date: string
   due_time: string | null
   recurring: boolean
+  /** ISO weekdays 1=Mon … 7=Sun when recurring */
+  weekdays: number[]
   end_date: string
   xp_reward: number
   coin_reward: number
   with_parent: boolean
 }
+
+type EditScope = 'this_day' | 'weekday_forward'
+
+const WEEKDAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7] as const
 
 type TaskForm = {
   title: string
@@ -73,12 +82,14 @@ function soleActiveChildId(): number | undefined {
 }
 
 function blankSubtask(): SubtaskForm {
+  const start = todayIso()
   return {
     title: '',
     description: '',
-    start_date: todayIso(),
+    start_date: start,
     due_time: '13:20',
     recurring: false,
+    weekdays: [isoWeekday(start)],
     end_date: '',
     xp_reward: 10,
     coin_reward: 5,
@@ -180,13 +191,42 @@ function isoWeekday(dateStr: string): number {
   return day === 0 ? 7 : day
 }
 
+function weekdayLabel(day: number): string {
+  return t(`common.weekdayShort.${day}`)
+}
+
+function normalizeWeekdays(raw: number[] | null | undefined, fallbackDate: string): number[] {
+  const fromApi = (raw ?? []).map((d) => Number(d)).filter((d) => d >= 1 && d <= 7)
+  const unique = [...new Set(fromApi)].sort((a, b) => a - b)
+  if (unique.length > 0) return unique
+  return [isoWeekday(fallbackDate || todayIso())]
+}
+
+function onSubtaskRecurringChange(sub: SubtaskForm, enabled: boolean): void {
+  sub.recurring = enabled
+  if (enabled && sub.weekdays.length === 0) {
+    sub.weekdays = [isoWeekday(sub.start_date || todayIso())]
+  }
+}
+
+function onSubtaskStartDateChange(sub: SubtaskForm, value: string | null): void {
+  const next = value || todayIso()
+  const prev = sub.start_date
+  sub.start_date = next
+  if (!sub.recurring) return
+  // If the parent only had the previous start weekday selected, follow the new start date.
+  if (sub.weekdays.length === 1 && sub.weekdays[0] === isoWeekday(prev)) {
+    sub.weekdays = [isoWeekday(next)]
+  }
+}
+
 function buildSubtaskSchedules(sub: SubtaskForm): TaskSchedule[] {
   const due = sub.due_time || null
   if (sub.recurring) {
     return [
       {
         frequency: 'weekly',
-        weekdays: [isoWeekday(sub.start_date)],
+        weekdays: normalizeWeekdays(sub.weekdays, sub.start_date),
         due_time: due,
       },
     ]
@@ -201,13 +241,16 @@ function buildSubtaskSchedules(sub: SubtaskForm): TaskSchedule[] {
 
 function subtaskFromTask(task: ParentTask): SubtaskForm {
   const schedule = task.schedules?.[0]
+  const start = dateOnly(task.start_date) || todayIso()
+  const recurring = schedule?.frequency === 'weekly'
   return {
     id: task.id,
     title: task.title,
     description: task.description ?? '',
-    start_date: dateOnly(task.start_date) || todayIso(),
+    start_date: start,
     due_time: timeOnly(schedule?.due_time ?? undefined) || null,
-    recurring: schedule?.frequency === 'weekly',
+    recurring,
+    weekdays: normalizeWeekdays(schedule?.weekdays ?? null, start),
     end_date: dateOnly(task.end_date),
     xp_reward: task.xp_reward,
     coin_reward: task.coin_reward,
@@ -243,7 +286,10 @@ function scheduleSummary(task: ParentTask): string {
   const time = timeOnly(schedule?.due_time ?? undefined)
   const timePart = time ? ` ${time}` : ''
   if (schedule?.frequency === 'weekly') {
-    return `${t('common.scheduleWeekly')}${timePart}`
+    const days = normalizeWeekdays(schedule.weekdays ?? null, dateOnly(task.start_date) || todayIso())
+      .map((d) => weekdayLabel(d))
+      .join(locale.value.toString().toLowerCase().startsWith('zh') ? '、' : ', ')
+    return `${t('common.scheduleWeekly')} ${days}${timePart}`
   }
   if (schedule?.frequency === 'daily') {
     return `${t('common.daily')}${timePart}`
@@ -416,46 +462,52 @@ function validateForm(): boolean {
     ElMessage.warning(t('common.fillTaskEndDate'))
     return false
   }
+  if (form.value.subtasks.some((sub) => sub.recurring && sub.weekdays.length === 0)) {
+    ElMessage.warning(t('common.fillTaskWeekdays'))
+    return false
+  }
   return true
 }
 
-async function saveTask(): Promise<void> {
-  if (!validateForm()) return
+function buildSavePayload(scopeFields: { edit_scope?: EditScope; scope_date?: string } = {}): Record<string, unknown> {
+  const subs = form.value.subtasks
+  const startDates = subs.map((sub) => sub.start_date).filter(Boolean).sort()
+  const endDates = subs
+    .map((sub) => (sub.recurring ? sub.end_date : sub.start_date))
+    .filter(Boolean)
+    .sort()
+  return {
+    title: form.value.title.trim(),
+    kind: form.value.kind,
+    start_date: startDates[0] ?? todayIso(),
+    end_date: endDates[endDates.length - 1] ?? startDates[0] ?? todayIso(),
+    xp_reward: 0,
+    coin_reward: 0,
+    with_parent: false,
+    schedules: [{ frequency: 'once' as const }],
+    child_id: form.value.child_id ?? null,
+    category_id: form.value.category_id ?? null,
+    subtasks: subs.map((sub) => ({
+      ...(sub.id ? { id: sub.id } : {}),
+      title: sub.title.trim(),
+      description: sub.description.trim() || null,
+      start_date: sub.start_date,
+      end_date: sub.recurring ? sub.end_date : sub.start_date,
+      xp_reward: sub.xp_reward,
+      coin_reward: sub.coin_reward,
+      with_parent: sub.with_parent,
+      schedules: buildSubtaskSchedules(sub),
+    })),
+    ...(form.value.kind === 'stepped'
+      ? { steps: form.value.steps.filter((s) => s.title.trim()).map((s) => ({ title: s.title.trim() })) }
+      : {}),
+    ...scopeFields,
+  }
+}
+
+async function commitSave(payload: Record<string, unknown>): Promise<void> {
   saving.value = true
   try {
-    const subs = form.value.subtasks
-    const startDates = subs.map((sub) => sub.start_date).filter(Boolean).sort()
-    const endDates = subs
-      .map((sub) => (sub.recurring ? sub.end_date : sub.start_date))
-      .filter(Boolean)
-      .sort()
-    const payload = {
-      title: form.value.title.trim(),
-      kind: form.value.kind,
-      start_date: startDates[0] ?? todayIso(),
-      end_date: endDates[endDates.length - 1] ?? startDates[0] ?? todayIso(),
-      xp_reward: 0,
-      coin_reward: 0,
-      with_parent: false,
-      schedules: [{ frequency: 'once' as const }],
-      child_id: form.value.child_id ?? null,
-      category_id: form.value.category_id ?? null,
-      subtasks: subs.map((sub) => ({
-        ...(sub.id ? { id: sub.id } : {}),
-        title: sub.title.trim(),
-        description: sub.description.trim() || null,
-        start_date: sub.start_date,
-        end_date: sub.recurring ? sub.end_date : sub.start_date,
-        xp_reward: sub.xp_reward,
-        coin_reward: sub.coin_reward,
-        with_parent: sub.with_parent,
-        schedules: buildSubtaskSchedules(sub),
-      })),
-      ...(form.value.kind === 'stepped'
-        ? { steps: form.value.steps.filter((s) => s.title.trim()).map((s) => ({ title: s.title.trim() })) }
-        : {}),
-    }
-
     if (editingId.value) {
       const updated = await api.put<ParentTask>(`/parent/tasks/${editingId.value}`, payload)
       const idx = tasks.value.findIndex((x) => x.id === updated.id)
@@ -468,12 +520,38 @@ async function saveTask(): Promise<void> {
       ElMessage.success(t('common.taskCreated'))
     }
     showForm.value = false
+    showEditScope.value = false
+    pendingSavePayload.value = null
     await loadInstances()
   } catch (e) {
     reportError(e)
   } finally {
     saving.value = false
   }
+}
+
+async function saveTask(): Promise<void> {
+  if (!validateForm()) return
+
+  const hasRecurring = form.value.subtasks.some((sub) => sub.recurring)
+  if (editingId.value && hasRecurring) {
+    pendingSavePayload.value = buildSavePayload()
+    editScopeDate.value = todayIso()
+    showEditScope.value = true
+    return
+  }
+
+  await commitSave(buildSavePayload())
+}
+
+async function confirmEditScope(scope: EditScope): Promise<void> {
+  const base = pendingSavePayload.value
+  if (!base) return
+  await commitSave({
+    ...base,
+    edit_scope: scope,
+    scope_date: editScopeDate.value || todayIso(),
+  })
 }
 
 async function deleteTask(task: ParentTask): Promise<void> {
@@ -902,7 +980,13 @@ onMounted(load)
             </div>
           </el-form-item>
           <el-form-item :label="t('common.taskStartDate')" required>
-            <el-date-picker v-model="sub.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-date-picker
+              :model-value="sub.start_date"
+              type="date"
+              value-format="YYYY-MM-DD"
+              style="width: 100%"
+              @update:model-value="(v: string | null) => onSubtaskStartDateChange(sub, v)"
+            />
           </el-form-item>
           <el-form-item :label="t('common.taskTime')">
             <el-time-picker
@@ -915,9 +999,19 @@ onMounted(load)
           </el-form-item>
           <el-form-item :label="t('common.recurringTask')">
             <div class="field-inline">
-              <el-switch v-model="sub.recurring" />
+              <el-switch
+                :model-value="sub.recurring"
+                @update:model-value="(v: string | number | boolean) => onSubtaskRecurringChange(sub, Boolean(v))"
+              />
               <span class="hint-inline">{{ t('common.recurringTaskHint') }}</span>
             </div>
+          </el-form-item>
+          <el-form-item v-if="sub.recurring" :label="t('common.taskWeekdays')" required>
+            <el-checkbox-group v-model="sub.weekdays" class="weekday-group">
+              <el-checkbox v-for="day in WEEKDAY_OPTIONS" :key="day" :value="day">
+                {{ weekdayLabel(day) }}
+              </el-checkbox>
+            </el-checkbox-group>
           </el-form-item>
           <el-form-item v-if="sub.recurring" :label="t('common.taskEndDate')" required>
             <el-date-picker
@@ -951,6 +1045,34 @@ onMounted(load)
         <el-button @click="showForm = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="saving" @click="saveTask">
           {{ editingId ? t('common.save') : t('common.create') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showEditScope"
+      :title="t('common.recurringEditScopeTitle')"
+      width="440px"
+      @closed="pendingSavePayload = null"
+    >
+      <p class="edit-scope-hint">{{ t('common.recurringEditScopeHint') }}</p>
+      <el-form label-width="120px">
+        <el-form-item :label="t('common.recurringScopeDate')" required>
+          <el-date-picker
+            v-model="editScopeDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditScope = false">{{ t('common.cancel') }}</el-button>
+        <el-button :loading="saving" @click="confirmEditScope('this_day')">
+          {{ t('common.recurringEditThisDay') }}
+        </el-button>
+        <el-button type="primary" :loading="saving" @click="confirmEditScope('weekday_forward')">
+          {{ t('common.recurringEditWeekdayForward') }}
         </el-button>
       </template>
     </el-dialog>
@@ -1302,6 +1424,17 @@ onMounted(load)
   margin-top: 0;
   flex: 1;
   min-width: 0;
+}
+.weekday-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.edit-scope-hint {
+  margin: 0 0 16px;
+  color: #6b6f85;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .subtask-card {
   margin-bottom: 12px;

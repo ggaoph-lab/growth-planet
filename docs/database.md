@@ -196,7 +196,7 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 | amount | 有符号，≠ 0；XP 表只允许 `> 0`，冲正除外（见 points-rules.md §1） |
 | balance_before / balance_after | |
 | entry_type | `reward`、`redemption`、`refund`、`reversal`、`parent_bonus`… |
-| source_module | `task`、`habit`、`shop`、`movie`、`english`、`exploration`、`parent` |
+| source_module | `task`、`habit`、`shop`、`movie`、`english`、`exploration`、`parent`、`item` |
 | source_type / source_id | 来源业务对象 |
 | idempotency_key | UNIQUE |
 | reversal_of_id | UNIQUE NULL（同一笔只能冲正一次） |
@@ -210,7 +210,7 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 `id`、`family_id`、`account_id`、`amount`、`source_type`、`source_id`、`status`（`active`/`captured`/`released`）、`idempotency_key UNIQUE`、`captured_ledger_id`、`timestamps`。
 
 ### `reward_policies`
-`id`、`family_id`、`code`（如 `task.complete`、`movie.first_start`、`movie.completion`、`movie.cross_movie`、`english.active_choice`）、`xp_amount`、`coin_amount`、`requires_approval`、`max_per_event`、`max_per_day`、`max_per_week`、`max_per_subject`（同一业务对象最多次数）、`is_active`、timestamps。所有金额与限额可配置，代码中只有默认种子值。
+`id`、`family_id`、`code`（如 `task.complete`、`movie.first_start`、`movie.completion`、`movie.cross_movie`、`english.active_choice`、`item.checklist.before_school`、`item.checklist.after_school`）、`xp_amount`、`coin_amount`、`requires_approval`、`max_per_event`、`max_per_day`、`max_per_week`、`max_per_subject`（同一业务对象最多次数）、`is_active`、timestamps。所有金额与限额可配置，代码中只有默认种子值。
 
 ### `reward_grants`
 | 列 | 说明 |
@@ -290,11 +290,26 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 > **位置（`location_id`）与状态（`status`）分开**：一个水杯可以"在学校 + 正常"，也可以"位置未知（保留最后已知位置）+ 暂时找不到"。
 
 ### `item_events`（只追加）
-`id`、`family_id`、`item_id`、`event_type`（`moved`/`checked`/`reported_missing`/`found`/`marked_lost`/`damaged`/`correction`）、`from_location_id`、`to_location_id`、`from_status`、`to_status`、`checklist_line_id`、`actor_id`、`occurred_at`、`note`、`created_at`。
+`id`、`family_id`、`item_id`、`event_type`（`moved`/`checked`/`brought_home`/`reported_missing`/`found`/`marked_lost`/`damaged`/`correction`）、`from_location_id`、`to_location_id`、`from_status`、`to_status`、`checklist_line_id`、`actor_id`、`occurred_at`、`note`、`created_at`。
 
 ### `item_checklists` / `item_checklist_lines`
-`item_checklists`：`child_id`、`kind`（`before_school`/`after_school`）、`target_date`、`status`；UNIQUE(`child_id`, `kind`, `target_date`)。
-`item_checklist_lines`：`item_id`、`result`（`pending`/`present`/`not_found`/`left_at_school`）、`actor_id`、`checked_at`。
+`item_checklists`：`child_id`、`kind`（`before_school`/`after_school`）、`target_date`、`status`（`open`/`completed`/`completed_with_issues`/`cancelled`）、`generated_from JSON NULL`（解析到的课程快照）；UNIQUE(`child_id`, `kind`, `target_date`)。活跃清单：`before_school` 的 `target_date` 为次日（前一晚完成），`after_school` 为当日。非上学日不新建；已有 `open` 清单标为 `cancelled`。
+`item_checklist_lines`：`item_id`、`result`（`pending`/`present`/`not_found`/`left_at_school`/`not_needed`）、`sources JSON NULL`、`actor_id`、`checked_at`。生成来源：每日必带 + 科目物品 + 临时加带；再生时已确认结果保留，不再需要的 `pending` → `not_needed`。
+
+### 8.1 课程表（Schedule）
+
+### `school_schedules` / `school_periods`
+`school_schedules`：`family_id`、`child_id`、`title`、`period_count`、`effective_from`、`effective_to NULL`、timestamps、deleted_at。同一孩子可有多段生效区间；解析取 `effective_from ≤ date` 且（`effective_to` 空或 ≥ date）中最新一条。
+`school_periods`：`school_schedule_id`、`weekday`（ISO 1–7）、`period_index`、`subject`、`start_time`/`end_time`/`room` 可选；UNIQUE(`school_schedule_id`, `weekday`, `period_index`)。
+
+### `schedule_exceptions`
+`family_id`、`child_id NULL`（空=全家）、`exception_date`、`type`（`no_school`/`makeup_day`/`custom`）、`follow_weekday`（调休）、`custom_periods JSON`（临时节次）、`note`、soft delete。孩子专属例外优先于全家例外。
+
+### `subject_item_requirements`
+`family_id`、`child_id`、`subject`、`item_id`、`quantity`；UNIQUE(`child_id`, `subject`, `item_id`)。
+
+### `bag_extra_requirements`
+`family_id`、`child_id`、`target_date`、`item_id NULL`、`label NULL`、`quantity`、`note`。纯文字标签在生成清单时物化为一次性物品。
 
 ## 9. 勇敢探索与食物日记（第三阶段）
 

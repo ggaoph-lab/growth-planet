@@ -8,5 +8,5 @@
 // biome-ignore lint: disable
 export {}
 declare global {
-
+  const ElDatePicker: typeof import('element-plus/es').ElDatePicker
 }

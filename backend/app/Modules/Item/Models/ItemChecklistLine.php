@@ -15,6 +15,7 @@ class ItemChecklistLine extends Model
         return [
             'result' => ItemChecklistLineResult::class,
             'checked_at' => 'datetime',
+            'sources' => 'array',
         ];
     }
 

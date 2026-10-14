@@ -11,11 +11,10 @@ const { t } = useI18n()
 const title = computed(() => planetTitle(props.planet.key, props.planet.title))
 
 const ICONS: Record<string, string> = {
-  checklist: '✅',
   coin: '🪙',
-  trophy: '🏆',
   'planet-task': '🪐',
   backpack: '🎒',
+  calendar: '📅',
   compass: '🧭',
   food: '🥕',
   movie: '🎬',

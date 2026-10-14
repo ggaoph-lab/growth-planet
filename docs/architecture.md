@@ -66,7 +66,8 @@ flowchart LR
 | **Task** | 任务定义、排期规则、每日实例、步骤、提交、自检、长期目标 | `tasks`、`task_steps`、`task_schedules`、`task_instances`、`task_instance_steps`、`task_submissions` | 2 |
 | **Habit** | 习惯定义与打卡记录（弹性连续） | `habits`、`habit_records` | 2 |
 | **Shop** | 奖励商品、兑换（预留 → 批准扣款 / 拒绝释放） | `rewards`、`reward_redemptions` | 2 |
-| **Item** | 书包星球：物品、位置、状态、事件、检查清单 | `items`、`item_locations`、`item_events`、`item_checklists`、`item_checklist_lines` | 3 |
+| **Item** | 书包星球：物品、位置、状态、事件、检查清单（清单由 Schedule 解析结果驱动） | `items`、`item_locations`、`item_events`、`item_checklists`、`item_checklist_lines` | 3 |
+| **Schedule** | 课程表：周课表、日期例外、科目→物品、临时加带；解析次日课程供书包清单 | `school_schedules`、`school_periods`、`schedule_exceptions`、`subject_item_requirements`、`bag_extra_requirements` | 3 |
 | **Exploration** | 勇敢探索：项目与阶段事件 | `exploration_projects`、`exploration_events` | 3 |
 | **Food** | 食物探索日记（不与金币挂钩） | `foods`、`food_exploration_records` | 3 |
 | **Movie** | 电影资料、年龄审核、白名单、申请、双观影位、进度、会话、评价、奖励事件；**电影系列**（TMDB collection / 家长管理、列表折叠、推荐聚合、孩子端防泄漏统计） | `movies`、`movie_age_reviews`、`movie_approvals`、`movie_requests`、`child_movie_library`、`movie_progress`、`movie_watch_sessions`、`movie_reviews`、`movie_reward_events`、`movie_collections`、`movie_collection_items`、`movie_collection_preferences` | 4（系列为 4.1 增强） |
@@ -87,7 +88,9 @@ flowchart TD
     Habit --> Ledger
     Shop --> Ledger
     Shop --> Approval
+    Schedule --> Identity
     Item --> Identity
+    Item --> Schedule
     Item -. 可选奖励 .-> Ledger
     Exploration --> Ledger
     Exploration --> Approval

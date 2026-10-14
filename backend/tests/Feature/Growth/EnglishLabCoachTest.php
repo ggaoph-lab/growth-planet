@@ -65,16 +65,13 @@ class EnglishLabCoachTest extends TestCase
         $plan = $service->plan($child);
         $newCards = array_values(array_filter($plan['items'], fn ($item) => empty($item['probe']) && empty($item['challenge']) && empty($item['review'])));
         $this->assertNotEmpty($newCards);
-        $this->assertTrue(collect($newCards)->contains(fn ($item) => ($item['kind'] ?? '') === 'sentence'));
-        $apple = collect($newCards)->firstWhere('key', 'apple');
-        $this->assertNotNull($apple);
-        $this->assertSame('/ˈæpl/', $apple['ipa']);
-        $this->assertSame('n.', $apple['pos']);
+        $this->assertTrue(collect($newCards)->contains(fn ($item) => ($item['kind'] ?? '') === 'word'));
+        $daily = collect($newCards)->first(fn ($item) => ! empty($item['daily_word']) || str_starts_with((string) ($item['key'] ?? ''), 'word:'));
+        $this->assertNotNull($daily);
+        $this->assertNotSame('', (string) ($daily['ipa'] ?? ''));
+        $this->assertNotSame('', (string) ($daily['pos'] ?? ''));
         $this->assertContains($plan['ai_status'], ['ok', 'failed', 'off']);
-        $probes = array_values(array_filter($plan['items'], fn ($item) => ! empty($item['probe'])));
-        if (count($probes) >= 3) {
-            $this->assertTrue(collect($probes)->contains(fn ($item) => ($item['kind'] ?? '') === 'sentence'));
-        }
+        $this->assertSame(10, $plan['new_words_goal']);
     }
 
     public function test_wrong_answer_returns_coach_tip_without_reward(): void
@@ -82,7 +79,9 @@ class EnglishLabCoachTest extends TestCase
         ['family' => $family] = $this->makeFamily();
         $child = $this->makeChild($family);
         $service = app(EnglishLearningService::class);
-        $result = $service->answer($child, 'apple', '香蕉');
+        $card = $service->plan($child)['items'][0];
+        $wrong = collect($card['options'])->first(fn ($option) => $option !== $card['meaning']);
+        $result = $service->answer($child, $card['key'], (string) $wrong);
         $this->assertFalse($result['correct']);
         $this->assertSame(0, $result['coins']);
         $this->assertNotSame('', $result['coach_tip']);
@@ -187,6 +186,17 @@ class EnglishLabCoachTest extends TestCase
                 'completed_date' => null,
             ]);
         }
+        for ($i = 0; $i < \App\Modules\English\Services\EnglishVocabularyService::NEW_WORDS_DAILY_GOAL; $i++) {
+            DB::table('english_learning_progress')->insert([
+                'child_id' => $child->id,
+                'item_key' => 'word:goal-seed'.$i,
+                'stage' => 1,
+                'introduced_date' => '2026-10-13',
+                'due_date' => '2026-10-14',
+                'completed_date' => '2026-10-13',
+            ]);
+        }
+        $this->markEnglishFairyHeard($child, '2026-10-13');
 
         $draft = $drafts->generate($child, 'grammar');
         $this->assertSame('pending', $draft['status']);
