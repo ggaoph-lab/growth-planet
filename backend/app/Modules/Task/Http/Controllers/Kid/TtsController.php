@@ -73,7 +73,11 @@ class TtsController
         }
         RateLimiter::hit($throttleKey, 60);
 
-        $items = $this->tts->warm($data['texts'], (string) ($data['lang'] ?? 'zh-CN'));
+        $items = $this->tts->warm(
+            $data['texts'],
+            (string) ($data['lang'] ?? 'zh-CN'),
+            (int) $child->family_id,
+        );
 
         return response()->json([
             'data' => [

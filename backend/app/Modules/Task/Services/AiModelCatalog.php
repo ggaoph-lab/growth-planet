@@ -3,20 +3,30 @@
 namespace App\Modules\Task\Services;
 
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Lists chat models a provider API key can call, newest first.
+ * After listing, each candidate is probed with a tiny chat call so retired
+ * or blocked model ids never appear in the parent UI.
  * Keys stay server-side; the response never includes them.
  */
 class AiModelCatalog
 {
+    private const PROBE_LIMIT = 18;
+
+    private const PROBE_TIMEOUT = 5;
+
+    private const PROBE_CHUNK = 8;
+
     /**
-     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string}
+     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string, probed: bool}
      */
-    public function list(string $provider, string $apiKey, string $baseUrl): array
+    public function list(string $provider, string $apiKey, string $baseUrl, ?string $preferredModel = null): array
     {
         $apiKey = trim($apiKey);
         if ($apiKey === '') {
@@ -24,9 +34,10 @@ class AiModelCatalog
         }
 
         $baseUrl = rtrim($baseUrl, '/');
-        $cacheKey = 'ai-model-catalog:'.hash('sha256', $provider.'|'.$baseUrl.'|'.$apiKey);
+        $preferredModel = is_string($preferredModel) ? trim($preferredModel) : '';
+        $cacheKey = 'ai-model-catalog:v2:'.hash('sha256', $provider.'|'.$baseUrl.'|'.$apiKey.'|'.$preferredModel);
         $cached = Cache::get($cacheKey);
-        if (is_array($cached) && isset($cached['models'], $cached['latest'])) {
+        if (is_array($cached) && isset($cached['models'], $cached['latest'], $cached['probed'])) {
             return $cached;
         }
 
@@ -36,6 +47,10 @@ class AiModelCatalog
             'qwen' => $this->fetchQwen($apiKey, $baseUrl),
             default => $this->emptyResult($provider, 'upstream_failed'),
         };
+
+        if ($result['error'] === null && $result['models'] !== []) {
+            $result = $this->filterAvailable($provider, $apiKey, $baseUrl, $result, $preferredModel !== '' ? $preferredModel : null);
+        }
 
         if ($result['error'] === null && $result['models'] !== []) {
             Cache::put($cacheKey, $result, 600);
@@ -224,7 +239,7 @@ class AiModelCatalog
 
     /**
      * @param  array<string, array{id: string, label: string, created: int}>  $rows
-     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string}
+     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string, probed: bool}
      */
     private function finish(string $provider, array $rows, ?string $error): array
     {
@@ -263,7 +278,183 @@ class AiModelCatalog
             'models' => $public,
             'latest' => $public[0]['id'] ?? null,
             'error' => $error,
+            'probed' => false,
         ];
+    }
+
+    /**
+     * Drop model ids that reject a tiny chat call (retired, blocked, wrong region).
+     * Temporary 429/5xx still count as available so peak load does not empty the list.
+     *
+     * @param  array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string, probed: bool}  $result
+     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string, probed: bool}
+     */
+    private function filterAvailable(string $provider, string $apiKey, string $baseUrl, array $result, ?string $preferredModel): array
+    {
+        $candidates = $this->probeCandidates($result['models'], $preferredModel);
+        if ($candidates === []) {
+            return $result;
+        }
+
+        $labels = [];
+        foreach ($result['models'] as $model) {
+            $labels[$model['id']] = $model['label'];
+        }
+
+        $availableIds = $this->probeModels($provider, $apiKey, $baseUrl, $candidates);
+        $available = [];
+        foreach ($result['models'] as $model) {
+            if (! isset($availableIds[$model['id']])) {
+                continue;
+            }
+            $available[] = $model;
+        }
+
+        // Preferred model may sit outside the probe window; keep it only when it passed.
+        if ($preferredModel !== null && $preferredModel !== '' && isset($availableIds[$preferredModel]) && ! $this->hasModel($available, $preferredModel)) {
+            $available[] = [
+                'id' => $preferredModel,
+                'label' => $labels[$preferredModel] ?? $preferredModel,
+            ];
+        }
+
+        if ($available === []) {
+            return [
+                'provider' => $provider,
+                'models' => [],
+                'latest' => null,
+                'error' => 'no_models',
+                'probed' => true,
+            ];
+        }
+
+        return [
+            'provider' => $provider,
+            'models' => $available,
+            'latest' => $available[0]['id'],
+            'error' => null,
+            'probed' => true,
+        ];
+    }
+
+    /**
+     * @param  list<array{id: string, label: string}>  $models
+     * @return list<string>
+     */
+    private function probeCandidates(array $models, ?string $preferredModel): array
+    {
+        $ids = [];
+        foreach ($models as $model) {
+            $ids[] = $model['id'];
+            if (count($ids) >= self::PROBE_LIMIT) {
+                break;
+            }
+        }
+
+        if ($preferredModel !== null && $preferredModel !== '' && ! in_array($preferredModel, $ids, true)) {
+            foreach ($models as $model) {
+                if ($model['id'] === $preferredModel) {
+                    $ids[] = $preferredModel;
+                    break;
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * @param  list<string>  $modelIds
+     * @return array<string, true>
+     */
+    private function probeModels(string $provider, string $apiKey, string $baseUrl, array $modelIds): array
+    {
+        $available = [];
+
+        foreach (array_chunk($modelIds, self::PROBE_CHUNK) as $chunk) {
+            $responses = Http::pool(function (Pool $pool) use ($provider, $apiKey, $baseUrl, $chunk) {
+                foreach ($chunk as $modelId) {
+                    $this->queueProbe($pool, $provider, $apiKey, $baseUrl, $modelId);
+                }
+            });
+
+            foreach ($chunk as $index => $modelId) {
+                $response = $responses[$index] ?? $responses[$modelId] ?? null;
+                if ($this->probePassed($response)) {
+                    $available[$modelId] = true;
+                }
+            }
+        }
+
+        return $available;
+    }
+
+    private function queueProbe(Pool $pool, string $provider, string $apiKey, string $baseUrl, string $modelId): void
+    {
+        $pending = $pool->as($modelId)->timeout(self::PROBE_TIMEOUT)->acceptJson();
+
+        if ($provider === 'gemini') {
+            $pending
+                ->withHeaders(['x-goog-api-key' => $apiKey])
+                ->post($baseUrl.'/models/'.$modelId.':generateContent', [
+                    'contents' => [
+                        [
+                            'role' => 'user',
+                            'parts' => [['text' => 'ping']],
+                        ],
+                    ],
+                    'generationConfig' => [
+                        'temperature' => 0,
+                        'maxOutputTokens' => 1,
+                    ],
+                ]);
+
+            return;
+        }
+
+        $pending
+            ->withToken($apiKey)
+            ->post($baseUrl.'/chat/completions', [
+                'model' => $modelId,
+                'messages' => [
+                    ['role' => 'user', 'content' => 'ping'],
+                ],
+                'temperature' => 0,
+                'max_tokens' => 1,
+            ]);
+    }
+
+    private function probePassed(mixed $response): bool
+    {
+        if (! $response instanceof Response) {
+            // Timeouts / network blips: keep the catalog entry. Hard 4xx below still hide retired ids.
+            return true;
+        }
+
+        $status = $response->status();
+        if ($status >= 200 && $status < 300) {
+            return true;
+        }
+        // Model exists but is rate-limited or overloaded — still selectable.
+        if ($status === 429 || $status >= 500) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<array{id: string, label: string}>  $models
+     */
+    private function hasModel(array $models, string $id): bool
+    {
+        foreach ($models as $model) {
+            if ($model['id'] === $id) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -279,7 +470,7 @@ class AiModelCatalog
     }
 
     /**
-     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string}
+     * @return array{provider: string, models: list<array{id: string, label: string}>, latest: ?string, error: ?string, probed: bool}
      */
     private function emptyResult(string $provider, string $error): array
     {
@@ -288,6 +479,7 @@ class AiModelCatalog
             'models' => [],
             'latest' => null,
             'error' => $error,
+            'probed' => false,
         ];
     }
 

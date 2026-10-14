@@ -46,7 +46,7 @@ type KeyProbe = 'idle' | 'checking' | 'ok' | 'invalid' | 'failed' | 'empty' | 'n
 const ai = ref<AiSettings | null>(null)
 const aiForm = reactive({
   provider: 'auto',
-  gemini_model: 'gemini-2.5-flash',
+  gemini_model: 'gemini-3.1-flash-lite',
   qwen_model: 'qwen-turbo',
   openai_model: 'gpt-4o-mini',
   gemini_api_key: '',
@@ -173,7 +173,8 @@ function applyModelList(provider: AiProviderName, data: AiModelList): void {
   } else if (data.models.length > 0) {
     keyProbe[provider] = 'ok'
     if (data.latest && aiForm[field] === data.latest && !customized) modelNote[provider] = t('parent.settings.modelLatest')
-    else if (customized && !known) modelNote[provider] = t('parent.settings.modelMissing')
+    else if (!known) modelNote[provider] = t('parent.settings.modelMissing')
+    else if (data.probed) modelNote[provider] = t('parent.settings.modelProbed', { count: data.models.length })
     else modelNote[provider] = ''
   } else {
     keyProbe[provider] = 'failed'
@@ -192,8 +193,10 @@ async function loadModels(provider: AiProviderName, key = ''): Promise<void> {
   const seq = ++modelRequest[provider]
   modelLoading[provider] = true
   try {
-    const body: { provider: AiProviderName; api_key?: string } = { provider }
+    const body: { provider: AiProviderName; api_key?: string; preferred_model?: string } = { provider }
     if (key) body.api_key = key
+    const preferred = aiForm[modelField(provider)].trim()
+    if (preferred) body.preferred_model = preferred
     const data = await api.post<AiModelList>('/parent/ai-models', body)
     if (seq !== modelRequest[provider]) return
     applyModelList(provider, data)
@@ -707,8 +710,6 @@ onMounted(load)
               v-if="modelOptions.gemini.length > 0 || modelLoading.gemini"
               v-model="aiForm.gemini_model"
               filterable
-              allow-create
-              default-first-option
               style="width: 100%"
               :loading="modelLoading.gemini"
               :placeholder="t('parent.settings.modelsLoading')"
@@ -750,8 +751,6 @@ onMounted(load)
               v-if="modelOptions.qwen.length > 0 || modelLoading.qwen"
               v-model="aiForm.qwen_model"
               filterable
-              allow-create
-              default-first-option
               style="width: 100%"
               :loading="modelLoading.qwen"
               :placeholder="t('parent.settings.modelsLoading')"
@@ -793,8 +792,6 @@ onMounted(load)
               v-if="modelOptions.openai.length > 0 || modelLoading.openai"
               v-model="aiForm.openai_model"
               filterable
-              allow-create
-              default-first-option
               style="width: 100%"
               :loading="modelLoading.openai"
               :placeholder="t('parent.settings.modelsLoading')"

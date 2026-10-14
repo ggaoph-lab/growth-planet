@@ -54,7 +54,7 @@ class GeminiClient implements HomeworkLlmClient
         }
 
         $baseUrl = rtrim((string) ($config['base_url'] ?? config('services.gemini.base_url')), '/');
-        $model = (string) ($config['model'] ?? config('services.gemini.model', 'gemini-2.5-flash'));
+        $model = (string) ($config['model'] ?? config('services.gemini.model', 'gemini-3.1-flash-lite'));
         $timeout = max(5, (int) ($config['timeout'] ?? config('services.gemini.timeout', 30)));
         $url = $baseUrl.'/models/'.$model.':generateContent';
 

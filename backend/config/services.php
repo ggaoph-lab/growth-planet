@@ -54,8 +54,13 @@ return [
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
         'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
-        'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
+        'model' => env('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
         'timeout' => (int) env('GEMINI_TIMEOUT', 30),
+        // Free-tier kid read-aloud (separate from the chat model).
+        'tts_model' => env('GEMINI_TTS_MODEL', 'gemini-2.5-flash-preview-tts'),
+        'tts_voice' => env('GEMINI_TTS_VOICE', 'Kore'),
+        'tts_voice_en' => env('GEMINI_TTS_VOICE_EN', 'Kore'),
+        'tts_timeout' => (int) env('GEMINI_TTS_TIMEOUT', 30),
     ],
 
     'openai' => [
@@ -79,8 +84,9 @@ return [
         'tts_timeout' => (int) env('QWEN_TTS_TIMEOUT', 25),
     ],
 
-    // Kid read-aloud: Edge neural first, then Qwen/CosyVoice, then public fallbacks.
+    // Kid read-aloud: Gemini TTS (when keyed) → Edge neural → Qwen/CosyVoice → public fallbacks.
     'tts' => [
+        'prefer_gemini' => filter_var(env('TTS_PREFER_GEMINI', true), FILTER_VALIDATE_BOOLEAN),
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
         'edge_voice_en' => env('TTS_EDGE_VOICE_EN', 'en-US-JennyNeural'),
     ],

@@ -107,6 +107,7 @@ export interface AiModelList {
   models: AiModelChoice[]
   latest: string | null
   error: string | null
+  probed?: boolean
 }
 
 export interface AiSettings {

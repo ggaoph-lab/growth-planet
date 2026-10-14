@@ -148,27 +148,47 @@ class SystemSettingsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.gemini.model_customized', false);
 
-        Http::fake([
-            'https://generativelanguage.example/*' => Http::response([
-                'models' => [
-                    ['name' => 'models/gemini-2.5-flash', 'displayName' => 'Gemini 2.5 Flash', 'supportedGenerationMethods' => ['generateContent']],
-                    ['name' => 'models/gemini-3.8-flash', 'displayName' => 'Gemini 3.8 Flash', 'supportedGenerationMethods' => ['generateContent']],
-                    ['name' => 'models/gemini-3.8-pro', 'displayName' => 'Gemini 3.8 Pro', 'supportedGenerationMethods' => ['generateContent']],
-                    ['name' => 'models/gemini-3.8-flash-lite', 'displayName' => 'Gemini 3.8 Flash Lite', 'supportedGenerationMethods' => ['generateContent']],
-                    ['name' => 'models/gemini-3.8-flash-tts', 'displayName' => 'TTS', 'supportedGenerationMethods' => ['generateContent']],
-                    ['name' => 'models/gemini-embedding-001', 'displayName' => 'Embed', 'supportedGenerationMethods' => ['embedContent']],
-                ],
-            ]),
-            'https://dashscope.example/*' => Http::response([
-                'data' => [
-                    ['id' => 'qwen-turbo', 'created' => 0],
-                    ['id' => 'qwen3-max', 'created' => 0],
-                    ['id' => 'qwen3.8-max', 'created' => 0],
-                    ['id' => 'qwen3-tts-flash', 'created' => 0],
-                    ['id' => 'text-embedding-v3', 'created' => 0],
-                ],
-            ]),
-            'https://openai.example/*' => Http::response([
+        Http::fake(function (\Illuminate\Http\Client\Request $request) {
+            $url = $request->url();
+            if (str_contains($url, ':generateContent')) {
+                return Http::response([
+                    'candidates' => [
+                        ['content' => ['parts' => [['text' => 'ok']]]],
+                    ],
+                ]);
+            }
+            if (str_contains($url, '/chat/completions')) {
+                return Http::response([
+                    'choices' => [
+                        ['message' => ['content' => 'ok']],
+                    ],
+                ]);
+            }
+            if (str_contains($url, 'generativelanguage.example')) {
+                return Http::response([
+                    'models' => [
+                        ['name' => 'models/gemini-2.5-flash', 'displayName' => 'Gemini 2.5 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                        ['name' => 'models/gemini-3.8-flash', 'displayName' => 'Gemini 3.8 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                        ['name' => 'models/gemini-3.8-pro', 'displayName' => 'Gemini 3.8 Pro', 'supportedGenerationMethods' => ['generateContent']],
+                        ['name' => 'models/gemini-3.8-flash-lite', 'displayName' => 'Gemini 3.8 Flash Lite', 'supportedGenerationMethods' => ['generateContent']],
+                        ['name' => 'models/gemini-3.8-flash-tts', 'displayName' => 'TTS', 'supportedGenerationMethods' => ['generateContent']],
+                        ['name' => 'models/gemini-embedding-001', 'displayName' => 'Embed', 'supportedGenerationMethods' => ['embedContent']],
+                    ],
+                ]);
+            }
+            if (str_contains($url, 'dashscope.example')) {
+                return Http::response([
+                    'data' => [
+                        ['id' => 'qwen-turbo', 'created' => 0],
+                        ['id' => 'qwen3-max', 'created' => 0],
+                        ['id' => 'qwen3.8-max', 'created' => 0],
+                        ['id' => 'qwen3-tts-flash', 'created' => 0],
+                        ['id' => 'text-embedding-v3', 'created' => 0],
+                    ],
+                ]);
+            }
+
+            return Http::response([
                 'data' => [
                     ['id' => 'gpt-4o-mini', 'created' => 100],
                     ['id' => 'gpt-5.4', 'created' => 800],
@@ -176,14 +196,15 @@ class SystemSettingsTest extends TestCase
                     ['id' => 'text-embedding-3-small', 'created' => 950],
                     ['id' => 'whisper-1', 'created' => 50],
                 ],
-            ]),
-        ]);
+            ]);
+        });
 
         $this->actingAsParent($parent)
             ->postJson('/api/v1/parent/ai-models', ['provider' => 'gemini'])
             ->assertOk()
             ->assertJsonPath('data.latest', 'gemini-3.8-pro')
             ->assertJsonPath('data.models.0.id', 'gemini-3.8-pro')
+            ->assertJsonPath('data.probed', true)
             ->assertJsonMissing(['id' => 'gemini-3.8-flash-tts'])
             ->assertJsonMissing(['id' => 'gemini-embedding-001']);
 
@@ -194,6 +215,7 @@ class SystemSettingsTest extends TestCase
             ])
             ->assertOk()
             ->assertJsonPath('data.latest', 'qwen3.8-max')
+            ->assertJsonPath('data.probed', true)
             ->assertJsonMissing(['id' => 'qwen3-tts-flash']);
 
         Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer sk-draft-qwen'));
@@ -202,8 +224,55 @@ class SystemSettingsTest extends TestCase
             ->postJson('/api/v1/parent/ai-models', ['provider' => 'openai'])
             ->assertOk()
             ->assertJsonPath('data.latest', 'gpt-5.4')
+            ->assertJsonPath('data.probed', true)
             ->assertJsonMissing(['id' => 'gpt-4o-mini-tts'])
             ->assertJsonMissing(['id' => 'whisper-1']);
+    }
+
+    public function test_ai_model_list_hides_models_that_fail_availability_probe(): void
+    {
+        ['parent' => $parent] = $this->makeFamily();
+        config([
+            'services.gemini.api_key' => 'gemini-test',
+            'services.gemini.base_url' => 'https://generativelanguage.example/v1beta',
+        ]);
+
+        Http::fake(function (\Illuminate\Http\Client\Request $request) {
+            $url = $request->url();
+            if (str_contains($url, 'models/gemini-2.5-flash:generateContent')) {
+                return Http::response([
+                    'error' => [
+                        'code' => 404,
+                        'message' => 'This model models/gemini-2.5-flash is no longer available to new users.',
+                        'status' => 'NOT_FOUND',
+                    ],
+                ], 404);
+            }
+            if (str_contains($url, ':generateContent')) {
+                return Http::response([
+                    'candidates' => [
+                        ['content' => ['parts' => [['text' => 'ok']]]],
+                    ],
+                ]);
+            }
+
+            return Http::response([
+                'models' => [
+                    ['name' => 'models/gemini-2.5-flash', 'displayName' => 'Gemini 2.5 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.1-flash-lite', 'displayName' => 'Gemini 3.1 Flash Lite', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.5-flash', 'displayName' => 'Gemini 3.5 Flash', 'supportedGenerationMethods' => ['generateContent']],
+                ],
+            ]);
+        });
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-models', ['provider' => 'gemini'])
+            ->assertOk()
+            ->assertJsonPath('data.probed', true)
+            ->assertJsonPath('data.latest', 'gemini-3.5-flash')
+            ->assertJsonMissing(['id' => 'gemini-2.5-flash'])
+            ->assertJsonFragment(['id' => 'gemini-3.1-flash-lite'])
+            ->assertJsonFragment(['id' => 'gemini-3.5-flash']);
     }
 
     public function test_ai_model_list_reports_a_missing_key(): void

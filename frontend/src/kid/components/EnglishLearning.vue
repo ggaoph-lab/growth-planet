@@ -251,6 +251,22 @@ function stars(score: number | null | undefined) {
 function isChineseText(text: string) {
   return /[\u4e00-\u9fff]/.test(text)
 }
+/** Prefetch neural audio for the whole daily queue so later cards play with less delay. */
+function warmPlanAudio(items: Item[]) {
+  const english: string[] = []
+  const chinese: string[] = []
+  for (const item of items) {
+    if (item.text) english.push(item.text)
+    if (item.meaning && !item.challenge) chinese.push(item.meaning)
+    if (item.question && isChineseText(item.question)) chinese.push(item.question)
+    for (const option of item.options ?? []) {
+      if (isChineseText(option)) chinese.push(option)
+      else if (option.trim()) english.push(option)
+    }
+  }
+  if (english.length) warmPhrases(english, 'en-US')
+  if (chinese.length) warmPhrases(chinese, 'zh-CN')
+}
 function choose(item?: Item) {
   clearAdvanceTimer()
   stopSpeaking()
@@ -274,14 +290,21 @@ function choose(item?: Item) {
   if (item?.meaning && !item.challenge) warmPhrases([item.meaning], 'zh-CN')
   const chineseChoices = choices.value.filter(isChineseText)
   if (chineseChoices.length) warmPhrases(chineseChoices, 'zh-CN')
-  // Auto-read English for normal cards and spelling (dictation). Skip review recall so answers stay hidden.
-  if (item?.text && audioSupported && !item.review) void playCurrentText()
+  if (!item || !audioSupported) return
+  // Review shows Chinese and asks for English — read the Chinese prompt aloud.
+  if (item.review && item.meaning) {
+    void playCurrentMeaning()
+    return
+  }
+  // Auto-read English for normal cards and spelling (dictation).
+  if (item.text && !item.challenge) void playCurrentText()
 }
 async function load() {
   busy.value = true
   error.value = ''
   try {
     plan.value = await api.get<Plan>('/kid/english/learning')
+    warmPlanAudio(plan.value.items)
     choose(plan.value.items[0])
   } catch (e) { error.value = e instanceof ApiError ? e.message : label('学习任务加载失败，请重试。', 'Could not load your mission. Please retry.') }
   finally { busy.value = false }
@@ -431,13 +454,11 @@ async function answer(value: string) {
     result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: current.value.key, answer: trimmed })
     plan.value = result.value.plan
     phase.value = 'result'
+    // Keep remaining daily audio warm after the plan refreshes.
+    warmPlanAudio(plan.value.items)
     // A balance refresh should not hide a successfully saved answer.
     if (result.value.correct) {
       void session.load(true).catch(() => {})
-      // Warm the next card's audio during the brief success pause.
-      const upcoming = plan.value?.items.find(item => item.key !== current.value?.key) ?? plan.value?.items[0]
-      if (upcoming?.text) warmPhrases([upcoming.text], 'en-US')
-      if (upcoming?.meaning && !upcoming.challenge) warmPhrases([upcoming.meaning], 'zh-CN')
       clearAdvanceTimer()
       advanceTimer = setTimeout(() => {
         advanceTimer = null

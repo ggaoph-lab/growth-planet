@@ -54,7 +54,7 @@ class FamilyAiConfig
 
         $geminiModel = $familyId !== null
             ? (string) $this->settings->get('ai.gemini_model', $familyId)
-            : (string) config('services.gemini.model', 'gemini-2.5-flash');
+            : (string) config('services.gemini.model', 'gemini-3.1-flash-lite');
         $qwenModel = $familyId !== null
             ? (string) $this->settings->get('ai.qwen_model', $familyId)
             : (string) config('services.qwen.model', 'qwen-turbo');
@@ -63,7 +63,7 @@ class FamilyAiConfig
             : (string) config('services.openai.model', 'gpt-4o-mini');
 
         if ($geminiModel === '') {
-            $geminiModel = (string) config('services.gemini.model', 'gemini-2.5-flash');
+            $geminiModel = (string) config('services.gemini.model', 'gemini-3.1-flash-lite');
         }
         if ($qwenModel === '') {
             $qwenModel = (string) config('services.qwen.model', 'qwen-turbo');

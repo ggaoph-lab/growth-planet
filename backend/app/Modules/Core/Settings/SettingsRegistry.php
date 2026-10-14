@@ -26,7 +26,7 @@ class SettingsRegistry
                 'label' => '默认 AI 引擎',
             ],
             'ai.gemini_api_key' => ['type' => 'secret', 'default' => '', 'label' => 'Gemini API Key'],
-            'ai.gemini_model' => ['type' => 'string', 'default' => 'gemini-2.5-flash', 'label' => 'Gemini 模型'],
+            'ai.gemini_model' => ['type' => 'string', 'default' => 'gemini-3.1-flash-lite', 'label' => 'Gemini 模型'],
             'ai.qwen_api_key' => ['type' => 'secret', 'default' => '', 'label' => '通义千问 API Key'],
             'ai.qwen_model' => ['type' => 'string', 'default' => 'qwen-turbo', 'label' => '通义千问模型'],
             'ai.openai_api_key' => ['type' => 'secret', 'default' => '', 'label' => 'ChatGPT API Key'],

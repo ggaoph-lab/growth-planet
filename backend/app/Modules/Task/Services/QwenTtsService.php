@@ -11,9 +11,10 @@ use Illuminate\Support\Facades\Log;
  * Kid read-aloud TTS.
  *
  * Priority:
- * 1) Microsoft Edge neural (free, low latency from Singapore)
- * 2) Qwen-TTS / CosyVoice when a DashScope key is configured
- * 3) Google / Youdao / Baidu public proxies
+ * 1) Gemini 2.5 Flash Preview TTS when a Gemini key is configured (free tier)
+ * 2) Microsoft Edge neural (free, low latency)
+ * 3) Qwen-TTS / CosyVoice when a DashScope key is configured
+ * 4) Google / Youdao / Baidu public proxies
  *
  * Always returns base64 audio so the kid browser never depends on third-party CORS/URL expiry.
  */
@@ -35,8 +36,14 @@ class QwenTtsService
         }
 
         $lang = $this->normalizeLang($lang);
-        $voice = $this->voiceFor($lang);
-        $cacheKey = $this->cacheKey($text, $voice);
+        $cfg = $this->ai->resolve($familyId);
+        $geminiKey = trim($cfg['gemini_api_key']);
+        $qwenKey = trim($cfg['qwen_api_key']);
+        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', true);
+        $voiceTag = $preferGemini
+            ? 'gemini:'.$this->geminiVoiceFor($lang)
+            : $this->edgeVoiceFor($lang);
+        $cacheKey = $this->cacheKey($text, $voiceTag);
         $cached = $this->readCache($cacheKey);
         if ($cached !== null) {
             return $cached;
@@ -55,16 +62,18 @@ class QwenTtsService
                 return $cached;
             }
 
-            $cfg = $this->ai->resolve($familyId);
-            $apiKey = trim($cfg['qwen_api_key']);
+            $result = null;
+            if ($preferGemini) {
+                $result = $this->synthesizeGemini($text, $geminiKey, $lang);
+            }
 
-            $result = $this->synthesizeEdge($text, $voice);
+            $result ??= $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
             $english = str_starts_with($lang, 'en');
 
-            if ($result === null && $apiKey !== '') {
-                $result = $this->synthesizeQwenTts($text, $apiKey, $lang);
+            if ($result === null && $qwenKey !== '') {
+                $result = $this->synthesizeQwenTts($text, $qwenKey, $lang);
                 if ($result === null && ! $english) {
-                    $result = $this->synthesizeCosyVoice($text, $apiKey);
+                    $result = $this->synthesizeCosyVoice($text, $qwenKey);
                 }
             }
 
@@ -88,14 +97,21 @@ class QwenTtsService
     }
 
     /**
-     * Fill the read-aloud cache for the tasks on screen, one Edge connection for the batch.
+     * Fill the read-aloud cache for the tasks on screen.
      *
      * @param  list<string>  $texts
      * @return list<array{text: string, audio_base64: string|null, mime: string|null, provider: string|null}>
      */
-    public function warm(array $texts, string $lang = 'zh-CN'): array
+    public function warm(array $texts, string $lang = 'zh-CN', ?int $familyId = null): array
     {
-        $voice = $this->voiceFor($this->normalizeLang($lang));
+        $lang = $this->normalizeLang($lang);
+        $cfg = $this->ai->resolve($familyId);
+        $geminiKey = trim($cfg['gemini_api_key']);
+        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', true);
+        $voiceTag = $preferGemini
+            ? 'gemini:'.$this->geminiVoiceFor($lang)
+            : $this->edgeVoiceFor($lang);
+        $edgeVoice = $this->edgeVoiceFor($lang);
         $ordered = [];
         $aliases = [];
         foreach ($texts as $raw) {
@@ -122,7 +138,7 @@ class QwenTtsService
         $pending = [];
         $locks = [];
         foreach (array_keys($ordered) as $text) {
-            $cacheKey = $this->cacheKey($text, $voice);
+            $cacheKey = $this->cacheKey($text, $voiceTag);
             $cached = $this->readCache($cacheKey);
             if ($cached !== null) {
                 $ordered[$text] = array_merge($ordered[$text], $cached);
@@ -154,12 +170,31 @@ class QwenTtsService
             $locks[$text] = $lock;
         }
 
+        if ($pending !== [] && $preferGemini) {
+            $stillPending = [];
+            foreach ($pending as $text) {
+                $audio = $this->synthesizeGemini($text, $geminiKey, $lang);
+                if ($audio !== null) {
+                    $this->storeCache($this->cacheKey($text, $voiceTag), $audio);
+                    $ordered[$text] = array_merge($ordered[$text], $audio);
+                    Log::info('tts.ready', ['provider' => $audio['provider']]);
+                    if (isset($locks[$text])) {
+                        $locks[$text]->release();
+                        unset($locks[$text]);
+                    }
+                } else {
+                    $stillPending[] = $text;
+                }
+            }
+            $pending = $stillPending;
+        }
+
         if ($pending !== []) {
             try {
-                $this->edge->synthesizeMany($pending, $voice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks, $voice): void {
+                $this->edge->synthesizeMany($pending, $edgeVoice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks, $voiceTag): void {
                     $text = $pending[$index];
                     if ($audio !== null) {
-                        $this->storeCache($this->cacheKey($text, $voice), $audio);
+                        $this->storeCache($this->cacheKey($text, $voiceTag), $audio);
                         $ordered[$text] = array_merge($ordered[$text], $audio);
                         Log::info('tts.ready', ['provider' => $audio['provider']]);
                     }
@@ -172,6 +207,10 @@ class QwenTtsService
                 foreach ($locks as $lock) {
                     $lock->release();
                 }
+            }
+        } else {
+            foreach ($locks as $lock) {
+                $lock->release();
             }
         }
 
@@ -187,7 +226,7 @@ class QwenTtsService
 
     private function cacheKey(string $text, string $voice): string
     {
-        return 'tts:v7:'.$voice.':'.hash('sha256', $text);
+        return 'tts:v8:'.$voice.':'.hash('sha256', $text);
     }
 
     private function normalizeLang(string $lang): string
@@ -195,13 +234,22 @@ class QwenTtsService
         return str_starts_with(strtolower(str_replace('_', '-', trim($lang))), 'en') ? 'en-US' : 'zh-CN';
     }
 
-    private function voiceFor(string $lang): string
+    private function edgeVoiceFor(string $lang): string
     {
         if (str_starts_with($lang, 'en')) {
             return (string) config('services.tts.edge_voice_en', 'en-US-JennyNeural');
         }
 
         return (string) config('services.tts.edge_voice', 'zh-CN-XiaoxiaoNeural');
+    }
+
+    private function geminiVoiceFor(string $lang): string
+    {
+        if (str_starts_with($lang, 'en')) {
+            return (string) config('services.gemini.tts_voice_en', 'Kore');
+        }
+
+        return (string) config('services.gemini.tts_voice', 'Kore');
     }
 
     /**
@@ -227,7 +275,7 @@ class QwenTtsService
      */
     private function storeCache(string $cacheKey, array $result): void
     {
-        if (! in_array($result['provider'], ['edge_tts', 'qwen', 'cosyvoice'], true)) {
+        if (! in_array($result['provider'], ['gemini_tts', 'edge_tts', 'qwen', 'cosyvoice'], true)) {
             return;
         }
 
@@ -237,6 +285,167 @@ class QwenTtsService
     public function qwenConfigured(int $familyId): bool
     {
         return trim($this->ai->resolve($familyId)['qwen_api_key']) !== '';
+    }
+
+    public function geminiConfigured(int $familyId): bool
+    {
+        return trim($this->ai->resolve($familyId)['gemini_api_key']) !== '';
+    }
+
+    /**
+     * Gemini 2.5 Flash Preview TTS via generateContent (AUDIO modality).
+     *
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    private function synthesizeGemini(string $text, string $apiKey, string $lang): ?array
+    {
+        $model = (string) config('services.gemini.tts_model', 'gemini-2.5-flash-preview-tts');
+        $voice = $this->geminiVoiceFor($lang);
+        $base = rtrim((string) config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta'), '/');
+        $timeout = max(8, (int) config('services.gemini.tts_timeout', 30));
+        $url = $base.'/models/'.$model.':generateContent';
+
+        $payload = [
+            'contents' => [
+                [
+                    'role' => 'user',
+                    'parts' => [['text' => $text]],
+                ],
+            ],
+            'generationConfig' => [
+                'responseModalities' => ['AUDIO'],
+                'speechConfig' => [
+                    'voiceConfig' => [
+                        'prebuiltVoiceConfig' => [
+                            'voiceName' => $voice,
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        try {
+            $response = Http::timeout($timeout)
+                ->withHeaders(['x-goog-api-key' => $apiKey])
+                ->acceptJson()
+                ->post($url, $payload);
+        } catch (\Throwable $e) {
+            Log::warning('tts.gemini_connection_failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (! $response->successful()) {
+            Log::warning('tts.gemini_failed', [
+                'status' => $response->status(),
+                'body' => mb_substr($response->body(), 0, 400),
+            ]);
+
+            return null;
+        }
+
+        $parts = data_get($response->json(), 'candidates.0.content.parts');
+        if (! is_array($parts)) {
+            Log::warning('tts.gemini_empty', ['json' => $response->json()]);
+
+            return null;
+        }
+
+        foreach ($parts as $part) {
+            if (! is_array($part)) {
+                continue;
+            }
+            $inline = $part['inlineData'] ?? $part['inline_data'] ?? null;
+            if (! is_array($inline)) {
+                continue;
+            }
+            $data = $inline['data'] ?? null;
+            if (! is_string($data) || $data === '') {
+                continue;
+            }
+            $binary = base64_decode($data, true);
+            if ($binary === false || $binary === '') {
+                continue;
+            }
+
+            $mime = (string) ($inline['mimeType'] ?? $inline['mime_type'] ?? '');
+            [$binary, $mime] = $this->normalizeGeminiAudio($binary, $mime);
+
+            return [
+                'audio_base64' => base64_encode($binary),
+                'mime' => $mime,
+                'provider' => 'gemini_tts',
+            ];
+        }
+
+        Log::warning('tts.gemini_empty', ['json' => $response->json()]);
+
+        return null;
+    }
+
+    /**
+     * Gemini returns headerless PCM (L16) by default; browsers need a WAV wrapper.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function normalizeGeminiAudio(string $binary, string $mime): array
+    {
+        $mimeLower = strtolower(trim($mime));
+        if ($mimeLower === '' || str_contains($mimeLower, 'l16') || str_contains($mimeLower, 'pcm')) {
+            $rate = $this->sampleRateFromMime($mimeLower) ?? 24000;
+
+            return [$this->pcmToWav($binary, $rate), 'audio/wav'];
+        }
+
+        if (str_contains($mimeLower, 'wav')) {
+            return [$binary, 'audio/wav'];
+        }
+        if (str_contains($mimeLower, 'mpeg') || str_contains($mimeLower, 'mp3')) {
+            return [$binary, 'audio/mpeg'];
+        }
+        if (str_contains($mimeLower, 'ogg')) {
+            return [$binary, 'audio/ogg'];
+        }
+
+        // Unknown payload that already looks like a container — keep bytes, label as wav for <audio>.
+        if (str_starts_with($binary, 'RIFF') || str_starts_with($binary, 'ID3') || $this->looksLikeMp3($binary)) {
+            return [$binary, str_starts_with($binary, 'RIFF') ? 'audio/wav' : 'audio/mpeg'];
+        }
+
+        return [$this->pcmToWav($binary, 24000), 'audio/wav'];
+    }
+
+    private function sampleRateFromMime(string $mime): ?int
+    {
+        if (preg_match('/rate\s*=\s*(\d+)/i', $mime, $matches) === 1) {
+            $rate = (int) $matches[1];
+
+            return $rate > 0 ? $rate : null;
+        }
+
+        return null;
+    }
+
+    private function pcmToWav(string $pcm, int $sampleRate = 24000, int $channels = 1, int $bitsPerSample = 16): string
+    {
+        $byteRate = (int) ($sampleRate * $channels * ($bitsPerSample / 8));
+        $blockAlign = (int) ($channels * ($bitsPerSample / 8));
+        $dataSize = strlen($pcm);
+
+        return 'RIFF'
+            .pack('V', 36 + $dataSize)
+            .'WAVE'
+            .'fmt '
+            .pack('V', 16)
+            .pack('v', 1)
+            .pack('v', $channels)
+            .pack('V', $sampleRate)
+            .pack('V', $byteRate)
+            .pack('v', $blockAlign)
+            .pack('v', $bitsPerSample)
+            .'data'
+            .pack('V', $dataSize)
+            .$pcm;
     }
 
     private function normalizeText(string $text): string

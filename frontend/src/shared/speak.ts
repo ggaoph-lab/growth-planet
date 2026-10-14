@@ -69,20 +69,31 @@ function audioKey(text: string, lang: string): string {
   return `${lang}\0${text}`
 }
 
+const WARM_CHUNK = 8
+
 /** Generate lines in the background so a tap can play without waiting on the voice service. */
 export function warmPhrases(phrases: string[], lang = 'zh-CN'): void {
-  const texts = [...new Set(phrases.map((phrase) => phrase.trim()).filter(Boolean))].filter((phrase) => !preparedAudio.has(audioKey(phrase, lang))).slice(0, 8)
+  const texts = [...new Set(phrases.map((phrase) => phrase.trim()).filter(Boolean))].filter(
+    (phrase) => !preparedAudio.has(audioKey(phrase, lang)),
+  )
   if (!texts.length) return
-  void api
-    .post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', { texts, lang })
-    .then((data) => {
-      for (const item of data.items ?? []) {
-        if (item.text && item.audio_base64 && item.mime) rememberAudio(audioKey(item.text, lang), item.audio_base64, item.mime)
-      }
-    })
-    .catch(() => {
-      /* a tap still calls /kid/tts */
-    })
+
+  for (let i = 0; i < texts.length; i += WARM_CHUNK) {
+    const chunk = texts.slice(i, i + WARM_CHUNK)
+    void api
+      .post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', {
+        texts: chunk,
+        lang,
+      })
+      .then((data) => {
+        for (const item of data.items ?? []) {
+          if (item.text && item.audio_base64 && item.mime) rememberAudio(audioKey(item.text, lang), item.audio_base64, item.mime)
+        }
+      })
+      .catch(() => {
+        /* a tap still calls /kid/tts */
+      })
+  }
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {

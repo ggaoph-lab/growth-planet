@@ -33,11 +33,12 @@ class AiSettingsController
         $data = $request->validate([
             'provider' => ['required', 'string', Rule::in(['gemini', 'qwen', 'openai'])],
             'api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
+            'preferred_model' => ['sometimes', 'nullable', 'string', 'max:128'],
         ]);
 
         $userId = $this->context->user()->id;
         $throttleKey = 'ai-models:'.$userId;
-        if (RateLimiter::tooManyAttempts($throttleKey, 30)) {
+        if (RateLimiter::tooManyAttempts($throttleKey, 20)) {
             throw ApiException::tooManyAttempts(RateLimiter::availableIn($throttleKey));
         }
         RateLimiter::hit($throttleKey, 60);
@@ -51,9 +52,13 @@ class AiSettingsController
             'openai' => (string) $cfg['openai_base_url'],
             default => (string) config('services.qwen.base_url'),
         };
+        $preferred = trim((string) ($data['preferred_model'] ?? ''));
+        if ($preferred === '') {
+            $preferred = (string) ($cfg[$provider.'_model'] ?? '');
+        }
 
         return response()->json([
-            'data' => $this->models->list($provider, $apiKey, $baseUrl),
+            'data' => $this->models->list($provider, $apiKey, $baseUrl, $preferred !== '' ? $preferred : null),
         ]);
     }
 
