@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '@/shared/api/client'
 import { chinesePinyin, chinesePinyinUnits } from '@/shared/chinesePinyin'
-import { canSpeak, speakPhrase, stopSpeaking, warmPhrases } from '@/shared/speak'
+import { canSpeak, isSpeakUnlocked, speakPhrase, stopSpeaking, unlockSpeak, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 type Item = {
@@ -494,6 +494,38 @@ function warmPlanAudio(items: Item[]) {
   if (english.length) warmPhrases(english, 'en-US')
   if (chinese.length) warmPhrases(chinese, 'zh-CN')
 }
+/** True when the current card should auto-read but media may still be locked (Chrome / iPad). */
+let pendingAutoRead = false
+
+function scheduleAutoRead(item: Item) {
+  if (!audioSupported) return
+  // Review shows Chinese and asks for English — read the Chinese prompt aloud.
+  if (item.review && item.meaning) {
+    pendingAutoRead = true
+    void playCurrentMeaning().finally(() => {
+      if (isSpeakUnlocked()) pendingAutoRead = false
+    })
+    return
+  }
+  // Auto-read English for normal cards and spelling (dictation).
+  if (item.text && !item.challenge) {
+    pendingAutoRead = true
+    void playCurrentText().finally(() => {
+      if (isSpeakUnlocked()) pendingAutoRead = false
+    })
+  }
+}
+
+/** Chrome / iPad: unlock HTMLAudio during a gesture, then replay a blocked auto-read. */
+function onLearningGesture() {
+  const shouldReplay = !isSpeakUnlocked() && pendingAutoRead
+  void unlockSpeak().then((ok) => {
+    if (!ok || !shouldReplay || !pendingAutoRead || !current.value || !audioSupported) return
+    pendingAutoRead = false
+    scheduleAutoRead(current.value)
+  })
+}
+
 function choose(item?: Item) {
   clearAdvanceTimer()
   stopSpeaking()
@@ -501,6 +533,7 @@ function choose(item?: Item) {
   speakingLang.value = null
   speakingOption.value = null
   speakToken += 1
+  pendingAutoRead = false
   current.value = item ?? null
   // Challenge first: every card opens as a quiz. Learn only after a miss.
   phase.value = 'quiz'
@@ -520,13 +553,7 @@ function choose(item?: Item) {
   const chineseChoices = choices.value.filter(isChineseText)
   if (chineseChoices.length) warmPhrases(chineseChoices, 'zh-CN')
   if (!item || !audioSupported) return
-  // Review shows Chinese and asks for English — read the Chinese prompt aloud.
-  if (item.review && item.meaning) {
-    void playCurrentMeaning()
-    return
-  }
-  // Auto-read English for normal cards and spelling (dictation).
-  if (item.text && !item.challenge) void playCurrentText()
+  scheduleAutoRead(item)
 }
 async function load() {
   busy.value = true
@@ -669,6 +696,7 @@ async function playFairyLines(lang: 'zh' | 'en') {
     haltFairy()
     return
   }
+  unlockSpeak()
   if (speaking.value || fairyReading.value) haltFairy()
   const lines = lang === 'zh' ? tale.zh_lines : tale.en_lines
   const locale = lang === 'zh' ? 'zh-CN' : 'en-US'
@@ -762,6 +790,8 @@ async function playCurrentMeaning() {
 }
 async function speak() {
   if (!current.value) return
+  unlockSpeak()
+  pendingAutoRead = false
   if (speaking.value && speakingLang.value === 'en') {
     haltSpeak()
     return
@@ -771,6 +801,8 @@ async function speak() {
 }
 async function speakChinese() {
   if (!current.value?.meaning?.trim()) return
+  unlockSpeak()
+  pendingAutoRead = false
   if (speaking.value && speakingLang.value === 'zh' && !speakingOption.value) {
     haltSpeak()
     return
@@ -781,6 +813,8 @@ async function speakChinese() {
 async function speakOption(option: string) {
   const phrase = option.trim()
   if (!phrase || !audioSupported || !isChineseText(phrase)) return
+  unlockSpeak()
+  pendingAutoRead = false
   if (speaking.value && speakingLang.value === 'zh' && speakingOption.value === phrase) {
     haltSpeak()
     return
@@ -811,6 +845,7 @@ function optionSpeakLabel(option: string) {
 async function speakTarget() {
   const text = speakPrompt.value?.target?.text
   if (!text) return
+  unlockSpeak()
   if (speaking.value && speakingLang.value === 'en') {
     haltSpeak()
     return
@@ -843,6 +878,8 @@ async function answer(value: string) {
   if (!current.value || busy.value || phase.value !== 'quiz' || quizLocked.value) return
   const trimmed = value.trim()
   if (!trimmed || wrongPicks.value.includes(trimmed)) return
+  unlockSpeak()
+  pendingAutoRead = false
   busy.value = true
   error.value = ''
   try {
@@ -1149,7 +1186,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="learning" :aria-label="label('每日英语任务', 'Daily English mission')" :aria-busy="busy">
+  <section
+    class="learning"
+    :aria-label="label('每日英语任务', 'Daily English mission')"
+    :aria-busy="busy"
+    @pointerdown.capture="onLearningGesture"
+  >
     <div class="intro">
       <span class="eyebrow">
         ENGLISH LAB · {{ label('每天一小步', 'One small step a day') }}

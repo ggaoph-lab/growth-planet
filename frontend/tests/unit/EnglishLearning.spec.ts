@@ -13,6 +13,8 @@ vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: {
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
 vi.mock('@/shared/speak', () => ({
   canSpeak: () => true,
+  isSpeakUnlocked: () => true,
+  unlockSpeak: vi.fn(),
   speakPhrase: vi.fn().mockResolvedValue(undefined),
   stopSpeaking: vi.fn(),
   warmPhrases: vi.fn(),

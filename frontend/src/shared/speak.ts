@@ -5,6 +5,16 @@ import { api } from '@/shared/api/client'
 let currentAudio: HTMLAudioElement | null = null
 let currentObjectUrl: string | null = null
 let speakEpoch = 0
+/**
+ * Shared element unlocked during a user gesture so async TTS can play on
+ * mobile Chrome and iPad/iOS Safari (WebKit autoplay is stricter).
+ */
+let sharedAudio: HTMLAudioElement | null = null
+let audioUnlocked = false
+let unlockInFlight: Promise<boolean> | null = null
+/** Minimal valid silent WAV — must play under a gesture to unlock WebKit media. */
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
 
 function ensureVoices(): void {
   if (typeof window === 'undefined' || !window.speechSynthesis) return
@@ -21,6 +31,107 @@ export function canSpeak(): boolean {
   return typeof window !== 'undefined' && (typeof window.speechSynthesis !== 'undefined' || typeof Audio !== 'undefined')
 }
 
+export function isSpeakUnlocked(): boolean {
+  return audioUnlocked
+}
+
+function getSharedAudio(): HTMLAudioElement {
+  if (!sharedAudio) {
+    // iPad/iOS: keep the element in the DOM with playsinline so unlock survives async TTS.
+    const audio = document.createElement('audio')
+    audio.setAttribute('playsinline', 'true')
+    audio.setAttribute('webkit-playsinline', 'true')
+    audio.preload = 'auto'
+    audio.setAttribute('aria-hidden', 'true')
+    Object.assign(audio.style, {
+      position: 'fixed',
+      width: '1px',
+      height: '1px',
+      opacity: '0',
+      pointerEvents: 'none',
+      left: '0',
+      bottom: '0',
+    })
+    document.body.appendChild(audio)
+    sharedAudio = audio
+  }
+  return sharedAudio
+}
+
+function primeSpeechSynthesis(): void {
+  try {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.resume()
+    const utter = new SpeechSynthesisUtterance(' ')
+    utter.volume = 0
+    utter.rate = 10
+    window.speechSynthesis.speak(utter)
+    window.speechSynthesis.cancel()
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Call during a user gesture (tap/click). Mobile Chrome and iPad Safari block
+ * HTMLAudioElement.play() / speechSynthesis until media is unlocked this way.
+ * After unlock, later async TTS (post-fetch / setTimeout) can play on the shared element.
+ */
+export function unlockSpeak(): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof Audio === 'undefined') return Promise.resolve(false)
+  if (audioUnlocked && sharedAudio) return Promise.resolve(true)
+  if (unlockInFlight) return unlockInFlight
+
+  unlockInFlight = (async () => {
+    try {
+      const audio = getSharedAudio()
+      primeSpeechSynthesis()
+      // Also resume Web Audio — helps iPad when HTMLAudio alone is flaky.
+      try {
+        const AC =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (AC) {
+          const ctx = new AC()
+          void ctx.resume()
+          const buffer = ctx.createBuffer(1, 1, 22050)
+          const source = ctx.createBufferSource()
+          source.buffer = buffer
+          source.connect(ctx.destination)
+          source.start(0)
+        }
+      } catch {
+        /* ignore */
+      }
+      // play() must be invoked synchronously inside the gesture (before first await yields).
+      audio.muted = true
+      audio.src = SILENT_WAV
+      const playResult = audio.play()
+      try {
+        await playResult
+      } catch {
+        audio.muted = false
+        return false
+      }
+      audio.pause()
+      try {
+        audio.currentTime = 0
+      } catch {
+        /* ignore */
+      }
+      audio.muted = false
+      audioUnlocked = true
+      return true
+    } catch {
+      return false
+    } finally {
+      unlockInFlight = null
+    }
+  })()
+
+  return unlockInFlight
+}
+
 function revokeObjectUrl(): void {
   if (currentObjectUrl) {
     URL.revokeObjectURL(currentObjectUrl)
@@ -35,8 +146,11 @@ function haltPlayback(): void {
   if (currentAudio) {
     try {
       currentAudio.pause()
-      currentAudio.removeAttribute('src')
-      currentAudio.load()
+      // Keep the shared DOM element; clearing src + load() can drop iOS unlock.
+      if (currentAudio !== sharedAudio) {
+        currentAudio.removeAttribute('src')
+        currentAudio.load()
+      }
     } catch {
       /* ignore */
     }
@@ -177,14 +291,18 @@ async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
 
   const objectUrl = URL.createObjectURL(blob)
   currentObjectUrl = objectUrl
-  const audio = new Audio()
+  // Always reuse the DOM-mounted element so iPad/Chrome keep the gesture unlock.
+  const audio = typeof document !== 'undefined' ? getSharedAudio() : new Audio()
   currentAudio = audio
-  audio.preload = 'auto'
+  audio.muted = false
   audio.src = objectUrl
 
   try {
     await audio.play()
-  } catch {
+    audioUnlocked = true
+  } catch (err) {
+    const blocked = err instanceof DOMException && err.name === 'NotAllowedError'
+    if (blocked) audioUnlocked = false
     if (currentAudio === audio) currentAudio = null
     revokeObjectUrl()
     return false
@@ -242,7 +360,11 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string)
   const ready = preparedAudio.get(audioKey(text, apiLang))
   if (ready) {
     const mime = ready.mime.split(';')[0]?.trim() || 'audio/mpeg'
-    await playBlob(base64ToBlob(ready.base64, mime), epoch)
+    const ok = await playBlob(base64ToBlob(ready.base64, mime), epoch)
+    if (ok || epoch !== speakEpoch) return
+    // Autoplay blocked (common on first mobile load) — try browser voice as last resort.
+    if (epoch !== speakEpoch) return
+    await speakBrowser(text, browserLang, epoch)
     return
   }
 
@@ -261,9 +383,9 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string)
       const mime = result.mime.split(';')[0]?.trim() || 'audio/mpeg'
       const blob = base64ToBlob(result.audio_base64, mime)
       const ok = await playBlob(blob, epoch)
-      // Got neural audio — do not fall back to robotic system voice on play glitches.
+      // Neural audio played, or a newer speak superseded us.
       if (ok || epoch !== speakEpoch) return
-      return
+      // Play blocked after a successful TTS fetch — fall through to browser voice.
     }
   } catch {
     // fall through to browser only when API itself failed

@@ -26,6 +26,11 @@ class RewardPolicySeeder
             // max_per_day caps sum of coins that day (not grant count); grant_key already ensures once per checklist.
             ['code' => 'item.checklist.before_school', 'xp_amount' => 5, 'coin_amount' => 2, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'item.checklist.after_school', 'xp_amount' => 5, 'coin_amount' => 2, 'requires_approval' => false, 'max_per_day' => 10],
+            // Coins are overridden per grid (1 / 2 / 3). max_per_day is the sum if all three qualify.
+            ['code' => 'game.schulte', 'xp_amount' => 0, 'coin_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
+            // Finish each level once per day: easy 1 / practice 2 / challenge 3.
+            ['code' => 'game.mirror', 'xp_amount' => 0, 'coin_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
+            ['code' => 'game.sudoku', 'xp_amount' => 0, 'coin_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
         ];
     }
 

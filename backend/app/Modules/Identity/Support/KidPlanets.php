@@ -24,6 +24,7 @@ class KidPlanets
             self::planet('food_diary', '食物探索日记', 'Food diary', 'food', true, 3),
             self::planet('movie_planet', '电影星球', 'Movie planet', 'movie', true, 4),
             self::planet('english_planet', '英语探索星球', 'English explore', 'abc', true, 5),
+            self::planet('game_planet', '游戏星球', 'Game planet', 'gamepad', true, 7),
             self::planet('shop', '奖励商城', 'Reward shop', 'gift', true, 2),
             self::planet('collection', '成长收藏馆', 'Collection', 'museum', true, 6),
         ];

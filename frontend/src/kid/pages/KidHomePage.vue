@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
 import type { KidHome, Planet } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
+import { unlockSpeak } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 import { planetTitle } from '@/shared/planetTitle'
 import PlanetTile from '../components/PlanetTile.vue'
@@ -23,6 +24,7 @@ const planetRoutes: Record<string, string> = {
   food_diary: 'kid-food',
   movie_planet: 'kid-movies',
   english_planet: 'kid-english',
+  game_planet: 'kid-games',
   collection: 'kid-collection',
 }
 const home = ref<KidHome | null>(null)
@@ -40,6 +42,8 @@ onMounted(async () => {
 
 function open(planet: Planet): void {
   if (session.me?.child?.preferences.sounds) playTap()
+  // Unlock TTS during this tap so English Lab auto-read works on phone/iPad browsers.
+  if (planet.key === 'english_planet' && planet.available) void unlockSpeak()
   if (!planet.available) {
     toast.value = t('kid.building', { title: planetTitle(planet.key, planet.title) })
     clearTimeout(toastTimer)
