@@ -3,13 +3,46 @@
 namespace Tests\Feature\Growth;
 
 use App\Modules\Task\Services\EdgeTtsClient;
+use App\Modules\Task\Services\QwenTtsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use Tests\TestCase;
 
 class KidTtsTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_prefetch_quota_does_not_block_tapped_playback(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+        $this->mock(QwenTtsService::class, function ($mock): void {
+            $mock->shouldReceive('synthesize')->once()->andReturn(['audio_base64' => 'YQ==', 'mime' => 'audio/mpeg', 'provider' => 'edge_tts']);
+            $mock->shouldReceive('qwenConfigured')->andReturn(false);
+        });
+        for ($i = 0; $i < 40; $i++) {
+            RateLimiter::hit('kid-tts-warm:'.$child->id, 60);
+        }
+        $this->actingAsKid($child, $device, $token)
+            ->postJson('/api/v1/kid/tts', ['text' => 'Hello.', 'lang' => 'en-US'])->assertOk();
+        $this->postJson('/api/v1/kid/tts/warm', ['texts' => ['Hello.'], 'lang' => 'en-US'])->assertStatus(429);
+    }
+
+    public function test_morning_audio_is_reused_in_the_evening(): void
+    {
+        config(['services.tts.prefer_gemini' => false]);
+        ['family' => $family] = $this->makeFamily();
+        $audio = ['audio_base64' => base64_encode(str_repeat('a', 80)), 'mime' => 'audio/mpeg', 'provider' => 'edge_tts'];
+        $this->mock(EdgeTtsClient::class, function ($mock) use ($audio): void {
+            $mock->shouldReceive('synthesize')->once()->andReturn($audio);
+        });
+        $tts = app(QwenTtsService::class);
+        $this->assertSame($audio, $tts->synthesize('Good morning.', $family->id, 'en-US'));
+        $this->travel(14)->hours();
+        $this->assertSame($audio, $tts->synthesize('Good morning.', $family->id, 'en-US'));
+    }
 
     public function test_english_lines_use_an_english_neural_voice(): void
     {

@@ -86,7 +86,7 @@ return [
 
     // Kid read-aloud: Gemini TTS (when keyed) → Edge neural → Qwen/CosyVoice → public fallbacks.
     'tts' => [
-        'prefer_gemini' => filter_var(env('TTS_PREFER_GEMINI', true), FILTER_VALIDATE_BOOLEAN),
+        'prefer_gemini' => filter_var(env('TTS_PREFER_GEMINI', false), FILTER_VALIDATE_BOOLEAN),
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
         'edge_voice_en' => env('TTS_EDGE_VOICE_EN', 'en-US-JennyNeural'),
     ],

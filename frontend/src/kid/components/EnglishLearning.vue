@@ -28,6 +28,10 @@ type Item = {
   answer?: string
   prompt?: string
   question?: string
+  usage?: {
+    phrase: { text: string; meaning: string }
+    sentence: { text: string; meaning: string }
+  } | null
 }
 type Plan = {
   items: Item[]
@@ -231,6 +235,9 @@ const canMarkFairyHeard = computed(() => {
   }
   return true
 })
+function hasHeardFairyTale(): boolean {
+  return !!fairyTale.value?.heard
+}
 function goHome() {
   void router.push({ name: 'kid-home' })
 }
@@ -252,7 +259,7 @@ async function anotherRound() {
   }
   if (!current.value) {
     const needWords = (plan.value?.new_words_completed ?? 0) < (plan.value?.new_words_goal ?? 10)
-    const needFairy = !!plan.value?.fairy_tale_unlocked && !(plan.value.fairy_tale_heard_today || fairyTale.value?.heard)
+    const needFairy = !!plan.value?.fairy_tale_unlocked && !(plan.value.fairy_tale_heard_today || hasHeardFairyTale())
     if (needFairy) {
       error.value = label('先听完今天的童话，再继续复习。', 'Listen to today’s fairy tale first, then keep reviewing.')
       void loadFairyTale()
@@ -311,11 +318,13 @@ function clearAdvanceTimer() {
 
 function kindLabel(item: Item) {
   if (item.spelling || item.kind === 'spelling') return label('拼写填空', 'Spelling')
-  if (item.probe && item.kind === 'sentence') return label('生活短句', 'Everyday phrase')
-  if (item.probe) return label('词汇小测试', 'Vocabulary check')
   if (item.challenge && item.kind === 'story') return label('短故事', 'Short story')
   if (item.challenge && item.kind === 'grammar') return label('语法小练', 'Grammar play')
-  return item.kind === 'word' ? label('推荐单词', 'Word') : label('生活短句', 'Everyday phrase')
+  if (item.kind === 'phrase') return label('词组', 'Phrase')
+  return item.kind === 'word' ? label('单词', 'Word') : label('句子', 'Sentence')
+}
+function isNewWord(item: Item) {
+  return item.kind === 'word' && !item.review && !item.probe && !item.challenge
 }
 function badgeLabel(item: Item) {
   if (item.spelling || item.kind === 'spelling') return label('拼写练习', 'Spelling practice')
@@ -486,6 +495,10 @@ function warmPlanAudio(items: Item[]) {
     if (item.text) english.push(item.text)
     if (item.meaning && !item.challenge) chinese.push(item.meaning)
     if (item.question && isChineseText(item.question)) chinese.push(item.question)
+    for (const example of [item.usage?.phrase, item.usage?.sentence]) {
+      if (example?.text) english.push(example.text)
+      if (example?.meaning) chinese.push(example.meaning)
+    }
     for (const option of item.options ?? []) {
       if (isChineseText(option)) chinese.push(option)
       else if (option.trim()) english.push(option)
@@ -496,44 +509,51 @@ function warmPlanAudio(items: Item[]) {
 }
 /** True when the current card should auto-read but media may still be locked (Chrome / iPad). */
 let pendingAutoRead = false
+let autoReadAttempt = 0
+const loadingAudio = ref(false)
 
 function scheduleAutoRead(item: Item) {
-  if (!audioSupported) return
-  // Review shows Chinese and asks for English — read the Chinese prompt aloud.
-  if (item.review && item.meaning) {
-    pendingAutoRead = true
-    void playCurrentMeaning().finally(() => {
-      if (isSpeakUnlocked()) pendingAutoRead = false
-    })
-    return
-  }
-  // Auto-read English for normal cards and spelling (dictation).
-  if (item.text && !item.challenge) {
-    pendingAutoRead = true
-    void playCurrentText().finally(() => {
-      if (isSpeakUnlocked()) pendingAutoRead = false
-    })
-  }
+  if (!audioSupported || item.challenge) return
+  pendingAutoRead = true
+  const key = item.key
+  const attempt = ++autoReadAttempt
+  const playback = item.review && item.meaning ? playCurrentMeaning() : playCurrentText()
+  void playback.then((played) => {
+    if (current.value?.key !== key || attempt !== autoReadAttempt) return
+    pendingAutoRead = !played
+  })
 }
 
-/** Chrome / iPad: unlock HTMLAudio during a gesture, then replay a blocked auto-read. */
-function onLearningGesture() {
-  const shouldReplay = !isSpeakUnlocked() && pendingAutoRead
-  void unlockSpeak().then((ok) => {
-    if (!ok || !shouldReplay || !pendingAutoRead || !current.value || !audioSupported) return
-    pendingAutoRead = false
-    scheduleAutoRead(current.value)
-  })
+async function startAutoRead() {
+  const key = current.value?.key
+  // Stop an earlier denied attempt before priming the shared audio element.
+  haltSpeak()
+  const unlocked = await unlockSpeak()
+  if (!unlocked || !current.value || current.value.key !== key) return
+  scheduleAutoRead(current.value)
+}
+
+/** A gesture on the card can resume the first word; buttons own their own playback. */
+function onLearningGesture(event: Event) {
+  const interactive = event.target instanceof Element && event.target.closest('button, input, select, textarea, a, summary')
+  if (interactive) {
+    void unlockSpeak()
+    return
+  }
+  if (pendingAutoRead && !isSpeakUnlocked()) void startAutoRead()
+  else void unlockSpeak()
 }
 
 function choose(item?: Item) {
   clearAdvanceTimer()
   stopSpeaking()
   speaking.value = false
+  loadingAudio.value = false
   speakingLang.value = null
   speakingOption.value = null
   speakToken += 1
   pendingAutoRead = false
+  autoReadAttempt += 1
   current.value = item ?? null
   // Challenge first: every card opens as a quiz. Learn only after a miss.
   phase.value = 'quiz'
@@ -715,8 +735,10 @@ async function playFairyLines(lang: 'zh' | 'en') {
     }
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+    return false
   } finally {
     if (token === speakToken) {
+      loadingAudio.value = false
       speaking.value = false
       speakingLang.value = null
       fairyReading.value = null
@@ -747,41 +769,52 @@ let speakToken = 0
 function haltSpeak() {
   stopSpeaking()
   speaking.value = false
+  loadingAudio.value = false
   speakingLang.value = null
   speakingOption.value = null
   speakToken += 1
 }
-async function playCurrentText() {
-  if (!current.value?.text || !audioSupported) return
+async function playCurrentText(): Promise<boolean> {
+  if (!current.value?.text || !audioSupported) return false
   const token = ++speakToken
-  speaking.value = true
+  speaking.value = false
+  loadingAudio.value = true
   speakingLang.value = 'en'
   audioMessage.value = ''
   try {
-    await speakPhrase(current.value.text, 'en-US')
+    return await speakPhrase(current.value.text, 'en-US', () => {
+      if (token === speakToken) { loadingAudio.value = false; speaking.value = true }
+    })
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+    return false
   } finally {
     if (token === speakToken) {
+      loadingAudio.value = false
       speaking.value = false
       speakingLang.value = null
     }
   }
 }
-async function playCurrentMeaning() {
+async function playCurrentMeaning(): Promise<boolean> {
   const meaning = current.value?.meaning?.trim()
-  if (!meaning || !audioSupported) return
+  if (!meaning || !audioSupported) return false
   const token = ++speakToken
-  speaking.value = true
+  speaking.value = false
+  loadingAudio.value = true
   speakingLang.value = 'zh'
   speakingOption.value = null
   audioMessage.value = ''
   try {
-    await speakPhrase(meaning, 'zh-CN')
+    return await speakPhrase(meaning, 'zh-CN', () => {
+      if (token === speakToken) { loadingAudio.value = false; speaking.value = true }
+    })
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+    return false
   } finally {
     if (token === speakToken) {
+      loadingAudio.value = false
       speaking.value = false
       speakingLang.value = null
       speakingOption.value = null
@@ -790,9 +823,10 @@ async function playCurrentMeaning() {
 }
 async function speak() {
   if (!current.value) return
-  unlockSpeak()
+  const wasSpeaking = speaking.value && isSpeakUnlocked()
+  await unlockSpeak()
   pendingAutoRead = false
-  if (speaking.value && speakingLang.value === 'en') {
+  if (wasSpeaking && speaking.value && speakingLang.value === 'en') {
     haltSpeak()
     return
   }
@@ -829,8 +863,10 @@ async function speakOption(option: string) {
     await speakPhrase(phrase, 'zh-CN')
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
+    return false
   } finally {
     if (token === speakToken) {
+      loadingAudio.value = false
       speaking.value = false
       speakingLang.value = null
       speakingOption.value = null
@@ -860,12 +896,14 @@ async function speakTarget() {
     speakError.value = label('暂时无法朗读范读。', 'Could not play the model reading.')
   } finally {
     if (token === speakToken) {
+      loadingAudio.value = false
       speaking.value = false
       speakingLang.value = null
     }
   }
 }
 function listenText(idle: string, idleEn: string, lang: 'en' | 'zh' = 'en') {
+  if (loadingAudio.value && speakingLang.value === lang) return label('准备语音…', 'Loading audio…')
   return speaking.value && speakingLang.value === lang
     ? `⏹ ${label('停止', 'Stop')}`
     : `🔊 ${label(idle, idleEn)}`
@@ -892,10 +930,13 @@ async function answer(value: string) {
       phase.value = 'result'
       void session.load(true).catch(() => {})
       clearAdvanceTimer()
-      advanceTimer = setTimeout(() => {
-        advanceTimer = null
-        next()
-      }, CORRECT_ADVANCE_MS)
+      // New words pause for the companion phrase and sentence before continuing.
+      if (!isNewWord(current.value)) {
+        advanceTimer = setTimeout(() => {
+          advanceTimer = null
+          next()
+        }, CORRECT_ADVANCE_MS)
+      }
     } else if (multiChoice) {
       // Stay on the quiz: mark the miss red and let the child try another option.
       wrongPicks.value = [...wrongPicks.value, trimmed]
@@ -936,6 +977,20 @@ function next() {
     // yellow ↔ cloud when a rematch of the just-answered word sat at the front.
     const upcoming = items.find(item => item.key !== current.value?.key) ?? items[0]
     choose(upcoming)
+  }
+}
+const usageAudioPending = ref('')
+async function speakUsage(text: string, lang: 'en-US' | 'zh-CN') {
+  if (!audioSupported) return
+  unlockSpeak()
+  audioMessage.value = ''
+  usageAudioPending.value = text
+  try {
+    await speakPhrase(text, lang)
+  } catch {
+    audioMessage.value = label('暂时无法朗读，请再试一次。', 'Could not play audio. Please try again.')
+  } finally {
+    if (usageAudioPending.value === text) usageAudioPending.value = ''
   }
 }
 function stopMicTracks() {
@@ -1051,6 +1106,7 @@ async function beginMicHold() {
   const token = ++micPressToken
   stopSpeaking()
   speaking.value = false
+  loadingAudio.value = false
   speakingLang.value = null
   await startRecording()
   // User released before getUserMedia / MediaRecorder was ready — discard.
@@ -1190,7 +1246,7 @@ onUnmounted(() => {
     class="learning"
     :aria-label="label('每日英语任务', 'Daily English mission')"
     :aria-busy="busy"
-    @pointerdown.capture="onLearningGesture"
+    @click.capture="onLearningGesture"
   >
     <div class="intro">
       <span class="eyebrow">
@@ -1430,7 +1486,7 @@ onUnmounted(() => {
       <template v-if="phase === 'learn'">
         <div class="emoji" aria-hidden="true">{{ cardEmoji(current) }}</div>
         <h3 lang="en" class="sentence-line">
-          <template v-if="current.kind === 'sentence' || (current.probe && current.kind === 'sentence')">
+          <template v-if="(current.kind === 'sentence' || current.kind === 'phrase') || (current.probe && (current.kind === 'sentence' || current.kind === 'phrase'))">
             <template v-for="(token, idx) in sentenceTokens(current.text)" :key="`${idx}-${token}`">
               <button
                 v-if="clickableWord(token)"
@@ -1448,7 +1504,7 @@ onUnmounted(() => {
         <p v-if="!current.challenge" class="meaning">{{ current.meaning }}</p>
         <p v-else class="meaning">{{ current.question || current.meaning }}</p>
         <p>{{ label('刚才没答对。听一听、看一看，再挑战一次。', 'That was a miss. Listen and look, then try again.') }}</p>
-        <p v-if="current.kind === 'sentence'" class="hint">{{ label('不认识的词可以点一下，加入学习词库。', 'Tap a word you don’t know to add it to your list.') }}</p>
+        <p v-if="(current.kind === 'sentence' || current.kind === 'phrase')" class="hint">{{ label('不认识的词可以点一下，加入学习词库。', 'Tap a word you don’t know to add it to your list.') }}</p>
         <p v-if="wordSaveMessage" class="hint" role="status">{{ wordSaveMessage }}</p>
         <div class="listen-row">
           <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
@@ -1493,7 +1549,7 @@ onUnmounted(() => {
           </p>
           <h3 :lang="current.review ? 'zh' : 'en'" class="sentence-line">
             <span v-if="!current.review" class="word-emoji" aria-hidden="true">{{ cardEmoji(current) }}</span>
-            <template v-if="!current.review && !current.challenge && current.kind === 'sentence'">
+            <template v-if="!current.review && !current.challenge && (current.kind === 'sentence' || current.kind === 'phrase')">
               <template v-for="(token, idx) in sentenceTokens(current.text)" :key="`q-${idx}-${token}`">
                 <button
                   v-if="clickableWord(token)"
@@ -1509,7 +1565,7 @@ onUnmounted(() => {
               {{ current.challenge ? (current.prompt || current.text) : current.review ? current.meaning : current.text }}
             </template>
           </h3>
-          <p v-if="!current.review && current.kind === 'sentence'" class="hint">{{ label('不认识的词可以点一下，加入学习词库。', 'Tap a word you don’t know to add it to your list.') }}</p>
+          <p v-if="!current.review && (current.kind === 'sentence' || current.kind === 'phrase')" class="hint">{{ label('不认识的词可以点一下，加入学习词库。', 'Tap a word you don’t know to add it to your list.') }}</p>
           <p v-if="wordSaveMessage" class="hint" role="status">{{ wordSaveMessage }}</p>
           <p v-if="!current.review && wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
           <button v-if="!current.review" class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('再听一次', 'Listen again') }}</button>
@@ -1533,7 +1589,7 @@ onUnmounted(() => {
                 :title="optionSpeakLabel(option)"
                 :disabled="busy"
                 @click.stop="speakOption(option)"
-              >{{ speaking.value && speakingLang === 'zh' && speakingOption === option ? '⏹' : '🔊' }}</button>
+              >{{ speaking && speakingLang === 'zh' && speakingOption === option ? '⏹' : '🔊' }}</button>
             </div>
           </div>
           <p v-if="wrongPicks.length && !quizLocked" class="hint" role="status">{{ label('不对，再选一次', 'Not that one — try again') }}</p>
@@ -1547,7 +1603,21 @@ onUnmounted(() => {
           <span class="word-emoji" aria-hidden="true">{{ cardEmoji(current) }}</span>
           <strong lang="en">{{ current.text }}</strong> · {{ result.meaning }}
         </p>
+        <p class="word-meaning-pinyin" lang="zh-Latn">{{ chinesePinyin(result.meaning) }}</p>
         <p v-if="wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
+        <section v-if="result.correct && isNewWord(current) && current.usage" class="word-usage" aria-label="词组和例句 / Phrase and sentence">
+          <h4>{{ label('把新词用起来', 'Use your new word') }}</h4>
+          <div v-for="entry in (['phrase', 'sentence'] as const)" :key="entry" class="usage-example" :data-usage="entry">
+            <span class="usage-label">{{ entry === 'phrase' ? label('词组', 'Phrase') : label('例句', 'Sentence') }}</span>
+            <p lang="en">{{ current.usage[entry].text }}</p>
+            <p class="usage-pinyin" lang="zh-Latn">{{ chinesePinyin(current.usage[entry].meaning) }}</p>
+            <p class="usage-meaning">{{ current.usage[entry].meaning }}</p>
+            <div class="listen-row">
+              <button class="secondary" :disabled="!audioSupported || usageAudioPending === current.usage[entry].text" @click="speakUsage(current.usage[entry].text, 'en-US')">{{ usageAudioPending === current.usage[entry].text ? label('朗读中…', 'Reading…') : entry === 'phrase' ? label('听词组', 'Listen to phrase') : label('听例句', 'Listen to sentence') }}</button>
+              <button class="secondary" :disabled="!audioSupported" @click="speakUsage(current.usage[entry].meaning, 'zh-CN')">{{ label('听中文', 'Listen in Chinese') }}</button>
+            </div>
+          </div>
+        </section>
         <p v-if="result.coach_tip" class="coach">{{ result.coach_tip }}</p>
         <p v-if="result.correct && !current.probe && !current.challenge">+{{ result.xp }} XP · +{{ result.coins }} {{ label('金币', 'coins') }}<br>{{ label('下次复习', 'Next review') }}：{{ result.next_review }}</p>
         <p v-else-if="isSpellingCard(current)">{{ wordSaveMessage || (result.correct ? label('拼写正确，这个词算学会啦！不发金币。', 'Spelled right — this word counts as learned. No coins.') : label('拼写练习不发金币；答对后才算完成。', 'Spelling awards no coins; a correct spelling finishes the word.')) }}</p>
@@ -1565,7 +1635,7 @@ onUnmounted(() => {
           <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
           <button v-if="canListenChinese" class="secondary" :disabled="!audioSupported" @click="speakChinese">{{ listenText('听中文', 'Listen in Chinese', 'zh') }}</button>
         </div>
-        <button class="primary" @click="next">{{ label('继续探索', 'Continue') }} →</button>
+        <button class="primary" @click="next">{{ result.correct && isNewWord(current) ? label('读完了，继续', 'Done reading, continue') : label('继续探索', 'Continue') }} →</button>
       </div>
       <p v-if="!audioSupported">{{ label('当前浏览器不支持朗读，可以和家长一起读。', 'Read together with a grown-up; audio is not supported here.') }}</p>
       <p v-if="audioMessage" role="status">{{ audioMessage }}</p>
@@ -1925,6 +1995,22 @@ h2 { margin: 10px 0; font-size: clamp(21px, 3vw, 28px); } p { line-height: 1.7; 
 .word-emoji { margin-right: 0.28em; font-size: 0.9em; }
 h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0 8px; overflow-wrap: anywhere; }
 .meaning { font-size: 20px; }
+/* Companion panels share the child theme, with explicit readable foregrounds. */
+.word-usage { width: min(100%, 680px); margin: 12px auto; text-align: left; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.word-usage h4 { grid-column: 1 / -1; margin: 0 0 2px; text-align: center; font-size: 16px; }
+.usage-example { padding: 12px; border-radius: 12px; background: #22354d; color: #f4f8fd; border: 1px solid #38516a; overflow-wrap: anywhere; }
+.usage-label { font-size: 12px; font-weight: 700; color: #9fe4d3; }
+.usage-example p { margin: 6px 0; line-height: 1.45; }
+.usage-example p[lang="en"] { font-size: 18px; font-weight: 650; color: #f4f8fd; }
+.usage-example .usage-pinyin { color: #adc3d5; font-size: 12px; }
+.usage-example .usage-meaning { color: #d5e2ed; font-size: 15px; }
+.usage-example .listen-row { justify-content: flex-start; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.usage-example .secondary { padding: 7px 10px; min-height: 36px; font-size: 12px; color: #e7f4ff; background: #2c4660; border: 1px solid #56738c; }
+.usage-example .secondary:hover:not(:disabled) { background: #395b78; border-color: #8cdbc8; }
+.word-meaning-pinyin { margin: 4px 0 8px; color: #c3d8e7; font-size: 13px; }
+.feedback > .emoji { font-size: 32px; margin-top: 10px; }
+.feedback > h3 { font-size: 26px; margin-top: 10px; }
+@media(max-width: 620px) { .word-usage { grid-template-columns: minmax(0, 1fr); max-width: 440px; } }
 .meta { margin: 0 0 10px; font-size: 14px; color: #9fe4d3; letter-spacing: .02em; opacity: .95; }
 .coach { margin: 12px auto 0; max-width: 420px; padding: 10px 14px; border-radius: 12px; background: #8cdbc814; color: #c9f3e8; font-size: 15px; }
 .speak-box { margin: 20px auto 0; max-width: 480px; padding: 16px; border-radius: 16px; border: 1px solid #8cdbc844; background: #8cdbc812; }

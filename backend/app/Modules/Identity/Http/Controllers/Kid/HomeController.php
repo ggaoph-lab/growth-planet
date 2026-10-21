@@ -14,7 +14,7 @@ class HomeController
     {
         return response()->json(['data' => [
             'profile' => (new KidProfileResource($context->child()))->resolve(),
-            'planets' => KidPlanets::all(),
+            'planets' => KidPlanets::forFamily($context->familyId()),
         ]]);
     }
 

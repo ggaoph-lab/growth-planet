@@ -2,6 +2,7 @@
 
 namespace App\Modules\Identity\Support;
 
+use App\Modules\Core\Settings\Settings;
 use App\Modules\Core\Support\BiMsg;
 
 /**
@@ -24,10 +25,41 @@ class KidPlanets
             self::planet('food_diary', '食物探索日记', 'Food diary', 'food', true, 3),
             self::planet('movie_planet', '电影星球', 'Movie planet', 'movie', true, 4),
             self::planet('english_planet', '英语探索星球', 'English explore', 'abc', true, 5),
+            self::planet('encyclopedia_planet', '科学小百科星球', 'Science encyclopedia', 'book', true, 7),
             self::planet('game_planet', '游戏星球', 'Game planet', 'gamepad', true, 7),
             self::planet('shop', '奖励商城', 'Reward shop', 'gift', true, 2),
             self::planet('collection', '成长收藏馆', 'Collection', 'museum', true, 6),
         ];
+    }
+
+    public static function enabled(string $key, int $familyId): bool
+    {
+        return (bool) app(Settings::class)->get('planets.'.$key, $familyId);
+    }
+
+    public static function forFamily(int $familyId): array
+    {
+        return array_values(array_filter(self::all(), fn ($planet) => self::enabled($planet['key'], $familyId)));
+    }
+
+    /** Shared by the child API guard; TTS stays available across modules. */
+    public static function forEndpoint(string $segment): ?string
+    {
+        return match ($segment) {
+            'tasks', 'task-instances', 'habits' => 'task_planet',
+            'wallet' => 'wallet',
+            'bag', 'items', 'item-checklists' => 'bag_planet',
+            'schedule' => 'schedule_planet',
+            'explorations' => 'explore_planet',
+            'foods', 'food-records' => 'food_diary',
+            'movies', 'movie-collections', 'movie-library', 'screen-time' => 'movie_planet',
+            'english' => 'english_planet',
+            'encyclopedia' => 'encyclopedia_planet',
+            'games' => 'game_planet',
+            'shop', 'wishes', 'redemptions' => 'shop',
+            'collection' => 'collection',
+            default => null,
+        };
     }
 
     /**

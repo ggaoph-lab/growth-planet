@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { api } from '@/shared/api/client'
+import type { Planet } from '@/shared/api/types'
 import { i18n } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
@@ -30,6 +32,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'food', name: 'kid-food', component: () => import('@/kid/pages/KidFoodPage.vue'), meta: { role: 'child', title: 'kid.food' } },
       { path: 'movies', name: 'kid-movies', component: () => import('@/kid/pages/KidMoviesPage.vue'), meta: { role: 'child', title: 'kid.movies' } },
       { path: 'english', name: 'kid-english', component: () => import('@/kid/pages/KidEnglishPage.vue'), meta: { role: 'child', title: 'kid.english' } },
+      { path: 'encyclopedia', name: 'kid-encyclopedia', component: () => import('@/kid/pages/KidEncyclopediaPage.vue'), meta: { role: 'child', title: 'kid.encyclopedia.title' } },
       { path: 'games', name: 'kid-games', component: () => import('@/kid/pages/KidGamesPage.vue'), meta: { role: 'child', title: 'kid.gamesTitle' } },
       { path: 'games/schulte', name: 'kid-schulte', component: () => import('@/kid/pages/KidSchultePage.vue'), meta: { role: 'child', title: 'kid.schulteTitle' } },
       { path: 'games/mirror', name: 'kid-mirror', component: () => import('@/kid/pages/KidMirrorPage.vue'), meta: { role: 'child', title: 'kid.mirrorTitle' } },
@@ -86,6 +89,21 @@ router.beforeEach(async (to) => {
   if (required === 'child' && !session.isChild) return session.isParent ? { name: 'parent-dashboard' } : { name: 'kid-select' }
   if (required === 'guest' && session.isChild) return { name: 'kid-home' }
 
+  if (required === 'child' && to.name !== 'kid-home') {
+    const modules: Record<string, string> = {
+      tasks: 'task_planet', habits: 'task_planet', wallet: 'wallet', shop: 'shop',
+      bag: 'bag_planet', schedule: 'schedule_planet', explore: 'explore_planet',
+      food: 'food_diary', movies: 'movie_planet', english: 'english_planet',
+      encyclopedia: 'encyclopedia_planet', games: 'game_planet', collection: 'collection',
+    }
+    const key = modules[to.path.split('/')[2] ?? '']
+    if (key) {
+      try {
+        const home = await api.get<{ planets: Planet[] }>('/kid/home')
+        if (!home.planets.some((planet) => planet.key === key)) return { name: 'kid-home' }
+      } catch { return { name: 'kid-home' } }
+    }
+  }
   return true
 })
 

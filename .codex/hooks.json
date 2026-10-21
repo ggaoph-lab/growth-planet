@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/shane/Projects/growth-planet/.codex/hooks/frontend-preview.sh' now",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -9,6 +9,7 @@ use App\Modules\Task\Services\HomeworkLlmRouter;
 use App\Modules\Task\Services\HomeworkLlmTimeoutException;
 use App\Modules\Task\Support\LlmFailureTracker;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -16,6 +17,20 @@ use Illuminate\Support\Facades\DB;
  */
 class EnglishAiCoach
 {
+    private bool $preparingDay = false;
+
+    /** A longer provider deadline is safe only in the background preparation process. */
+    public function preparingDay(callable $callback): mixed
+    {
+        $previous = $this->preparingDay;
+        $this->preparingDay = true;
+        try {
+            return $callback();
+        } finally {
+            $this->preparingDay = $previous;
+        }
+    }
+
     public function __construct(
         private readonly Clock $clock,
         private readonly FamilyAiConfig $ai,
@@ -125,7 +140,7 @@ class EnglishAiCoach
 
         // Kid plan/answer paths must fail soft quickly; homework can keep the longer default.
         $config = $primary['config'];
-        $config['timeout'] = max(5, min(
+        $config['timeout'] = $this->preparingDay ? 45 : max(5, min(
             (int) ($config['timeout'] ?? config('services.'.$choice.'.timeout', 30)),
             (int) config('services.english_lab.timeout', 12),
         ));
@@ -396,6 +411,12 @@ class EnglishAiCoach
         $recordModel = strtolower(trim((string) ($record->model ?? '')));
         if ($selectedModel !== '' && $recordModel !== '' && $selectedModel !== $recordModel) {
             return true;
+        }
+
+        $date = (string) ($record->business_date ?? $this->clock->today($child->family->timezone)->toDateString());
+        if (! $this->preparingDay && Cache::has(EnglishDailyPreparation::cacheKey($child->id, $date, $selected, $this->selectedModel($child)))) {
+            // Scheduled preparation owns cooldown retries; opening a cached day must stay quick.
+            return false;
         }
 
         $created = $record->created_at ?? null;

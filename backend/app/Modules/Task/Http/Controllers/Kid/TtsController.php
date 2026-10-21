@@ -67,7 +67,7 @@ class TtsController
         ]);
 
         $child = $this->context->child();
-        $throttleKey = 'kid-tts:'.$child->id;
+        $throttleKey = 'kid-tts-warm:'.$child->id;
         if (RateLimiter::tooManyAttempts($throttleKey, 40)) {
             throw ApiException::tooManyAttempts(RateLimiter::availableIn($throttleKey));
         }

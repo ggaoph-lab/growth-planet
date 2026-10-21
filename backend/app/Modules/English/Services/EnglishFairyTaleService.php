@@ -25,7 +25,7 @@ class EnglishFairyTaleService
     {
         $today = $this->clock->today($child->family->timezone)->toDateString();
         $completed = $this->vocabulary->newWordsCompletedToday($child, $today);
-        $goal = EnglishVocabularyService::NEW_WORDS_DAILY_GOAL;
+        $goal = $this->vocabulary->dailyWordGoal($child, $today);
         $unlocked = $completed >= $goal;
 
         if (! $unlocked) {
@@ -52,6 +52,12 @@ class EnglishFairyTaleService
             'tale' => $tale,
             'pack_words' => $tale !== null ? $this->vocabulary->packWordTexts($child, $today) : [],
         ];
+    }
+
+    /** Prepare content only; this never unlocks the tale or records listening. */
+    public function prepareToday(ChildProfile $child): ?array
+    {
+        return $this->ensureTale($child, $this->clock->today($child->family->timezone)->toDateString());
     }
 
     /**
@@ -81,7 +87,7 @@ class EnglishFairyTaleService
     {
         $today = $this->clock->today($child->family->timezone)->toDateString();
         $completed = $this->vocabulary->newWordsCompletedToday($child, $today);
-        if ($completed < EnglishVocabularyService::NEW_WORDS_DAILY_GOAL) {
+        if ($completed < $this->vocabulary->dailyWordGoal($child, $today)) {
             return $this->forChild($child);
         }
 

@@ -12,9 +12,19 @@ let speakEpoch = 0
 let sharedAudio: HTMLAudioElement | null = null
 let audioUnlocked = false
 let unlockInFlight: Promise<boolean> | null = null
-/** Minimal valid silent WAV — must play under a gesture to unlock WebKit media. */
-const SILENT_WAV =
-  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
+/** Short unmuted-policy-checked lead-in wakes the output before a brief first word. */
+function silentLeadIn(): string {
+  const samples = 4410 // 200ms at 22.05kHz, mono PCM16
+  const bytes = new Uint8Array(44 + samples * 2)
+  const view = new DataView(bytes.buffer)
+  const ascii = (offset: number, value: string) => { for (let i = 0; i < value.length; i++) bytes[offset + i] = value.charCodeAt(i) }
+  ascii(0, 'RIFF'); view.setUint32(4, bytes.length - 8, true); ascii(8, 'WAVEfmt ')
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true)
+  view.setUint32(24, 22050, true); view.setUint32(28, 44100, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true)
+  ascii(36, 'data'); view.setUint32(40, samples * 2, true)
+  return 'data:audio/wav;base64,' + btoa(String.fromCharCode(...bytes))
+}
+const SILENT_WAV = silentLeadIn()
 
 function ensureVoices(): void {
   if (typeof window === 'undefined' || !window.speechSynthesis) return
@@ -58,25 +68,7 @@ function getSharedAudio(): HTMLAudioElement {
   return sharedAudio
 }
 
-function primeSpeechSynthesis(): void {
-  try {
-    if (!window.speechSynthesis) return
-    window.speechSynthesis.resume()
-    const utter = new SpeechSynthesisUtterance(' ')
-    utter.volume = 0
-    utter.rate = 10
-    window.speechSynthesis.speak(utter)
-    window.speechSynthesis.cancel()
-  } catch {
-    /* ignore */
-  }
-}
-
-/**
- * Call during a user gesture (tap/click). Mobile Chrome and iPad Safari block
- * HTMLAudioElement.play() / speechSynthesis until media is unlocked this way.
- * After unlock, later async TTS (post-fetch / setTimeout) can play on the shared element.
- */
+/** Prepare the same output element without ever treating muted autoplay as permission. */
 export function unlockSpeak(): Promise<boolean> {
   if (typeof window === 'undefined' || typeof Audio === 'undefined') return Promise.resolve(false)
   if (audioUnlocked && sharedAudio) return Promise.resolve(true)
@@ -85,26 +77,9 @@ export function unlockSpeak(): Promise<boolean> {
   unlockInFlight = (async () => {
     try {
       const audio = getSharedAudio()
-      primeSpeechSynthesis()
-      // Also resume Web Audio — helps iPad when HTMLAudio alone is flaky.
-      try {
-        const AC =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-        if (AC) {
-          const ctx = new AC()
-          void ctx.resume()
-          const buffer = ctx.createBuffer(1, 1, 22050)
-          const source = ctx.createBufferSource()
-          source.buffer = buffer
-          source.connect(ctx.destination)
-          source.start(0)
-        }
-      } catch {
-        /* ignore */
-      }
-      // play() must be invoked synchronously inside the gesture (before first await yields).
-      audio.muted = true
+      audio.muted = false
+      audio.defaultMuted = false
+      audio.volume = 1
       audio.src = SILENT_WAV
       const playResult = audio.play()
       try {
@@ -113,6 +88,8 @@ export function unlockSpeak(): Promise<boolean> {
         audio.muted = false
         return false
       }
+      // Keep the output active briefly; otherwise a short first word can be lost as it opens.
+      await new Promise<void>(resolve => window.setTimeout(resolve, 150))
       audio.pause()
       try {
         audio.currentTime = 0
@@ -184,30 +161,41 @@ function audioKey(text: string, lang: string): string {
 }
 
 const WARM_CHUNK = 8
+const pendingWarm = new Set<string>()
+const warmQueue: Array<{ texts: string[]; lang: string }> = []
+let warming = 0
 
-/** Generate lines in the background so a tap can play without waiting on the voice service. */
+function drainWarmQueue(): void {
+  while (warming < 2 && warmQueue.length) {
+    const job = warmQueue.shift()!
+    warming += 1
+    void api.post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', {
+      texts: job.texts, lang: job.lang,
+    }).then((data) => {
+      for (const item of data.items ?? []) {
+        if (item.text && item.audio_base64 && item.mime) rememberAudio(audioKey(item.text, job.lang), item.audio_base64, item.mime)
+      }
+    }).catch(() => {
+      /* A tap can still request audio if background warming fails. */
+    }).finally(() => {
+      for (const text of job.texts) pendingWarm.delete(audioKey(text, job.lang))
+      warming -= 1
+      drainWarmQueue()
+    })
+  }
+}
+
+/** Deduplicate queued/in-flight lines and leave room for interactive playback requests. */
 export function warmPhrases(phrases: string[], lang = 'zh-CN'): void {
   const texts = [...new Set(phrases.map((phrase) => phrase.trim()).filter(Boolean))].filter(
-    (phrase) => !preparedAudio.has(audioKey(phrase, lang)),
+    (phrase) => !preparedAudio.has(audioKey(phrase, lang)) && !pendingWarm.has(audioKey(phrase, lang)),
   )
-  if (!texts.length) return
-
   for (let i = 0; i < texts.length; i += WARM_CHUNK) {
     const chunk = texts.slice(i, i + WARM_CHUNK)
-    void api
-      .post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', {
-        texts: chunk,
-        lang,
-      })
-      .then((data) => {
-        for (const item of data.items ?? []) {
-          if (item.text && item.audio_base64 && item.mime) rememberAudio(audioKey(item.text, lang), item.audio_base64, item.mime)
-        }
-      })
-      .catch(() => {
-        /* a tap still calls /kid/tts */
-      })
+    for (const text of chunk) pendingWarm.add(audioKey(text, lang))
+    warmQueue.push({ texts: chunk, lang })
   }
+  drainWarmQueue()
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
@@ -239,10 +227,10 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
   return [...candidates].sort((a, b) => score(b) - score(a))[0] ?? null
 }
 
-function speakBrowser(text: string, lang: string, epoch: number): Promise<void> {
+function speakBrowser(text: string, lang: string, epoch: number, onStarted?: () => void): Promise<boolean> {
   return new Promise((resolve) => {
     if (!window.speechSynthesis || epoch !== speakEpoch) {
-      resolve()
+      resolve(false)
       return
     }
     haltPlayback()
@@ -257,22 +245,23 @@ function speakBrowser(text: string, lang: string, epoch: number): Promise<void> 
     }
 
     let settled = false
-    const finish = () => {
+    const finish = (played: boolean) => {
       if (settled) return
       settled = true
       window.clearInterval(watch)
-      resolve()
+      resolve(played)
     }
 
     const watch = window.setInterval(() => {
       if (epoch !== speakEpoch) {
         window.speechSynthesis.cancel()
-        finish()
+        finish(false)
       }
     }, 120)
 
-    utter.onend = () => finish()
-    utter.onerror = () => finish()
+    utter.onstart = () => { if (epoch === speakEpoch) onStarted?.() }
+    utter.onend = () => finish(true)
+    utter.onerror = () => finish(false)
     window.speechSynthesis.speak(utter)
   })
 }
@@ -285,7 +274,9 @@ function base64ToBlob(base64: string, mime: string): Blob {
   return new Blob([bytes], { type: mime })
 }
 
-async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
+class AutoplayBlockedError extends Error {}
+
+async function playBlob(blob: Blob, epoch: number, onStarted?: () => void): Promise<boolean> {
   if (epoch !== speakEpoch) return false
   haltPlayback()
 
@@ -295,6 +286,11 @@ async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
   const audio = typeof document !== 'undefined' ? getSharedAudio() : new Audio()
   currentAudio = audio
   audio.muted = false
+  audio.defaultMuted = false
+  audio.volume = 1
+  audio.onplaying = () => {
+    if (epoch === speakEpoch && !audio.muted && audio.volume > 0) onStarted?.()
+  }
   audio.src = objectUrl
 
   try {
@@ -305,6 +301,7 @@ async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
     if (blocked) audioUnlocked = false
     if (currentAudio === audio) currentAudio = null
     revokeObjectUrl()
+    if (blocked) throw new AutoplayBlockedError()
     return false
   }
 
@@ -339,58 +336,48 @@ async function playBlob(blob: Blob, epoch: number): Promise<boolean> {
 }
 
 /** Speak one line. `lang` selects the neural voice; browser speech is only the fallback. */
-export function speakPhrase(text: string, lang = 'zh-CN'): Promise<void> {
-  return speakPrepared(text.trim(), lang, lang)
+export function speakPhrase(text: string, lang = 'zh-CN', onStarted?: () => void): Promise<boolean> {
+  return speakPrepared(text.trim(), lang, lang, onStarted)
 }
 
 export async function speakTask(title: string, description?: string | null, lang = 'zh-CN'): Promise<void> {
   const text = taskPhrase(title, description)
   if (!text) return
-  // Task copy is Chinese even when the UI locale is English, so the neural voice stays zh-CN.
   await speakPrepared(text, lang, 'zh-CN')
 }
 
-async function speakPrepared(text: string, browserLang: string, apiLang: string): Promise<void> {
-  if (!text) return
-
-  speakEpoch += 1
-  const epoch = speakEpoch
+async function speakPrepared(text: string, browserLang: string, apiLang: string, onStarted?: () => void): Promise<boolean> {
+  if (!text) return false
+  // Silent media priming must finish before the shared element receives real audio.
+  // Otherwise its delayed pause/reset can stop the first audible word.
+  const epoch = ++speakEpoch
+  if (unlockInFlight) await unlockInFlight
+  if (epoch !== speakEpoch) return false
   haltPlayback()
 
-  const ready = preparedAudio.get(audioKey(text, apiLang))
-  if (ready) {
-    const mime = ready.mime.split(';')[0]?.trim() || 'audio/mpeg'
-    const ok = await playBlob(base64ToBlob(ready.base64, mime), epoch)
-    if (ok || epoch !== speakEpoch) return
-    // Autoplay blocked (common on first mobile load) — try browser voice as last resort.
-    if (epoch !== speakEpoch) return
-    await speakBrowser(text, browserLang, epoch)
-    return
-  }
-
   try {
-    const result = await api.post<{
-      available: boolean
-      audio_base64: string | null
-      mime: string | null
-      provider: string | null
-    }>('/kid/tts', { text, lang: apiLang })
-
-    if (epoch !== speakEpoch) return
-
-    if (result.available && result.audio_base64 && result.mime) {
-      rememberAudio(audioKey(text, apiLang), result.audio_base64, result.mime)
-      const mime = result.mime.split(';')[0]?.trim() || 'audio/mpeg'
-      const blob = base64ToBlob(result.audio_base64, mime)
-      const ok = await playBlob(blob, epoch)
-      // Neural audio played, or a newer speak superseded us.
-      if (ok || epoch !== speakEpoch) return
-      // Play blocked after a successful TTS fetch — fall through to browser voice.
+    let ready = preparedAudio.get(audioKey(text, apiLang))
+    if (!ready) {
+      const result = await api.post<{
+        available: boolean; audio_base64: string | null; mime: string | null; provider: string | null
+      }>('/kid/tts', { text, lang: apiLang })
+      if (epoch !== speakEpoch) return false
+      if (result.available && result.audio_base64 && result.mime) {
+        rememberAudio(audioKey(text, apiLang), result.audio_base64, result.mime)
+        ready = preparedAudio.get(audioKey(text, apiLang))
+      }
     }
-  } catch {
-    // fall through to browser only when API itself failed
+    if (ready) {
+      if (!audioUnlocked && !await unlockSpeak()) return false
+      if (epoch !== speakEpoch) return false
+      const mime = ready.mime.split(';')[0]?.trim() || 'audio/mpeg'
+      const played = await playBlob(base64ToBlob(ready.base64, mime), epoch, onStarted)
+      if (played || epoch !== speakEpoch) return played
+    }
+  } catch (error) {
+    // Browser autoplay denial is actionable; don't silently queue another blocked voice.
+    if (error instanceof AutoplayBlockedError) return false
   }
-
-  if (epoch !== speakEpoch) return
-  await speakBrowser(text, browserLang, epoch)
+  if (epoch !== speakEpoch) return false
+  return speakBrowser(text, browserLang, epoch, onStarted)
 }

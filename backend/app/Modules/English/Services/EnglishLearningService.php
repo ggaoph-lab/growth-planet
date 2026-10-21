@@ -48,11 +48,11 @@ class EnglishLearningService
         $profile = $this->vocabulary->profile($child);
         $accuracy = $this->recentAccuracy($child, 7);
         $rich = $profile['path'] === EnglishVocabularyService::PATH_RICH;
-        $wordGoal = EnglishVocabularyService::NEW_WORDS_DAILY_GOAL;
         $newWordsCompleted = $this->vocabulary->newWordsCompletedToday($child, $today);
         $wordPack = $this->vocabulary->dailyWordPack($child, $today);
+        $wordGoal = $this->vocabulary->dailyWordGoal($child, $today);
 
-        $due = $progress->filter(fn ($p) => $p->due_date <= $today && $p->completed_date !== $today)
+        $due = $progress->filter(fn ($p) => (int) $p->stage < 4 && $p->due_date <= $today && $p->completed_date !== $today)
             ->sortBy('due_date');
         $due = $this->prioritizeMissed($due, $catalog, $profile['missed_words']);
         $dueByKey = $due->keyBy(fn ($p) => (string) $p->item_key);
@@ -243,7 +243,7 @@ class EnglishLearningService
             'due_total' => $due->count(),
             'mastered' => $progress->filter(fn ($p) => $p->stage >= 4)->count(),
             'learned' => $progress->count(), 'total' => max($catalog->count(), $progress->count()),
-            'next_review' => $progress->where('due_date', '>', $today)->min('due_date'),
+            'next_review' => $progress->filter(fn ($p) => (int) $p->stage < 4 && $p->due_date > $today)->min('due_date'),
             'vocabulary' => $this->vocabulary->summary($child),
             'ai_status' => $this->coach->connectionStatus($child, $today),
             'ai_error' => $this->coach->failureHint($child, $today),
@@ -380,7 +380,7 @@ class EnglishLearningService
                 array_slice(array_reverse($profile['known_words']), 0, 80)
             ),
             'fairy_tales' => $this->fairyTales->history($child),
-            'new_words_goal' => EnglishVocabularyService::NEW_WORDS_DAILY_GOAL,
+            'new_words_goal' => $this->vocabulary->dailyWordGoal($child, $today),
             'new_words_completed' => $this->vocabulary->newWordsCompletedToday($child, $today),
             'fairy_tales_heard' => $this->fairyTales->heardCount($child),
             'estimated_size' => $profile['estimated_size'],

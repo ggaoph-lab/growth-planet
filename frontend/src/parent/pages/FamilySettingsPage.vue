@@ -7,13 +7,32 @@ import { ApiError, api } from '@/shared/api/client'
 import type { AiModelChoice, AiModelList, AiSettings, Family, ParentAccount, RewardPolicy, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
+import { planetTitle } from '@/shared/planetTitle'
+import type { Planet } from '@/shared/api/types'
 import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
 const isPhone = useIsPhone()
 const route = useRoute()
 const session = useSessionStore()
-const tab = ref<'family' | 'accounts' | 'ai' | 'categories' | 'bag-rewards'>('family')
+const tab = ref<'family' | 'accounts' | 'ai' | 'categories' | 'bag-rewards' | 'planets'>('family')
+const planets = ref<(Planet & { enabled: boolean })[]>([])
+const savingPlanet = ref<string | null>(null)
+const { locale } = useI18n()
+function label(zh: string, en: string): string {
+  return locale.value === 'en' ? en : locale.value === 'zh-CN' ? zh : `${zh} / ${en}`
+}
+async function loadPlanets(): Promise<void> {
+  planets.value = await api.get('/parent/planet-settings')
+}
+async function togglePlanet(key: string, enabled: boolean): Promise<void> {
+  savingPlanet.value = key
+  try {
+    planets.value = await api.patch('/parent/planet-settings', { key, enabled })
+    ElMessage.success(t('common.saved'))
+  } catch (e) { reportError(e) }
+  finally { savingPlanet.value = null }
+}
 const loading = ref(true)
 const savingFamily = ref(false)
 const savingPassword = ref(false)
@@ -297,7 +316,8 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     syncTabFromRoute()
-    await Promise.all([loadFamily(), loadParents(), loadAi(), loadCategories(), loadBagRewards()])
+    if (route.query.tab === 'planets') tab.value = 'planets'
+    await Promise.all([loadPlanets(), loadFamily(), loadParents(), loadAi(), loadCategories(), loadBagRewards()])
   } catch (e) {
     reportError(e)
   } finally {
@@ -575,6 +595,15 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="settings">
     <el-tabs v-model="tab">
+      <el-tab-pane :label="label('星球开关', 'Planet switches')" name="planets">
+        <p class="hint top">{{ label('控制本家庭所有孩子可以使用的星球。关闭后隐藏入口并暂停访问，已有记录保留。', 'Choose the planets available to all children in this family. Turning one off hides it and pauses access while keeping existing records.') }}</p>
+        <div class="phone-list">
+          <div v-for="planet in planets" :key="planet.key" class="phone-card">
+            <div class="phone-info"><span class="phone-title">{{ planetTitle(planet.key, planet.title) }}</span></div>
+            <el-switch :model-value="planet.enabled" :aria-label="planetTitle(planet.key, planet.title)" :loading="savingPlanet === planet.key" :disabled="savingPlanet !== null" @change="togglePlanet(planet.key, Boolean($event))" />
+          </div>
+        </div>
+      </el-tab-pane>
       <el-tab-pane :label="t('parent.settings.tabFamily')" name="family">
         <el-form label-position="top" @submit.prevent="saveFamily">
           <el-form-item :label="t('parent.family.name')">

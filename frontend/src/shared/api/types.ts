@@ -138,6 +138,55 @@ export interface KidHome {
   planets: Planet[]
 }
 
+export interface EncyclopediaDomainSummary {
+  key: string
+  domain: string
+  title: string
+  emoji: string
+  topic_count: number
+}
+
+export interface EncyclopediaSubject {
+  subject: string
+  title: string
+  emoji: string
+  topic_count: number
+  attribution: string
+  domains: EncyclopediaDomainSummary[]
+}
+
+export interface EncyclopediaTopicListItem {
+  id: string
+  domain_key: string
+  name: string
+  emoji: string
+  age_start: number
+  age_end: number
+  read: boolean
+}
+
+export interface EncyclopediaDomainDetail {
+  key: string
+  title: string
+  emoji: string
+  topics: EncyclopediaTopicListItem[]
+}
+
+export interface EncyclopediaTopicDetail {
+  id: string
+  domain_key: string
+  domain: string
+  name: string
+  body: string
+  emoji: string
+  age_start: number
+  age_end: number
+  read: boolean
+  prerequisites: EncyclopediaTopicListItem[]
+  next_topics: EncyclopediaTopicListItem[]
+  attribution: string
+}
+
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'RETURNED' | 'CANCELLED'
 export type ApprovalType = 'task_completion' | 'reward_grant' | 'redemption' | 'english_log'
 

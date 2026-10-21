@@ -26,6 +26,7 @@ backend/.phpunit.result.cache
 backend/coverage/
 
 # Frontend
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/

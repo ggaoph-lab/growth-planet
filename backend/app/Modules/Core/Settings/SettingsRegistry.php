@@ -15,7 +15,12 @@ class SettingsRegistry
      */
     public static function definitions(): array
     {
-        return [
+        $planets = [];
+        foreach (\App\Modules\Identity\Support\KidPlanets::all() as $planet) {
+            $planets['planets.'.$planet['key']] = ['type' => 'bool', 'default' => true, 'label' => $planet['title']];
+        }
+
+        return $planets + [
             'auth.sudo_ttl_minutes' => ['type' => 'int', 'default' => 10, 'min' => 1, 'max' => 60, 'label' => '敏感操作确认有效期（分钟）'],
             'auth.parent_session_idle_minutes' => ['type' => 'int', 'default' => 120, 'min' => 15, 'max' => 1440, 'label' => '家长会话空闲超时（分钟）'],
 

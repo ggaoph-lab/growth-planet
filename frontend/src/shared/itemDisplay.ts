@@ -72,9 +72,9 @@ function lookup(zh: string): { emoji: string; en: string } | null {
 /** Split「水杯 Water bottle」or「水杯 / Water bottle」style names. */
 function splitBilingual(raw: string): { zh: string; en: string } | null {
   const slash = raw.match(/^(.+?)\s*[\/｜|]\s*([A-Za-z].+)$/)
-  if (slash) return { zh: slash[1].trim(), en: slash[2].trim() }
+  if (slash?.[1] && slash[2]) return { zh: slash[1].trim(), en: slash[2].trim() }
   const space = raw.match(/^([\u4e00-\u9fff\u3400-\u4dbf\s·\-]+)\s+([A-Za-z][A-Za-z0-9\s'\-]+)$/)
-  if (space) return { zh: space[1].trim(), en: space[2].trim() }
+  if (space?.[1] && space[2]) return { zh: space[1].trim(), en: space[2].trim() }
   return null
 }
 

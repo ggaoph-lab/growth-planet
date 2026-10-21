@@ -291,6 +291,63 @@ class EnglishLearningTest extends TestCase
         );
     }
 
+    public function test_previously_learned_word_is_replaced_in_cached_daily_pack(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
+        DB::table('english_learning_progress')->insert([
+            'child_id' => $child->id, 'item_key' => 'word:bird', 'stage' => 4,
+            'introduced_date' => '2026-09-01', 'due_date' => '2026-10-13',
+            'completed_date' => '2026-09-29',
+        ]);
+        DB::table('english_ai_records')->insert([
+            'child_id' => $child->id, 'purpose' => 'daily_word_pack',
+            'business_date' => '2026-10-13', 'profile_snapshot' => '{}',
+            'items' => json_encode([[
+                'kind' => 'word', 'text' => 'bird', 'meaning' => '鸟', 'emoji' => '🐦',
+                'ipa' => '', 'pos' => 'n.', 'options' => ['鸟', '鱼', '树'],
+            ]], JSON_UNESCAPED_UNICODE),
+            'status' => 'local', 'provider' => null, 'model' => null, 'created_at' => now(),
+        ]);
+
+        $plan = app(EnglishLearningService::class)->plan($child);
+        $this->assertFalse(collect($plan['items'])->contains(fn ($item) => ($item['text'] ?? '') === 'bird'));
+        $this->assertSame(0, $plan['due_total']);
+        $this->assertSame(10, $plan['new_words_goal']);
+    }
+
+    public function test_exhausted_local_ladder_does_not_recycle_old_words_as_new(): void
+    {
+        config(['services.openai.api_key' => '', 'services.qwen.api_key' => '', 'services.gemini.api_key' => '']);
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
+        foreach (config('english_vocabulary.bands') as $entries) {
+            foreach ($entries as $entry) {
+                if (($entry['kind'] ?? '') !== 'word') {
+                    continue;
+                }
+                DB::table('english_learning_progress')->insert([
+                    'child_id' => $child->id,
+                    'item_key' => 'word:'.strtolower($entry['text']),
+                    'stage' => 4, 'introduced_date' => '2026-09-01',
+                    'due_date' => '2026-10-13', 'completed_date' => '2026-09-29',
+                ]);
+            }
+        }
+
+        $plan = app(EnglishLearningService::class)->plan($child);
+        $this->assertSame(0, $plan['new_words_goal']);
+        $this->assertSame(0, $plan['due_total']);
+        $this->assertFalse(collect($plan['items'])->contains(fn ($item) => ! empty($item['daily_word'])));
+        $masteredWords = collect(config('english_vocabulary.bands'))->flatten(1)
+            ->filter(fn ($entry) => ($entry['kind'] ?? '') === 'word')->pluck('text')->all();
+        $this->assertFalse(collect($plan['items'])->contains(
+            fn ($item) => ($item['kind'] ?? '') === 'word' && in_array($item['text'] ?? '', $masteredWords, true)
+        ));
+    }
+
     public function test_short_daily_word_pack_is_topped_up_so_queue_does_not_stall(): void
     {
         ['family' => $family] = $this->makeFamily();

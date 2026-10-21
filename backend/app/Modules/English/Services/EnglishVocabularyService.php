@@ -42,6 +42,8 @@ class EnglishVocabularyService
         private readonly Clock $clock,
         private readonly EnglishAiCoach $coach,
         private readonly EnglishContentGate $gate,
+        private readonly EnglishWordUsage $wordUsage,
+        private readonly EnglishSkillPilot $skillPilot,
     ) {}
 
     /**
@@ -61,6 +63,7 @@ class EnglishVocabularyService
         }
 
         $cards = $this->cardsFromDailyWordRecord($record);
+        $cards = $this->removePreviouslyLearnedPackWords($child, $date, $record, $cards);
         // Pack can land short (AI/ladder miss) or get wiped by a mid-day local retry.
         // Top up so kids are never stuck below the daily new-word goal with an empty queue.
         $completed = $this->newWordsCompletedToday($child, $date);
@@ -94,7 +97,7 @@ class EnglishVocabularyService
         }
 
         // May exceed the daily goal when earlier short packs were topped up after some words were done.
-        return $cards;
+        return $this->wordUsage->attach($child, $date, $cards);
     }
 
     /**
@@ -121,6 +124,32 @@ class EnglishVocabularyService
         return $cards;
     }
 
+    /** Keep today's completed cards for history, but replace stale unstarted words. */
+    private function removePreviouslyLearnedPackWords(ChildProfile $child, string $date, object $record, array $cards): array
+    {
+        $known = array_fill_keys(array_map('strtolower', $this->profile($child)['known_words']), true);
+        $keys = array_column($cards, 'key');
+        $progress = DB::table('english_learning_progress')
+            ->where('child_id', $child->id)->whereIn('item_key', $keys)->get()->keyBy('item_key');
+        $kept = [];
+        foreach ($cards as $card) {
+            $row = $progress->get((string) ($card['key'] ?? ''));
+            $word = strtolower($this->gate->expression((string) ($card['text'] ?? '')));
+            $alreadySeen = $row !== null || isset($known[$word]);
+            if ($alreadySeen && ($row?->completed_date ?? null) !== $date && empty($card['collected'])) {
+                continue;
+            }
+            $kept[] = $card;
+        }
+        if (count($kept) !== count($cards)) {
+            DB::table('english_ai_records')->where('id', $record->id)->update([
+                'items' => json_encode($kept, JSON_UNESCAPED_UNICODE),
+            ]);
+        }
+
+        return $kept;
+    }
+
     /**
      * Append more daily-word cards onto today's pack (update in place — do not insert a second row).
      *
@@ -144,8 +173,7 @@ class EnglishVocabularyService
             return $record;
         }
 
-        $stored = json_decode((string) $record->items, true);
-        $merged = is_array($stored) ? array_values($stored) : [];
+        $merged = array_values($existingCards);
         foreach ($extra as $card) {
             $merged[] = $card;
         }
@@ -217,6 +245,24 @@ class EnglishVocabularyService
             ->count();
     }
 
+    public function dailyWordGoal(ChildProfile $child, string $date): int
+    {
+        $cards = $this->dailyWordPack($child, $date);
+        $completed = $this->newWordsCompletedToday($child, $date);
+        $done = DB::table('english_learning_progress')
+            ->where('child_id', $child->id)->where('completed_date', $date)
+            ->whereIn('item_key', array_column($cards, 'key'))->pluck('item_key')->all();
+        $done = array_fill_keys($done, true);
+        $pending = 0;
+        foreach ($cards as $card) {
+            if (! isset($done[$card['key']])) {
+                $pending++;
+            }
+        }
+
+        return min(self::NEW_WORDS_DAILY_GOAL, $completed + $pending);
+    }
+
     /**
      * Today's AI word-pack rows with done / learning / pending status for the kid record view.
      *
@@ -262,6 +308,9 @@ class EnglishVocabularyService
      */
     private function asDailyWordCard(array $raw): ?array
     {
+        if (preg_match('/^[A-Za-z]+(?:[\x27-][A-Za-z]+)*$/', trim((string) ($raw['text'] ?? ''))) !== 1) {
+            return null;
+        }
         $band = 6;
         $card = $this->gate->probeCard($raw, [], $band);
         if ($card === null) {
@@ -605,13 +654,19 @@ class EnglishVocabularyService
             'learning_words' => array_slice($profile['learning_words'], -15),
             'goal' => self::NEW_WORDS_DAILY_GOAL,
         ];
+        $skillFocus = $this->skillPilot->focus($profile['known_words']);
+        $snapshot['skill_pilot'] = [
+            'topic_id' => $skillFocus['topic_id'] ?? null,
+            'focus' => $skillFocus['focus'] ?? null,
+            'candidate_words' => $skillFocus['candidate_words'] ?? [],
+        ];
 
         $avoid = $this->dailyWordAvoidList($child, $date, []);
 
         $fromAi = [];
         $provider = null;
         $model = null;
-        $system = 'You pick exactly '.self::NEW_WORDS_DAILY_GOAL.' English vocabulary words for a child to learn today. Use the estimated vocabulary size and band in the user JSON. Prefer words slightly above what they already know; avoid known_words and learning_words. Reply JSON only: {"items":[{"kind":"word","text":"bird","meaning":"鸟","emoji":"🐦","ipa":"/bɜːrd/","pos":"n.","options":["鸟","鱼","树"]}]}. Each item must be a single word (no spaces), simplified Chinese meaning, IPA, pos, emoji, and exactly 3 Chinese options including the meaning. No personal data.';
+        $system = 'You pick exactly '.self::NEW_WORDS_DAILY_GOAL.' English vocabulary words for a child to learn today. Use the estimated vocabulary size and band in the user JSON. Prefer words slightly above what they already know; avoid known_words and learning_words. The skill_pilot is an optional teaching focus: prefer suitable candidate_words when they fit the child, but do not force them or repeat known words. Reply JSON only: {"items":[{"kind":"word","text":"bird","meaning":"鸟","emoji":"🐦","ipa":"/bɜːrd/","pos":"n.","options":["鸟","鱼","树"]}]}. Each item must be a single word (no spaces), simplified Chinese meaning, IPA, pos, emoji, and exactly 3 Chinese options including the meaning. No personal data.';
         $reply = $this->coach->chatJson($child, [
             ['role' => 'system', 'content' => $system],
             ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
@@ -668,21 +723,7 @@ class EnglishVocabularyService
             return array_slice($items, 0, $goal);
         }
 
-        // Last resort: only avoid words already chosen in this pack (may re-touch known words).
-        $packOnlyAvoid = [];
-        foreach ($items as $card) {
-            $expression = $this->gate->expression((string) ($card['text'] ?? ''));
-            if ($expression !== '') {
-                $packOnlyAvoid[strtolower($expression)] = true;
-            }
-        }
-        $items = $this->fillDailyWordsFromLadder($items, $goal, $packOnlyAvoid, 1);
-        if (count($items) < $goal) {
-            for ($rotate = 1; $rotate <= 8 && count($items) < $goal; $rotate++) {
-                $items = $this->fillDailyWordsFromLadder($items, $goal, $packOnlyAvoid, 1, $rotate);
-            }
-        }
-
+        // A short pack is preferable to presenting an already learned word as new.
         return array_slice($items, 0, $goal);
     }
 
@@ -699,6 +740,11 @@ class EnglishVocabularyService
             if ($expression !== '') {
                 $avoid[strtolower($expression)] = true;
             }
+        }
+        $previousKeys = DB::table('english_learning_progress')
+            ->where('child_id', $child->id)->where('item_key', 'like', 'word:%')->pluck('item_key');
+        foreach ($previousKeys as $key) {
+            $avoid[str_replace('-', ' ', substr((string) $key, strlen('word:')))] = true;
         }
         foreach ($existingCards as $card) {
             $expression = $this->gate->expression((string) ($card['text'] ?? ''));
@@ -1884,9 +1930,14 @@ class EnglishVocabularyService
      */
     private function filterLadderCardsForProbeMastery(ChildProfile $child, array $cards): array
     {
+        $mastered = $this->masteredWordLookup($child);
         $out = [];
         foreach ($cards as $card) {
             if (($card['kind'] ?? '') === 'word') {
+                $word = strtolower($this->gate->expression((string) ($card['text'] ?? '')));
+                if (isset($mastered[$word])) {
+                    continue;
+                }
                 $phase = $this->wordMastery($child, (string) ($card['text'] ?? ''))['phase'];
                 if ($phase === 'spell' || $phase === 'done') {
                     continue;
@@ -1896,6 +1947,20 @@ class EnglishVocabularyService
         }
 
         return $out;
+    }
+
+    /** @return array<string, true> */
+    private function masteredWordLookup(ChildProfile $child): array
+    {
+        $keys = DB::table('english_learning_progress')
+            ->where('child_id', $child->id)->where('stage', '>=', 4)
+            ->where('item_key', 'like', 'word:%')->pluck('item_key');
+        $words = [];
+        foreach ($keys as $key) {
+            $words[str_replace('-', ' ', substr((string) $key, strlen('word:')))] = true;
+        }
+
+        return $words;
     }
 
     /**
@@ -2124,6 +2189,7 @@ class EnglishVocabularyService
                 $avoid[strtolower($expression)] = true;
             }
         }
+        $avoid += $this->masteredWordLookup($child);
 
         // AI first — local ladder is only a thin fallback so the same 2–3 sentences
         // do not dominate after a short rich-path session.
@@ -2511,6 +2577,7 @@ class EnglishVocabularyService
                 $avoid[strtolower($expression)] = true;
             }
         }
+        $avoid += $this->masteredWordLookup($child);
         $snapshot = [
             'band' => $band,
             'path' => $profile['path'],

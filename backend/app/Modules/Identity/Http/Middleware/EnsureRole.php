@@ -38,6 +38,16 @@ class EnsureRole
 
         if ($member->role === MemberRole::Child) {
             $this->assertChildSessionValid($request, $member->family_id, $member->childProfile?->status);
+            if ($request->is('api/v1/kid/*')) {
+                $planet = \App\Modules\Identity\Support\KidPlanets::forEndpoint((string) $request->segment(4));
+                if ($planet !== null && ! \App\Modules\Identity\Support\KidPlanets::enabled($planet, $member->family_id)) {
+                    throw new \App\Modules\Core\Exceptions\ApiException(
+                        'PLANET_DISABLED',
+                        \App\Modules\Core\Support\BiMsg::of('家长暂时关闭了这个星球', 'This planet has been turned off by your parent'),
+                        403,
+                    );
+                }
+            }
         }
 
         return $next($request);

@@ -19,6 +19,7 @@ const ICONS: Record<string, string> = {
   food: '🥕',
   movie: '🎬',
   abc: '🔤',
+  book: '📖',
   gamepad: '🎮',
   gift: '🎁',
   museum: '🏛️',

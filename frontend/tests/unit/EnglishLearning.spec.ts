@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
-import { speakPhrase, warmPhrases } from '@/shared/speak'
+import { isSpeakUnlocked, unlockSpeak, speakPhrase, warmPhrases } from '@/shared/speak'
 
 function answerButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAll('.answers .answer').find(button => button.find('.answer-main').text() === label)
@@ -13,9 +13,9 @@ vi.mock('@/shared/api/client', () => ({ ApiError: class extends Error {}, api: {
 vi.mock('@/stores/session', () => ({ useSessionStore: () => ({ load: vi.fn().mockResolvedValue(undefined) }) }))
 vi.mock('@/shared/speak', () => ({
   canSpeak: () => true,
-  isSpeakUnlocked: () => true,
-  unlockSpeak: vi.fn(),
-  speakPhrase: vi.fn().mockResolvedValue(undefined),
+  isSpeakUnlocked: vi.fn(() => true),
+  unlockSpeak: vi.fn().mockResolvedValue(true),
+  speakPhrase: vi.fn().mockResolvedValue(true),
   stopSpeaking: vi.fn(),
   warmPhrases: vi.fn(),
 }))
@@ -36,6 +36,9 @@ const plan = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(isSpeakUnlocked).mockReturnValue(true)
+  vi.mocked(unlockSpeak).mockResolvedValue(true)
+  vi.mocked(speakPhrase).mockResolvedValue(true)
   vi.useRealTimers()
   setAppLocale('zh-CN')
   vi.mocked(api.get).mockImplementation(async (path: string) => {
@@ -82,6 +85,59 @@ beforeEach(() => {
 })
 
 describe('English learning', () => {
+  it('keeps a blocked first word pending without adding an enable button', async () => {
+    vi.mocked(isSpeakUnlocked).mockReturnValue(false)
+    vi.mocked(speakPhrase).mockResolvedValueOnce(false).mockResolvedValue(true)
+    vi.mocked(unlockSpeak).mockImplementation(async () => { vi.mocked(isSpeakUnlocked).mockReturnValue(true); return true })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('开启自动朗读')
+    await wrapper.find('.lesson').trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledTimes(2)
+    expect(speakPhrase).toHaveBeenLastCalledWith('apple', 'en-US', expect.any(Function))
+    wrapper.unmount()
+  })
+
+  it('shows loading until the actual audio-start callback fires', async () => {
+    let start!: () => void
+    let finish!: (value: boolean) => void
+    vi.mocked(speakPhrase).mockImplementation((_text, _lang, onStarted) => { start = onStarted!; return new Promise(resolve => { finish = resolve }) })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('准备语音')
+    expect(wrapper.text()).not.toContain('⏹ 停止')
+    start()
+    await flushPromises()
+    expect(wrapper.text()).toContain('⏹ 停止')
+    finish(true)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('does not double replay when the first interaction is the listen button', async () => {
+    vi.mocked(isSpeakUnlocked).mockReturnValue(false)
+    vi.mocked(speakPhrase).mockResolvedValueOnce(false).mockResolvedValue(true)
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    const listen = wrapper.findAll('button').find(button => button.text().includes('再听一次'))!
+    await listen.trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('labels phrase cards separately from words and sentences', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [{ ...card, kind: 'phrase', text: 'a red apple', meaning: '一个红苹果', ipa: '', pos: '' }] })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    expect(wrapper.text()).toContain('词组')
+    expect(wrapper.text()).not.toContain('单词 ·')
+    expect(wrapper.find('h3').text()).toContain('a red apple')
+    expect(wrapper.find('.meta').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('starts with a challenge and displays only server-confirmed rewards', async () => {
     const wrapper = mount(EnglishLearning)
     await flushPromises()
@@ -102,8 +158,13 @@ describe('English learning', () => {
     wrapper.unmount()
   })
 
-  it('auto-advances after one second and warms the next card audio while waiting', async () => {
+  it('pauses after a new word for its phrase and sentence and warms companion audio', async () => {
     vi.useFakeTimers()
+    const word = { ...card, usage: {
+      phrase: { text: 'a red apple', meaning: '一个红苹果' },
+      sentence: { text: 'I eat a red apple.', meaning: '我吃一个红苹果。' },
+    } }
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [word] })
     const nextCard = { ...card, key: 'banana', text: 'banana', meaning: '香蕉', emoji: '🍌', options: ['香蕉', '苹果', '水'] }
     vi.mocked(api.postIdempotent).mockResolvedValue({
       correct: true, meaning: '苹果', xp: 2, coins: 1, next_review: '2026-10-14',
@@ -116,13 +177,22 @@ describe('English learning', () => {
     expect(wrapper.text()).toContain('答对了')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['banana']), 'en-US')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['香蕉']), 'zh-CN')
-    await vi.advanceTimersByTimeAsync(999)
-    expect(wrapper.text()).toContain('答对了')
-    await vi.advanceTimersByTimeAsync(1)
+    expect(wrapper.find('[data-usage="phrase"]').text()).toContain('a red apple')
+    expect(wrapper.find('[data-usage="phrase"] .usage-pinyin').text()).toMatch(/hóng/)
+    expect(wrapper.find('[data-usage="sentence"] .usage-pinyin').text()).toMatch(/wǒ/)
+    expect(wrapper.find('[data-usage="sentence"]').text()).toContain('I eat a red apple.')
+    expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['a red apple', 'I eat a red apple.']), 'en-US')
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(wrapper.find('.feedback').exists()).toBe(true)
+    await wrapper.find('[data-usage="phrase"] button').trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledWith('a red apple', 'en-US')
+    expect(api.postIdempotent).toHaveBeenCalledTimes(1)
+    await wrapper.find('.feedback > .primary').trigger('click')
     await flushPromises()
     expect(wrapper.find('h3').text()).toContain('banana')
     expect(wrapper.find('.word-emoji').text()).toContain('🍌')
-    expect(speakPhrase).toHaveBeenCalledWith('banana', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('banana', 'en-US', expect.any(Function))
     wrapper.unmount()
   })
 
@@ -159,7 +229,7 @@ describe('English learning', () => {
   it('auto-reads each new word when the card appears', async () => {
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US', expect.any(Function))
     wrapper.unmount()
   })
 
@@ -175,7 +245,7 @@ describe('English learning', () => {
     expect(wrapper.text()).toContain('我不会')
     expect(wrapper.text()).toContain('听中文')
     expect(wrapper.text()).not.toContain('听中文意思')
-    expect(speakPhrase).toHaveBeenCalledWith('garden', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('garden', 'en-US', expect.any(Function))
     wrapper.unmount()
   })
 
@@ -255,8 +325,8 @@ describe('English learning', () => {
     vi.mocked(api.postIdempotent).mockResolvedValue({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [review] }, coach_tip: '再听一遍：apple 意思是「苹果」。' })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    expect(speakPhrase).toHaveBeenCalledWith('苹果', 'zh-CN')
-    expect(speakPhrase).not.toHaveBeenCalledWith('apple', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('苹果', 'zh-CN', expect.any(Function))
+    expect(speakPhrase).not.toHaveBeenCalledWith('apple', 'en-US', expect.any(Function))
     expect(wrapper.find('h3').text()).toBe('苹果')
     expect(wrapper.find('.meaning').exists()).toBe(false)
     await answerButton(wrapper, 'banana')!.trigger('click')
@@ -368,11 +438,11 @@ describe('English learning', () => {
   it('asks for an English neural voice when the child taps listen', async () => {
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US', expect.any(Function))
     vi.mocked(speakPhrase).mockClear()
     await wrapper.get('button.secondary').trigger('click')
     await flushPromises()
-    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US')
+    expect(speakPhrase).toHaveBeenCalledWith('apple', 'en-US', expect.any(Function))
     wrapper.unmount()
   })
 
@@ -499,11 +569,11 @@ describe('English learning', () => {
     expect(wrapper.text()).toContain('再读一遍')
     expect(wrapper.find('.fairy-head .fairy-actions').exists()).toBe(true)
     vi.mocked(speakPhrase).mockClear()
-    await wrapper.findAll('.fairy-actions button')[0].trigger('click')
+    await wrapper.findAll('.fairy-actions button')[0]!.trigger('click')
     await flushPromises()
     expect(speakPhrase).toHaveBeenCalledWith('从前有一个小女孩。', 'zh-CN')
     vi.mocked(speakPhrase).mockClear()
-    await wrapper.findAll('.fairy-actions button')[1].trigger('click')
+    await wrapper.findAll('.fairy-actions button')[1]!.trigger('click')
     await flushPromises()
     expect(speakPhrase).toHaveBeenCalledWith('Once there was a little girl.', 'en-US')
     wrapper.unmount()
@@ -552,12 +622,12 @@ describe('English learning', () => {
     expect(wrapper.find('.fairy-body .fairy-pinyin').text()).toMatch(/cóng/i)
     const lines = wrapper.findAll('.fairy-body .fairy-line')
     expect(lines).toHaveLength(2)
-    const firstChars = lines[0].findAll('.fairy-char').map(node => node.text())
+    const firstChars = lines[0]!.findAll('.fairy-char').map(node => node.text())
     expect(firstChars.join('')).toBe('从前有一个小女孩。')
-    expect(lines[0].find('.fairy-en-text').text()).toBe('Once there was a little girl.')
-    expect(lines[1].find('.fairy-en-text').text()).toBe('She went to see Grandma.')
+    expect(lines[0]!.find('.fairy-en-text').text()).toBe('Once there was a little girl.')
+    expect(lines[1]!.find('.fairy-en-text').text()).toBe('She went to see Grandma.')
     vi.mocked(speakPhrase).mockClear()
-    await wrapper.findAll('.fairy-actions button')[0].trigger('click')
+    await wrapper.findAll('.fairy-actions button')[0]!.trigger('click')
     await flushPromises()
     expect(vi.mocked(speakPhrase).mock.calls.map(call => [String(call[0]), call[1]])).toEqual([
       ['从前有一个小女孩。', 'zh-CN'],
@@ -565,7 +635,7 @@ describe('English learning', () => {
     ])
     expect(api.postIdempotent).not.toHaveBeenCalledWith('/kid/english/learning/fairy-tale/heard', {})
     vi.mocked(speakPhrase).mockClear()
-    await wrapper.findAll('.fairy-actions button')[1].trigger('click')
+    await wrapper.findAll('.fairy-actions button')[1]!.trigger('click')
     await flushPromises()
     expect(vi.mocked(speakPhrase).mock.calls.map(call => [String(call[0]), call[1]])).toEqual([
       ['Once there was a little girl.', 'en-US'],

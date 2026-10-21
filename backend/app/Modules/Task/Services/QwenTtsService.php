@@ -279,7 +279,8 @@ class QwenTtsService
             return;
         }
 
-        Cache::put($cacheKey, $result, now()->addMinutes(30));
+        // Audio is keyed by normalized text and voice; keep morning prewarming useful all day.
+        Cache::put($cacheKey, $result, now()->addDays(2));
     }
 
     public function qwenConfigured(int $familyId): bool

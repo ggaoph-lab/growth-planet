@@ -53,6 +53,8 @@ x-app-image: &app-image
   volumes:
     - app-storage:/var/www/backend/storage/app
     - app-logs:/var/www/backend/storage/logs
+    - ./deploy/docker/php/php.prod.ini:/usr/local/etc/php/conf.d/zzz-growth-planet-prod.ini:ro
+    - ./deploy/docker/php/php-fpm.prod.conf:/usr/local/etc/php-fpm.d/zz-growth-planet.conf:ro
   depends_on:
     mysql:
       condition: service_healthy
@@ -133,6 +135,8 @@ services:
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./deploy/certs:/etc/nginx/certs:ro
+      - ./deploy/docker/nginx/prod.conf:/etc/growth-planet/nginx/prod.conf:ro
+      - ./deploy/docker/nginx/prod-ssl.conf:/etc/growth-planet/nginx/prod-ssl.conf:ro
     depends_on:
       app:
         condition: service_started

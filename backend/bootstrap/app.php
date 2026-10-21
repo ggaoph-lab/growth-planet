@@ -1,8 +1,13 @@
 <?php
 
+use App\Modules\Core\Console\PreflightCommand;
 use App\Modules\Core\Http\ApiExceptionRenderer;
 use App\Modules\Core\Http\Middleware\AssignRequestId;
 use App\Modules\Core\Http\Middleware\RequireIdempotencyKey;
+use App\Modules\Encyclopedia\Console\PrepareEncyclopediaZhCommand;
+use App\Modules\English\Console\DiagnoseEnglishAiCommand;
+use App\Modules\English\Console\PrepareEnglishDayCommand;
+use App\Modules\English\Console\PruneEnglishSpeakAttemptsCommand;
 use App\Modules\Identity\Console\CreateFamilyCommand;
 use App\Modules\Identity\Http\Middleware\EnsureRole;
 use App\Modules\Identity\Http\Middleware\RequireSudo;
@@ -31,9 +36,11 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withCommands([
         CreateFamilyCommand::class,
-        \App\Modules\Core\Console\PreflightCommand::class,
-        \App\Modules\English\Console\PruneEnglishSpeakAttemptsCommand::class,
-        \App\Modules\English\Console\DiagnoseEnglishAiCommand::class,
+        PreflightCommand::class,
+        PruneEnglishSpeakAttemptsCommand::class,
+        DiagnoseEnglishAiCommand::class,
+        PrepareEnglishDayCommand::class,
+        PrepareEncyclopediaZhCommand::class,
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
         ApiExceptionRenderer::register($exceptions);

@@ -28,6 +28,9 @@ Route::prefix('v1/auth')->group(function () {
 Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
     Route::get('dashboard', DashboardController::class);
 
+    Route::get('planet-settings', [\App\Modules\Identity\Http\Controllers\Parent\PlanetSettingsController::class, 'index']);
+    Route::patch('planet-settings', [\App\Modules\Identity\Http\Controllers\Parent\PlanetSettingsController::class, 'update']);
+
     Route::get('family', [FamilyController::class, 'show']);
     Route::patch('family', [FamilyController::class, 'update']);
 

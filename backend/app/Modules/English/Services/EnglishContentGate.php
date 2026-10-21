@@ -31,8 +31,11 @@ class EnglishContentGate
         }
 
         $kind = strtolower(trim((string) ($raw['kind'] ?? '')));
-        if (! in_array($kind, ['word', 'sentence'], true)) {
-            $kind = str_contains($text, ' ') ? 'sentence' : 'word';
+        if (! in_array($kind, ['word', 'phrase', 'sentence'], true)) {
+            $kind = str_contains($text, ' ') ? (preg_match('/[.!?]$/', $text) ? 'sentence' : 'phrase') : 'word';
+        }
+        if ($kind === 'word' && str_contains($text, ' ')) {
+            $kind = preg_match('/[.!?]$/', $text) ? 'sentence' : 'phrase';
         }
 
         $options = $this->chineseOptions($raw['options'] ?? [], $meaning);
@@ -52,7 +55,9 @@ class EnglishContentGate
 
         return [
             'key' => 'probe:'.mb_substr($slug, 0, 50),
-            'theme' => $kind === 'sentence' ? '生活短句' : '词汇小测试',
+            'theme' => match ($kind) {
+                'sentence' => '例句', 'phrase' => '词组', default => '词汇小测试'
+            },
             'kind' => $kind,
             'text' => $text,
             'meaning' => $meaning,
@@ -69,7 +74,7 @@ class EnglishContentGate
     public function ipa(string $ipa, string $kind = 'word'): string
     {
         $ipa = trim($ipa);
-        if ($kind === 'sentence' || $ipa === '') {
+        if ($kind !== 'word' || $ipa === '') {
             return '';
         }
         if (mb_strlen($ipa) > 48) {

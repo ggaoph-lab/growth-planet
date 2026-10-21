@@ -21,7 +21,8 @@ ENV COMPOSER_HOME=/tmp/composer
 # ---------------------------------------------------------------------------
 FROM base AS prod
 
-COPY deploy/docker/php/php.prod.ini /usr/local/etc/php/conf.d/zz-growth-planet-prod.ini
+COPY deploy/docker/php/php.prod.ini /usr/local/etc/php/conf.d/zzz-growth-planet-prod.ini
+COPY deploy/docker/php/php-fpm.prod.conf /usr/local/etc/php-fpm.d/zz-growth-planet.conf
 COPY deploy/docker/php/docker-entrypoint.sh /usr/local/bin/growth-planet-entrypoint
 RUN chmod +x /usr/local/bin/growth-planet-entrypoint
 

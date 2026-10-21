@@ -24,6 +24,7 @@ const planetRoutes: Record<string, string> = {
   food_diary: 'kid-food',
   movie_planet: 'kid-movies',
   english_planet: 'kid-english',
+  encyclopedia_planet: 'kid-encyclopedia',
   game_planet: 'kid-games',
   collection: 'kid-collection',
 }

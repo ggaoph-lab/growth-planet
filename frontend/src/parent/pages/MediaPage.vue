@@ -346,8 +346,7 @@ async function rejectLabDraft(id: number): Promise<void> {
   }
 }
 
-function draftPreview(draft: EnglishContentDraft): string {
-  const payload = draft.payload
+function draftPreview(payload: EnglishContentDraft['payload']): string {
   return [payload.prompt || payload.text, payload.question].filter(Boolean).join(' · ')
 }
 
@@ -755,7 +754,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             <el-table-column prop="kind" :label="t('common.category')" width="100" />
             <el-table-column prop="status" :label="t('common.status')" width="110" />
             <el-table-column :label="t('common.movieTitle')">
-              <template #default="{ row }">{{ draftPreview(row) }}</template>
+              <template #default="{ row }">{{ draftPreview(row.payload) }}</template>
             </el-table-column>
             <el-table-column width="180">
               <template #default="{ row }">
@@ -768,7 +767,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             <article v-for="row in labDrafts" :key="row.id" class="phone-card">
               <div class="phone-info">
                 <div class="phone-title">{{ row.kind }} · {{ row.status }}</div>
-                <div class="phone-meta">{{ draftPreview(row) }}</div>
+                <div class="phone-meta">{{ draftPreview(row.payload) }}</div>
                 <div v-if="row.status === 'pending'" class="lab-actions">
                   <el-button size="small" type="primary" :disabled="labBusy" @click="publishLabDraft(row.id)">{{ t('common.englishPublishDraft') }}</el-button>
                   <el-button size="small" :disabled="labBusy" @click="rejectLabDraft(row.id)">{{ t('common.englishRejectDraft') }}</el-button>
