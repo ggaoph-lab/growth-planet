@@ -77,12 +77,14 @@ for rel in "${KEEP_PATHS[@]}"; do
   fi
 done
 
-# Prefer Synology compose filename used by Container Manager.
-if [[ -f "$ROOT/compose.prod.yaml" && ! -f "$ROOT/$COMPOSE_FILE" ]]; then
-  cp -a "$ROOT/compose.prod.yaml" "$ROOT/$COMPOSE_FILE"
-fi
+# Synology Container Manager expects production compose under compose.yaml / docker-compose.yml.
+# Always refresh from compose.prod.yaml so a GitHub sync cannot leave the repo's dev compose.yaml in place.
 if [[ -f "$ROOT/compose.prod.yaml" ]]; then
+  cp -a "$ROOT/compose.prod.yaml" "$ROOT/compose.yaml"
   cp -a "$ROOT/compose.prod.yaml" "$ROOT/docker-compose.yml"
+  if [[ "$COMPOSE_FILE" != "compose.yaml" && "$COMPOSE_FILE" != "docker-compose.yml" ]]; then
+    cp -a "$ROOT/compose.prod.yaml" "$ROOT/$COMPOSE_FILE"
+  fi
 fi
 
 new_commit="$(curl -fsSL "https://api.github.com/repos/ggaoph-lab/growth-planet/commits/${BRANCH}" \
