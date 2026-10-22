@@ -66,7 +66,9 @@ rsync -a --delete \
   --exclude 'DEPLOYED-COMMIT' \
   --exclude 'node_modules/' \
   --exclude 'frontend/node_modules/' \
+  --exclude 'frontend/dist/' \
   --exclude 'backend/vendor/' \
+  --exclude '.release-*/' \
   "$work/src/" "$ROOT/"
 
 for rel in "${KEEP_PATHS[@]}"; do
