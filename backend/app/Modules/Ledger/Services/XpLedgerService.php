@@ -11,6 +11,7 @@ use App\Modules\Ledger\Enums\SourceModule;
 use App\Modules\Ledger\Models\XpAccount;
 use App\Modules\Ledger\Models\XpLedgerEntry;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class XpLedgerService
@@ -96,6 +97,14 @@ class XpLedgerService
             'to_next' => $atCap ? 0 : $toNext,
             'progress' => $atCap ? 1.0 : ($toNext > 0 ? min(1.0, round($account->balance / $toNext, 4)) : 1.0),
         ];
+    }
+
+    /** Apply any pending level-ups for XP that was credited before the level curve existed. */
+    public function reconcileLevels(XpAccount $account, string $businessDate): void
+    {
+        DB::transaction(function () use ($account, $businessDate) {
+            $this->applyLevelUps($account, $businessDate);
+        });
     }
 
     private function applyLevelUps(XpAccount $account, string $businessDate): void

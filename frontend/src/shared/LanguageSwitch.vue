@@ -31,14 +31,25 @@ function onChange(value: AppLocale): void {
   align-items: center;
 }
 .select {
+  appearance: none;
   min-height: 32px;
-  max-width: 160px;
+  max-width: 168px;
   border: 1px solid #d0d3e0;
-  border-radius: 8px;
-  padding: 4px 8px;
-  background: #fff;
-  font-size: 12px;
-  color: inherit;
+  border-radius: 999px;
+  padding: 4px 28px 4px 12px;
+  background:
+    #fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23555' d='M1 1l5 5 5-5'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #1b1f4b;
+}
+.select:focus {
+  outline: 2px solid #8ea0ff;
+  outline-offset: 2px;
 }
 .sr {
   position: absolute;

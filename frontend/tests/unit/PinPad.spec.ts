@@ -17,30 +17,49 @@ function deleteButton(wrapper: VueWrapper) {
   return button
 }
 
-describe('PinPad', () => {
-  it('auto-submits when the configured length is reached', async () => {
-    const wrapper = mount(PinPad, { props: { length: 4 } })
-    for (const d of ['1', '2', '3']) await keyButton(wrapper, d).trigger('click')
-    expect(wrapper.emitted('submit')).toBeUndefined()
+function confirmButton(wrapper: VueWrapper) {
+  const button = wrapper.findAll('button').find((b) => {
+    const aria = b.attributes('aria-label') ?? ''
+    return aria.includes('Confirm') || aria.includes('确定')
+  })
+  if (!button) throw new Error('no confirm button')
+  return button
+}
 
-    await keyButton(wrapper, '4').trigger('click')
-    expect(wrapper.emitted('submit')).toEqual([['1234']])
+describe('PinPad', () => {
+  it('allows 4–6 digits and submits via confirm', async () => {
+    const wrapper = mount(PinPad)
+    for (const d of ['1', '2', '3', '4', '5']) await keyButton(wrapper, d).trigger('click')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.findAll('.dot.filled')).toHaveLength(5)
+
+    await confirmButton(wrapper).trigger('click')
+    expect(wrapper.emitted('submit')).toEqual([['12345']])
   })
 
-  it('caps input at the configured length and supports backspace', async () => {
-    const wrapper = mount(PinPad, { props: { length: 4 } })
+  it('auto-submits when the max length is reached', async () => {
+    const wrapper = mount(PinPad, { props: { length: 6 } })
+    for (const d of ['1', '2', '3', '4', '5', '6']) await keyButton(wrapper, d).trigger('click')
+    expect(wrapper.emitted('submit')).toEqual([['123456']])
+  })
+
+  it('supports backspace before confirm', async () => {
+    const wrapper = mount(PinPad)
     for (const d of ['9', '8', '7']) await keyButton(wrapper, d).trigger('click')
     await deleteButton(wrapper).trigger('click')
     await keyButton(wrapper, '0').trigger('click')
     await keyButton(wrapper, '6').trigger('click')
+    await confirmButton(wrapper).trigger('click')
 
     expect(wrapper.emitted('submit')).toEqual([['9806']])
     expect(wrapper.findAll('.dot.filled')).toHaveLength(4)
   })
 
-  it('ignores extra taps after auto-submit until cleared', async () => {
-    const wrapper = mount(PinPad, { props: { length: 4 } })
-    for (const d of ['1', '2', '3', '4', '5']) await keyButton(wrapper, d).trigger('click')
+  it('ignores extra taps after submit until cleared', async () => {
+    const wrapper = mount(PinPad)
+    for (const d of ['1', '2', '3', '4']) await keyButton(wrapper, d).trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    await keyButton(wrapper, '5').trigger('click')
 
     expect(wrapper.emitted('submit')).toEqual([['1234']])
     expect(wrapper.findAll('.dot.filled')).toHaveLength(4)

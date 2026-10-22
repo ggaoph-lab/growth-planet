@@ -30,15 +30,20 @@ async function switchUser(): Promise<void> {
   await session.logout()
   await router.push({ name: 'kid-select' })
 }
+
+function goHome(): void {
+  if (router.currentRoute.value.name === 'kid-home') return
+  void router.push({ name: 'kid-home' })
+}
 </script>
 
 <template>
   <div class="kid" :class="{ calm: !child?.preferences.animations }">
     <header v-if="child" class="bar">
-      <div class="me">
+      <button type="button" class="me" :aria-label="t('kid.homeTitle')" @click="goHome">
         <span class="avatar" :style="{ background: child.theme_color }">{{ avatarEmoji(child.avatar) }}</span>
         <span class="name">{{ child.nickname }}</span>
-      </div>
+      </button>
       <button type="button" class="round" :aria-label="t('kid.settings')" @click="settingsOpen = true">⚙️</button>
     </header>
 
@@ -84,6 +89,17 @@ async function switchUser(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin: 0;
+  padding: 4px 8px 4px 4px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.me:active {
+  background: rgba(255, 255, 255, 0.1);
 }
 .avatar {
   width: 44px;
@@ -144,6 +160,11 @@ async function switchUser(): Promise<void> {
 .lang-wrap {
   display: flex;
   justify-content: flex-end;
+}
+.lang-wrap :deep(.select) {
+  min-height: 40px;
+  max-width: none;
+  font-size: 15px;
 }
 .opt {
   display: flex;

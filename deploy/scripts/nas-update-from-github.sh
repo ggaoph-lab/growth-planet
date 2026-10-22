@@ -98,12 +98,20 @@ if [[ "$DOCKER_OK" -eq 1 ]]; then
       true 2>/dev/null || true
   fi
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build app nginx
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
+  # Explicitly bring up queue/scheduler too — Container Manager / partial ups have left them missing.
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans app nginx worker scheduler mysql
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan migrate --force
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan points:grant-daily-allowance || true
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan app:preflight || true
+  missing="$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps --status running --services 2>/dev/null || true)"
+  for svc in app nginx worker scheduler mysql; do
+    if ! printf '%s\n' "$missing" | grep -qx "$svc"; then
+      echo "WARN: service '$svc' is not running after update." >&2
+    fi
+  done
 else
   echo "Code synced to commit $new_commit."
-  echo "Next: open Container Manager → growth-planet → Build / Start."
+  echo "Next: open Container Manager → growth-planet → Build / Start (include worker + scheduler)."
 fi
 
 http_port="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"

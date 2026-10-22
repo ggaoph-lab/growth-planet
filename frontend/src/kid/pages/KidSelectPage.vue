@@ -57,11 +57,6 @@ function choose(p: KidLoginProfile): void {
   prefetchKidHome()
   if (!p.pin_required) void login(null)
 }
-
-function pinLength(p: KidLoginProfile): number {
-  const n = p.pin_length ?? 4
-  return Math.min(6, Math.max(4, n))
-}
 </script>
 
 <template>
@@ -90,7 +85,7 @@ function pinLength(p: KidLoginProfile): number {
       <h1>{{ selected.nickname }}</h1>
       <template v-if="selected.pin_required">
         <p class="sub">{{ t('auth.enterPin') }}</p>
-        <PinPad ref="pinpad" :length="pinLength(selected)" :disabled="busy" @submit="login" />
+        <PinPad ref="pinpad" :disabled="busy" @submit="login" />
       </template>
     </template>
 

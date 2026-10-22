@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
+/** PIN is 4–6 digits; pad always allows up to `length` (default 6). */
 const props = withDefaults(defineProps<{ length?: number; disabled?: boolean }>(), { length: 6, disabled: false })
 const emit = defineEmits<{ submit: [pin: string] }>()
 
@@ -14,15 +15,18 @@ let submitting = false
 function press(digit: string): void {
   if (props.disabled || submitting || pin.value.length >= props.length) return
   pin.value += digit
-  if (pin.value.length >= props.length) {
-    submitting = true
-    emit('submit', pin.value)
-  }
+  if (pin.value.length >= props.length) void submit()
 }
 
 function backspace(): void {
   if (props.disabled || submitting) return
   pin.value = pin.value.slice(0, -1)
+}
+
+function submit(): void {
+  if (props.disabled || submitting || pin.value.length < 4) return
+  submitting = true
+  emit('submit', pin.value)
 }
 
 function clear(): void {
@@ -46,7 +50,15 @@ defineExpose({ clear })
       <button v-for="k in keys" :key="k" type="button" class="key" :disabled="disabled" @click="press(k)">{{ k }}</button>
       <button type="button" class="key aux" :aria-label="t('pinpad.delete')" :disabled="disabled" @click="backspace">⌫</button>
       <button type="button" class="key" :disabled="disabled" @click="press('0')">0</button>
-      <span class="key spacer" aria-hidden="true" />
+      <button
+        type="button"
+        class="key go"
+        :aria-label="t('pinpad.confirm')"
+        :disabled="disabled || pin.length < 4"
+        @click="submit"
+      >
+        ✓
+      </button>
     </div>
   </div>
 </template>
@@ -96,12 +108,11 @@ defineExpose({ clear })
 .key:disabled {
   opacity: 0.4;
 }
+.key.go {
+  background: var(--gp-sun);
+  color: var(--gp-space-dark);
+}
 .key.aux {
   font-size: 24px;
-}
-.key.spacer {
-  visibility: hidden;
-  pointer-events: none;
-  background: transparent;
 }
 </style>

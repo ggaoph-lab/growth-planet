@@ -37,25 +37,25 @@ onMounted(async () => {
       <section class="hero">
         <div class="orb xp">
           <div class="label">{{ t('common.xpLabel') }}</div>
-          <div class="num">{{ wallet.xp.balance }}</div>
+          <div class="num">{{ wallet.xp?.balance ?? 0 }}</div>
           <div class="sub">
-            {{ t('kid.levelLine', { level: wallet.xp.level }) }}
-            <template v-if="wallet.xp.to_next > 0"> · {{ t('kid.toNextXp', { n: wallet.xp.to_next }) }}</template>
+            {{ t('kid.levelLine', { level: wallet.xp?.level ?? 1 }) }}
+            <template v-if="(wallet.xp?.to_next ?? 0) > 0"> · {{ t('kid.toNextXp', { n: wallet.xp?.to_next ?? 0 }) }}</template>
           </div>
           <div class="bar" aria-hidden="true">
-            <span :style="{ width: `${Math.round((wallet.xp.progress || 0) * 100)}%` }" />
+            <span :style="{ width: `${Math.round((wallet.xp?.progress || 0) * 100)}%` }" />
           </div>
-          <div class="sub muted">{{ t('common.lifetimeEarned', { n: wallet.xp.lifetime_earned }) }}</div>
+          <div class="sub muted">{{ t('common.lifetimeEarned', { n: wallet.xp?.lifetime_earned ?? 0 }) }}</div>
         </div>
         <div class="orb points">
           <div class="label">{{ t('common.pointsLabel') }}</div>
-          <div class="num">{{ wallet.points.available }}</div>
-          <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.points.held }}</div>
+          <div class="num">{{ wallet.points?.available ?? 0 }}</div>
+          <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.points?.held ?? 0 }}</div>
         </div>
         <div class="orb coin">
           <div class="label">{{ t('common.growthCoin') }}</div>
-          <div class="num">{{ wallet.coin.available }}</div>
-          <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.coin.held }}</div>
+          <div class="num">{{ wallet.coin?.available ?? 0 }}</div>
+          <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.coin?.held ?? 0 }}</div>
         </div>
       </section>
       <p class="tip">{{ t('kid.shopTip') }}</p>

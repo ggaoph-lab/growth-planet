@@ -26,8 +26,8 @@ const preview = ref<Reward | null>(null)
 const previewClose = ref<HTMLButtonElement | null>(null)
 const brokenImages = ref<Record<number, boolean>>({})
 
-const coinAvailable = computed(() => wallet.value?.coin.available ?? 0)
-const pointAvailable = computed(() => wallet.value?.points.available ?? 0)
+const coinAvailable = computed(() => wallet.value?.coin?.available ?? 0)
+const pointAvailable = computed(() => wallet.value?.points?.available ?? 0)
 /** Wishes still quote growth-coin prices for physical gifts. */
 const available = computed(() => coinAvailable.value)
 
