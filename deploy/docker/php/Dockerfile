@@ -42,6 +42,7 @@ COPY backend/ ./
 # Host bootstrap/cache may reference require-dev providers (e.g. Pail); rebuild discovery for --no-dev.
 RUN rm -f bootstrap/cache/*.php \
     && mkdir -p \
+      resources/views \
       storage/app/public \
       storage/app/private \
       storage/framework/cache/data \

@@ -4,6 +4,7 @@ set -euo pipefail
 cd /var/www/backend
 
 mkdir -p \
+  resources/views \
   storage/app/public \
   storage/app/private \
   storage/framework/cache/data \
