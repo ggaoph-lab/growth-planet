@@ -11,11 +11,12 @@ class XpAccount extends Model
 {
     public $timestamps = false;
 
-    protected $fillable = ['family_id', 'child_id', 'balance', 'lifetime_earned', 'lock_version', 'updated_at'];
+    protected $fillable = ['family_id', 'child_id', 'level', 'balance', 'lifetime_earned', 'lock_version', 'updated_at'];
 
     protected function casts(): array
     {
         return [
+            'level' => 'integer',
             'balance' => 'integer',
             'lifetime_earned' => 'integer',
             'lock_version' => 'integer',

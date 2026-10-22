@@ -67,8 +67,9 @@ class HabitCheckInService
             sourceType: 'habit_record',
             sourceId: $record->id,
             occurredAt: $this->clock->now(),
-            xpAmount: $habit->xp_reward,
-            coinAmount: $habit->coin_reward,
+            xpAmount: (int) $habit->xp_reward,
+            coinAmount: (int) $habit->coin_reward,
+            pointAmount: (int) ($habit->point_reward ?? 0),
             postImmediately: true,
         ));
 

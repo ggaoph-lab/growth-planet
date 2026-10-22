@@ -37,16 +37,18 @@ class WishService
         });
     }
 
-    public function convert(Wish $wish, int $coinPrice, RewardKind $kind): Wish
+    public function convert(Wish $wish, int $price, RewardKind $kind): Wish
     {
-        return DB::transaction(function () use ($wish, $coinPrice, $kind) {
+        return DB::transaction(function () use ($wish, $price, $kind) {
             $locked = $this->lockPending($wish);
+            $usePoints = $kind->pricedInPoints();
             $reward = Reward::query()->create([
                 'family_id' => $locked->family_id,
                 'name' => $locked->name,
                 'description' => $locked->description,
                 'kind' => $kind,
-                'coin_price' => $coinPrice,
+                'coin_price' => $usePoints ? 0 : $price,
+                'point_price' => $usePoints ? $price : null,
                 'stock' => null,
                 'requires_approval' => true,
                 'status' => RewardStatus::OnShelf,
@@ -55,7 +57,7 @@ class WishService
 
             $locked->status = WishStatus::Converted;
             $locked->reward_id = $reward->id;
-            $locked->coin_price = $coinPrice;
+            $locked->coin_price = $usePoints ? ($locked->coin_price ?? $price) : $price;
             $locked->save();
 
             return $this->reload($locked);

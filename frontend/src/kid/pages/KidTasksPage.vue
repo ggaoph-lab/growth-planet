@@ -88,10 +88,11 @@ function dueOf(inst: TaskInstance): string {
 
 function rewardOf(inst: TaskInstance): string | null {
   const xp = inst.snapshot?.xp_reward ?? 0
+  const points = inst.snapshot?.point_reward ?? 0
   const coins = inst.snapshot?.coin_reward ?? 0
-  if (!xp && !coins) return null
-  if (inst.status === 'completed') return t('kid.taskReward', { xp, coins })
-  return t('kid.taskRewardPending', { xp, coins })
+  if (!xp && !points && !coins) return null
+  if (inst.status === 'completed') return t('kid.taskReward', { xp, points, coins })
+  return t('kid.taskRewardPending', { xp, points, coins })
 }
 
 function groupIdOf(inst: TaskInstance): number | null {

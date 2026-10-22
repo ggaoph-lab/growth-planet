@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
-import type { Reward, RewardKind, RewardRedemption, RewardStatus, Wish, WishStatus } from '@/shared/api/types'
+import type { Reward, RewardCurrency, RewardKind, RewardRedemption, RewardStatus, Wish, WishStatus } from '@/shared/api/types'
 import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
@@ -41,18 +41,35 @@ const form = ref({
   name: '',
   description: '',
   kind: 'physical' as RewardKind,
+  currency: 'coin' as RewardCurrency,
   coin_price: 10,
+  point_price: 10,
   stock: null as number | null,
   requires_approval: true,
   status: 'draft' as RewardStatus,
 })
+
+const pricedInPoints = computed(() => form.value.currency === 'point')
+
+function onKindChange(kind: RewardKind): void {
+  form.value.currency = kind === 'physical' ? 'coin' : 'point'
+}
+
+function priceText(reward: Reward): string {
+  if (reward.currency === 'point' || (reward.point_price ?? 0) > 0) {
+    return `⭐ ${reward.price || reward.point_price}`
+  }
+  return `🪙 ${reward.price || reward.coin_price}`
+}
 
 function resetForm(): void {
   form.value = {
     name: '',
     description: '',
     kind: 'physical',
+    currency: 'coin',
     coin_price: 10,
+    point_price: 10,
     stock: null,
     requires_approval: true,
     status: 'draft',
@@ -112,7 +129,9 @@ function openEdit(r: Reward): void {
     name: r.name,
     description: r.description ?? '',
     kind: r.kind,
-    coin_price: r.coin_price,
+    currency: r.currency === 'point' || (r.point_price ?? 0) > 0 ? 'point' : 'coin',
+    coin_price: r.coin_price || 10,
+    point_price: r.point_price || 10,
     stock: r.stock,
     requires_approval: r.requires_approval,
     status: r.status,
@@ -141,7 +160,8 @@ async function save(): Promise<void> {
         name: form.value.name.trim(),
         description: form.value.description.trim() || null,
         kind: form.value.kind,
-        coin_price: form.value.coin_price,
+        coin_price: pricedInPoints.value ? 0 : form.value.coin_price,
+        point_price: pricedInPoints.value ? form.value.point_price : null,
         stock: form.value.stock,
         requires_approval: form.value.requires_approval,
         status: form.value.status,
@@ -161,7 +181,8 @@ async function save(): Promise<void> {
       body.append('name', form.value.name.trim())
       if (form.value.description.trim()) body.append('description', form.value.description.trim())
       body.append('kind', form.value.kind)
-      body.append('coin_price', String(form.value.coin_price))
+      body.append('coin_price', String(pricedInPoints.value ? 0 : form.value.coin_price))
+      if (pricedInPoints.value) body.append('point_price', String(form.value.point_price))
       if (form.value.stock != null) body.append('stock', String(form.value.stock))
       body.append('requires_approval', form.value.requires_approval ? '1' : '0')
       body.append('status', form.value.status)
@@ -243,28 +264,30 @@ onMounted(load)
           <el-button type="primary" @click="openCreate">{{ t('common.createReward') }}</el-button>
         </div>
         <el-table v-if="!isPhone" :data="rewards" stripe :empty-text="t('common.noRewardsYet')">
-          <el-table-column :label="t('common.rewardImage')" width="72">
+          <el-table-column :label="t('common.rewardImage')" width="72" align="center">
             <template #default="{ row }">
               <img v-if="(row as Reward).image_url" class="thumb" :src="(row as Reward).image_url!" :alt="(row as Reward).name" />
               <span v-else class="thumb empty">—</span>
             </template>
           </el-table-column>
           <el-table-column prop="name" :label="t('common.name')" min-width="120" />
-          <el-table-column :label="t('common.type')" width="100">
+          <el-table-column :label="t('common.type')" width="110" align="center">
             <template #default="scope">{{ kindLabel((scope.row as Reward).kind) }}</template>
           </el-table-column>
-          <el-table-column prop="coin_price" :label="t('common.price')" width="90" />
-          <el-table-column :label="t('common.stock')" width="80">
+          <el-table-column :label="t('common.price')" width="120" align="center">
+            <template #default="{ row }">{{ priceText(row as Reward) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('common.stock')" width="80" align="center">
             <template #default="{ row }">{{ row.stock ?? t('common.unlimited') }}</template>
           </el-table-column>
-          <el-table-column :label="t('common.status')" width="80">
+          <el-table-column :label="t('common.status')" width="80" align="center">
             <template #default="{ row }">
               <el-tag size="small" :type="row.status === 'on_shelf' ? 'success' : row.status === 'draft' ? 'info' : 'warning'">
                 {{ statusLabel(row.status as RewardStatus) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" width="140">
+          <el-table-column :label="t('common.actions')" width="140" align="center">
             <template #default="scope">
               <el-button link type="primary" @click="openEdit(scope.row as Reward)">{{ t('common.edit') }}</el-button>
               <el-button link type="danger" @click="removeReward(scope.row as Reward)">{{ t('common.delete') }}</el-button>
@@ -279,7 +302,7 @@ onMounted(load)
             <div class="phone-info">
               <div class="phone-title">{{ row.name }}</div>
               <div class="phone-meta">
-                {{ kindLabel(row.kind) }} · 🪙 {{ row.coin_price }} · {{ row.stock ?? t('common.unlimited') }}
+                {{ kindLabel(row.kind) }} · {{ priceText(row) }} · {{ row.stock ?? t('common.unlimited') }}
               </div>
               <el-tag size="small" :type="row.status === 'on_shelf' ? 'success' : row.status === 'draft' ? 'info' : 'warning'">
                 {{ statusLabel(row.status) }}
@@ -343,7 +366,15 @@ onMounted(load)
           <el-table-column :label="t('common.name')" min-width="120">
             <template #default="{ row }">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</template>
           </el-table-column>
-          <el-table-column prop="coin_price" :label="t('common.cost')" width="80" />
+          <el-table-column :label="t('common.cost')" width="100">
+            <template #default="{ row }">
+              {{
+                (row as RewardRedemption).point_price
+                  ? `⭐ ${(row as RewardRedemption).point_price}`
+                  : `🪙 ${(row as RewardRedemption).coin_price}`
+              }}
+            </template>
+          </el-table-column>
           <el-table-column :label="t('common.status')" width="90">
             <template #default="{ row }">{{ redemptionStatusLabel(row.status) }}</template>
           </el-table-column>
@@ -355,7 +386,8 @@ onMounted(load)
             <div class="phone-info">
               <div class="phone-title">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</div>
               <div class="phone-meta">
-                🪙 {{ row.coin_price }} · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
+                {{ row.point_price ? `⭐ ${row.point_price}` : `🪙 ${row.coin_price}` }}
+                · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
               </div>
             </div>
           </article>
@@ -387,12 +419,24 @@ onMounted(load)
           </div>
         </el-form-item>
         <el-form-item :label="t('common.type')">
-          <el-select v-model="form.kind">
-            <el-option v-for="k in ['physical', 'family_activity', 'virtual_decoration'] as const" :key="k" :label="kindLabel(k)" :value="k" />
+          <el-select v-model="form.kind" @change="onKindChange">
+            <el-option
+              v-for="k in ['physical', 'family_activity', 'virtual_decoration', 'screen_time'] as const"
+              :key="k"
+              :label="kindLabel(k)"
+              :value="k"
+            />
           </el-select>
         </el-form-item>
-        <el-form-item :label="t('common.price')">
-          <el-input-number v-model="form.coin_price" :min="1" />
+        <el-form-item :label="t('parent.shop.payWith')">
+          <el-radio-group v-model="form.currency">
+            <el-radio-button value="coin">{{ t('common.growthCoin') }}</el-radio-button>
+            <el-radio-button value="point">{{ t('common.pointsLabel') }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="pricedInPoints ? t('common.pointsLabel') : t('common.growthCoin')">
+          <el-input-number v-if="pricedInPoints" v-model="form.point_price" :min="1" />
+          <el-input-number v-else v-model="form.coin_price" :min="1" />
         </el-form-item>
         <el-form-item :label="t('common.stock')">
           <el-input-number v-model="form.stock" :min="0" :placeholder="t('common.stockPlaceholder')" />

@@ -26,7 +26,10 @@ const preview = ref<Reward | null>(null)
 const previewClose = ref<HTMLButtonElement | null>(null)
 const brokenImages = ref<Record<number, boolean>>({})
 
-const available = computed(() => wallet.value?.coin.available ?? 0)
+const coinAvailable = computed(() => wallet.value?.coin.available ?? 0)
+const pointAvailable = computed(() => wallet.value?.points.available ?? 0)
+/** Wishes still quote growth-coin prices for physical gifts. */
+const available = computed(() => coinAvailable.value)
 
 /** Converted wishes become shop gifts — don't keep the "家长答应啦" card around. */
 const activeWishes = computed(() => wishes.value.filter((w) => w.status !== 'converted'))
@@ -35,6 +38,18 @@ const kindEmoji: Record<string, string> = {
   physical: '🎁',
   family_activity: '🎉',
   virtual_decoration: '✨',
+  screen_time: '📺',
+}
+
+function priceLabel(reward: Reward): string {
+  const amount = reward.price ?? (reward.currency === 'point' ? reward.point_price : reward.coin_price)
+  if (reward.currency === 'point') return `⭐ ${amount} ${t('common.pointsLabel')}`
+  return `🪙 ${amount} ${t('common.growthCoin')}`
+}
+
+function canAfford(reward: Reward): boolean {
+  const amount = reward.price ?? (reward.currency === 'point' ? reward.point_price : reward.coin_price)
+  return reward.currency === 'point' ? pointAvailable.value >= amount : coinAvailable.value >= amount
 }
 
 function tap(): void {
@@ -191,9 +206,9 @@ onUnmounted(() => {
           <div class="copy">
             <h3>{{ r.name }}</h3>
             <p v-if="r.description" class="desc">{{ r.description }}</p>
-            <p class="price">🪙 {{ r.coin_price }}</p>
+            <p class="price">{{ priceLabel(r) }}</p>
           </div>
-          <button type="button" class="big" :disabled="busy === r.id" @click="redeem(r)">
+          <button type="button" class="big" :disabled="busy === r.id || !canAfford(r)" @click="redeem(r)">
             {{ t('common.redeem') }}
           </button>
         </article>

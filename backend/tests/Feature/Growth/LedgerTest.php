@@ -76,7 +76,9 @@ class LedgerTest extends TestCase
             ->getJson('/api/v1/kid/wallet')
             ->json('data');
         $this->assertSame(10, $wallet['xp']['balance']);
+        $this->assertSame(1, $wallet['xp']['level']);
         $this->assertSame(5, $wallet['coin']['balance']);
+        $this->assertSame(0, $wallet['points']['balance']);
 
         app(RewardGrantService::class)->grant(new RewardIntent(
             familyId: $family->id,

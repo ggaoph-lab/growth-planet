@@ -63,7 +63,11 @@ onMounted(load)
         <span class="icon">{{ h.icon ?? '⭐' }}</span>
         <div>
           <h2>{{ h.title }}</h2>
-          <p class="meta">+{{ h.xp_reward }} {{ t('growth.xp') }} · +{{ h.coin_reward }} {{ t('common.growthCoin') }}</p>
+          <p class="meta">
+            +{{ h.xp_reward }} {{ t('common.xpLabel') }}
+            · +{{ h.point_reward ?? 0 }} {{ t('common.pointsLabel') }}
+            · +{{ h.coin_reward }} {{ t('common.growthCoin') }}
+          </p>
         </div>
       </div>
       <button type="button" class="big" :disabled="busy === h.id" @click="checkIn(h)">{{ t('common.checkIn') }}</button>

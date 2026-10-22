@@ -31,6 +31,7 @@ class HabitController
             'target_per_period' => ['nullable', 'integer', 'min:1'],
             'xp_reward' => ['nullable', 'integer', 'min:0'],
             'coin_reward' => ['nullable', 'integer', 'min:0'],
+            'point_reward' => ['nullable', 'integer', 'min:0'],
         ]);
 
         $child = $this->context->findChild($data['child_id']);
@@ -41,8 +42,9 @@ class HabitController
             'icon' => $data['icon'] ?? null,
             'frequency' => $data['frequency'] ?? 'daily',
             'target_per_period' => $data['target_per_period'] ?? 1,
-            'xp_reward' => $data['xp_reward'] ?? 0,
-            'coin_reward' => $data['coin_reward'] ?? 0,
+            'xp_reward' => $data['xp_reward'] ?? 1,
+            'coin_reward' => $data['coin_reward'] ?? 1,
+            'point_reward' => $data['point_reward'] ?? 1,
             'is_active' => true,
         ]);
 
@@ -57,6 +59,7 @@ class HabitController
             'icon' => ['nullable', 'string', 'max:32'],
             'xp_reward' => ['sometimes', 'integer', 'min:0'],
             'coin_reward' => ['sometimes', 'integer', 'min:0'],
+            'point_reward' => ['sometimes', 'integer', 'min:0'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
         $habit->fill($data);

@@ -1,15 +1,15 @@
-# 成长星球 — 部署方案（V1.1）
+# 成长星球 — 部署方案（V1.2）
 
-> 推荐生产环境：**Ubuntu 24.04 LTS（ARM64）+ Docker Compose**，目标平台为 Oracle Cloud Ampere A1。  
-> 开发环境仍使用根目录 `compose.yaml`（源码挂载）。生产使用 `compose.prod.yaml`。
+> 推荐生产环境：**群晖 DS918+（Container Manager）+ Docker Compose**。  
+> 开发环境仍使用根目录 `compose.yaml`（源码挂载）。生产配置见 `compose.prod.yaml`（群晖上通常另存为 `compose.yaml` / `docker-compose.yml` 供 Container Manager 读取）。
 
 ## 1. 环境总览
 
 | 环境 | 用途 | 方式 |
 |---|---|---|
 | 开发（macOS / ARM） | 日常开发 | `compose.yaml`：源码挂载、本机 Vite 可选 |
-| 生产（推荐） | 家庭使用 | Ubuntu 24.04 ARM64 + `compose.prod.yaml`（`/opt/growth-planet`） |
-| 生产（备选） | x86_64 主机 | 同一套 Compose（官方多架构镜像） |
+| 生产（推荐） | 家庭使用 | 群晖 Container Manager + `compose.prod.yaml`（目录 `/volume1/docker/growth-planet`） |
+| 生产（历史） | Oracle Cloud ARM | 已停用；勿再作为主站写入 |
 
 生产服务：
 
@@ -20,106 +20,54 @@
 | `worker` | 同 app 镜像：`queue:work` |
 | `scheduler` | 同 app 镜像：`schedule:work` |
 | `mysql` | `mysql:8.4`，命名卷 `mysql-data`，**不映射到宿主机端口** |
+| `backup`（群晖） | 定时加密备份到 `backups/` |
 
-## 2. 首次部署（Oracle Cloud ARM Ampere A1）
+当前局域网访问：`http://192.168.66.45:8088`（`HTTP_PORT=8088`，避开 DSM 的 80/443）。
 
-### 2.1 服务器准备
+## 2. 群晖生产（DS918+）
 
-- 镜像：Ubuntu 24.04.5 LTS（aarch64）
-- 规格建议：≥ 2 OCPU / 4 GiB（当前 4 OCPU / 23 GiB 充足）
-- 安全组放行：入站 TCP `80`、`443`（SSH 仅限你的 IP）
-- 生产目录：`/opt/growth-planet`
+### 2.1 前提
 
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl git openssl
-# Docker Engine + Compose plugin（官方文档）
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker "$USER"   # 重新登录后生效
-```
+- DSM Container Manager 已安装
+- 目录：`/volume1/docker/growth-planet`
+- 环境文件：`deploy/compose/.env.prod`（权限 `600`，勿提交 Git）
+- 端口：宿主机 `8088`/`8443`（或自选未占用端口），需要公网域名时再用 DSM 反向代理到该端口
 
-### 2.2 拉取代码并生成密钥
+### 2.2 从 GitHub 更新
+
+代码以 GitHub `main` 为准。在 NAS 上（需能使用 Docker，或更新代码后在 Container Manager 里重建）：
 
 ```bash
-sudo mkdir -p /opt/growth-planet
-sudo chown "$USER":"$USER" /opt/growth-planet
-git clone git@github.com:ggaoph-lab/growth-planet.git /opt/growth-planet
-cd /opt/growth-planet
-
-bash deploy/scripts/check-host.sh
-make prod-init
-chmod 600 deploy/compose/.env.prod
+cd /volume1/docker/growth-planet
+bash deploy/scripts/nas-update-from-github.sh
 ```
 
-编辑 `deploy/compose/.env.prod`：
+脚本会：
 
-1. `APP_URL`：公网域名或 `http://<公网IP>`（启用 HTTPS 后改为 `https://...`）
-2. `SANCTUM_STATEFUL_DOMAINS`：与浏览器访问的 Host 一致（无协议，如 `example.com` 或公网 IP）
-3. 启用 HTTPS 时保持 `SESSION_SECURE_COOKIE=true`；若暂时仅 HTTP，设为 `false`
-4. 离线抄写并保管 `APP_KEY` 与 `BACKUP_ENCRYPTION_PASSPHRASE`（丢失 `APP_KEY` 将无法解密孩子生日）
+1. 下载 `ggaoph-lab/growth-planet` 的 `main` 归档
+2. 同步代码并保留 `.env.prod`、`backups/`、证书等本地文件
+3. 若当前用户能访问 Docker：构建镜像、重启容器、执行 `migrate`
+4. 若无 Docker 权限：只同步代码，并提示在 Container Manager 中 Build / Start
 
-### 2.3 构建、启动、迁移
+日常开发流程：本机改完 → 推到 GitHub `main` → 在群晖执行上述更新脚本。
 
-```bash
-make prod-build           # 若无法拉取 node 镜像：先 make frontend-install frontend-build && make prod-build-host-frontend
-make prod-up
-make prod-migrate
-make prod-preflight
-make prod-family          # 交互创建首位家庭与家长（无默认密码）
-```
+### 2.3 备份与恢复
 
-验证：
-
-```bash
-curl -fsS http://127.0.0.1/healthz          # 前端/Nginx：ok
-curl -fsS http://127.0.0.1/api/health       # 后端：status=ok
-```
-
-浏览器打开 `APP_URL` → 家长登录 → 创建孩子 → 授权设备 → 孩子 PIN 登录。
-
-### 2.4 HTTPS（推荐）
-
-将证书放到宿主机（已被 `.gitignore`）：
-
-```text
-deploy/certs/fullchain.pem
-deploy/certs/privkey.pem
-```
-
-然后：
-
-```bash
-# 确认 APP_URL=https://... 且 SESSION_SECURE_COOKIE=true
-make prod-up
-```
-
-Nginx 入口脚本检测到证书后自动启用 443，并将 80 重定向到 HTTPS。可用 acme.sh / certbot 在宿主机申请后写入上述路径。
-
-## 3. 备份与恢复
-
-```bash
-# 每日 03:00（宿主机 crontab）
-0 3 * * * cd /opt/growth-planet && bash deploy/scripts/backup.sh >> /var/log/growth-planet-backup.log 2>&1
-```
-
-- 备份输出：`backups/growth-planet-*.tar.enc`（OpenSSL AES-256-CBC + PBKDF2）
-- 内容：MySQL 逻辑备份 + `storage/app`
-- 恢复：`bash deploy/scripts/restore.sh backups/<file>.tar.enc`（需输入 `RESTORE` 确认）
+- 群晖备份脚本：`deploy/scripts/nas-backup.sh`（由 `backup` 服务调用）
+- 输出：`backups/growth-planet-*.tar.enc`
+- 恢复（在 backup 容器内或等价环境）：`bash deploy/scripts/nas-restore.sh /backups/oracle-final-*.tar.enc`
 
 **不要**把未加密备份同步到不受控的第三方网盘。
 
-## 4. 升级
+### 2.4 域名与 HTTPS（可选）
 
-```bash
-cd /opt/growth-planet
-bash deploy/scripts/backup.sh
-git pull
-make prod-build && make prod-up
-make prod-migrate
-make prod-preflight
-```
+局域网可先用 `http://192.168.66.45:8088`。若要用原域名：
 
-## 5. 开发环境（macOS）
+1. 在 DSM「控制面板 → 登录门户 → 高级 → 反向代理」将 `growth.gkgkgo.online` 指到 `127.0.0.1:8088`
+2. 更新 `deploy/compose/.env.prod` 的 `APP_URL` 与 `SANCTUM_STATEFUL_DOMAINS`
+3. DNS / Cloudflare 指向群晖公网入口；确认原甲骨文源站已停用，避免双写
+
+## 3. 开发环境（macOS）
 
 ```bash
 make init && make build && make up
@@ -128,9 +76,9 @@ make key && make migrate
 make frontend-install && make frontend-build
 ```
 
-访问 <http://localhost:8088>。Apple Silicon / Oracle ARM 均使用官方多架构基础镜像，无需 `platform: linux/amd64`。
+访问 <http://localhost:8088>。
 
-## 6. 运维命令
+## 4. 运维命令（本机 / 通用 Compose）
 
 | 命令 | 作用 |
 |---|---|
@@ -140,7 +88,7 @@ make frontend-install && make frontend-build
 | `make prod-backup` | 立即备份 |
 | `bash deploy/scripts/restore.sh <file>` | 恢复 |
 
-## 7. 安全要点（生产）
+## 5. 安全要点（生产）
 
 - `APP_DEBUG=false`，`APP_ENV=production`
 - MySQL **不**映射宿主机端口；仅容器网络访问
@@ -149,8 +97,9 @@ make frontend-install && make frontend-build
 - Nginx：`server_tokens off`、CSP / 安全头；HTTPS 时 HSTS
 - `app:preflight` 检查密钥、调试开关、库连通与迁移表
 
-## 8. 已知限制
+## 6. 已知限制
 
 - Playwright 全设备矩阵、导出/删除孩子数据等增强项见 `docs/development-plan.md`；核心六阶段业务模块已实现并可运行
-- 无 Redis 时使用 database 驱动做 cache/queue/session（单机家庭部署足够）
+- 群晖上常用 `CACHE_STORE=file`、`SESSION_DRIVER=file`（`app-runtime` 卷共享）
 - 英语星球不接入视频平台；TMDB 未配置时电影仅支持手动录入
+- 纯局域网 HTTP 没有浏览器安全上下文，录音/麦克风与 Service Worker 仍需要可信 HTTPS

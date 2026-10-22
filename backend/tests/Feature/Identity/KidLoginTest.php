@@ -53,6 +53,7 @@ class KidLoginTest extends TestCase
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.nickname', '小星星')
             ->assertJsonPath('data.0.pin_required', true)
+            ->assertJsonPath('data.0.pin_length', 4)
             ->assertJsonMissingPath('data.0.birth_date');
 
         $this->withCookie(DeviceTokens::COOKIE, $token)

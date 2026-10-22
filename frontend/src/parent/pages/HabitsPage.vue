@@ -24,7 +24,8 @@ const form = ref({
   icon: '⭐',
   frequency: 'daily',
   target_per_period: 1,
-  xp_reward: 3,
+  xp_reward: 1,
+  point_reward: 1,
   coin_reward: 1,
   is_active: true,
 })
@@ -36,7 +37,8 @@ function resetForm(): void {
     icon: '⭐',
     frequency: 'daily',
     target_per_period: 1,
-    xp_reward: 3,
+    xp_reward: 1,
+    point_reward: 1,
     coin_reward: 1,
     is_active: true,
   }
@@ -74,6 +76,7 @@ function openEdit(h: ParentHabit): void {
     frequency: h.frequency,
     target_per_period: h.target_per_period,
     xp_reward: h.xp_reward,
+    point_reward: h.point_reward ?? 1,
     coin_reward: h.coin_reward,
     is_active: h.is_active,
   }
@@ -92,6 +95,7 @@ async function save(): Promise<void> {
         title: form.value.title.trim(),
         icon: form.value.icon || null,
         xp_reward: form.value.xp_reward,
+        point_reward: form.value.point_reward,
         coin_reward: form.value.coin_reward,
         is_active: form.value.is_active,
       })
@@ -106,6 +110,7 @@ async function save(): Promise<void> {
         frequency: form.value.frequency,
         target_per_period: form.value.target_per_period,
         xp_reward: form.value.xp_reward,
+        point_reward: form.value.point_reward,
         coin_reward: form.value.coin_reward,
       })
       habits.value.unshift(created)
@@ -138,15 +143,21 @@ onMounted(load)
           <span v-else>{{ row.child_id }}</span>
         </template>
       </el-table-column>
-      <el-table-column :label="t('growth.coins')" width="100">
-        <template #default="{ row }">{{ row.xp_reward }} XP · {{ row.coin_reward }} {{ t('common.coinShort') }}</template>
+      <el-table-column :label="t('common.xpLabel')" width="72" align="center">
+        <template #default="{ row }">{{ row.xp_reward }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.status')" width="80">
+      <el-table-column :label="t('common.pointsLabel')" width="72" align="center">
+        <template #default="{ row }">{{ row.point_reward ?? 0 }}</template>
+      </el-table-column>
+      <el-table-column :label="t('common.growthCoin')" width="88" align="center">
+        <template #default="{ row }">{{ row.coin_reward }}</template>
+      </el-table-column>
+      <el-table-column :label="t('common.status')" width="80" align="center">
         <template #default="{ row }">
           <el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? t('common.enabled') : t('common.disabledLabel') }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.actions')" width="80">
+      <el-table-column :label="t('common.actions')" width="80" align="center">
         <template #default="scope">
           <el-button link type="primary" @click="openEdit(scope.row as ParentHabit)">{{ t('common.edit') }}</el-button>
         </template>
@@ -163,7 +174,9 @@ onMounted(load)
               {{ avatarEmoji(childMap.get(row.child_id)!.avatar) }} {{ childMap.get(row.child_id)!.nickname }}
             </template>
             <template v-else>{{ row.child_id }}</template>
-            · {{ row.xp_reward }} XP · {{ row.coin_reward }} {{ t('common.coinShort') }}
+            · {{ row.xp_reward }} {{ t('common.xpLabel') }}
+            · {{ row.point_reward ?? 0 }} {{ t('common.pointsLabel') }}
+            · {{ row.coin_reward }} {{ t('common.coinShort') }}
           </div>
           <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
             {{ row.is_active ? t('common.enabled') : t('common.disabledLabel') }}
@@ -195,6 +208,9 @@ onMounted(load)
         </el-form-item>
         <el-form-item :label="t('common.xpLabel')">
           <el-input-number v-model="form.xp_reward" :min="0" />
+        </el-form-item>
+        <el-form-item :label="t('common.pointsLabel')">
+          <el-input-number v-model="form.point_reward" :min="0" />
         </el-form-item>
         <el-form-item :label="t('common.growthCoin')">
           <el-input-number v-model="form.coin_reward" :min="0" />

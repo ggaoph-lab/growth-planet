@@ -107,6 +107,6 @@ class SchulteScoreTest extends TestCase
 
     private function balance(ChildProfile $child): int
     {
-        return (int) DB::table('coin_accounts')->where('child_id', $child->id)->value('balance');
+        return (int) DB::table('point_accounts')->where('child_id', $child->id)->value('balance');
     }
 }

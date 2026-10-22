@@ -43,3 +43,17 @@ button {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Keep el-table header/body columns aligned (scrollbar gutter + fixed-col quirks). */
+.el-table {
+  width: 100%;
+}
+.el-table .el-table__header-wrapper table,
+.el-table .el-table__body-wrapper table,
+.el-table .el-table__footer-wrapper table {
+  width: 100% !important;
+}
+.el-table th.el-table__cell,
+.el-table td.el-table__cell {
+  vertical-align: middle;
+}

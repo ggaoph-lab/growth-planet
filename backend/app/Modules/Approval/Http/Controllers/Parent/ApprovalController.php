@@ -168,6 +168,7 @@ class ApprovalController
                     'description' => $snapshot['description'] ?? null,
                     'xp_reward' => (int) ($snapshot['xp_reward'] ?? 0),
                     'coin_reward' => (int) ($snapshot['coin_reward'] ?? 0),
+                    'point_reward' => (int) ($snapshot['point_reward'] ?? 0),
                 ];
             }
 

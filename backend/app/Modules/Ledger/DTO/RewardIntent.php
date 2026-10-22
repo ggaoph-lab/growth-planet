@@ -18,6 +18,7 @@ readonly class RewardIntent
         public CarbonImmutable $occurredAt,
         public ?int $xpAmount = null,
         public ?int $coinAmount = null,
+        public ?int $pointAmount = null,
         public ?int $approvalRequestId = null,
         public ?int $approvedBy = null,
         public bool $postImmediately = true,

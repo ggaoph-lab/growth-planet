@@ -61,7 +61,7 @@ flowchart LR
 |---|---|---|---|
 | **Core** | 家庭作用域、时钟与时区、幂等、审计、附件、通知、系统设置 | `audit_logs`、`idempotency_keys`、`attachments`、`notifications`、`system_settings` | 1 |
 | **Identity** | 家庭、成员、孩子档案、登录、设备授权、二次验证 | `families`、`users`、`family_members`、`child_profiles`、`trusted_devices` | 1 |
-| **Ledger** | XP 与金币账本、金币预留、奖励策略与限额、冲正 | `xp_accounts`、`xp_ledger`、`coin_accounts`、`coin_ledger`、`coin_holds`、`reward_policies`、`reward_grants` | 2 |
+| **Ledger** | XP/积分/成长币账本、等级曲线、预留、奖励策略与限额、每日积分津贴、冲正 | `xp_accounts`、`xp_ledger`、`point_accounts`、`point_ledger`、`point_holds`、`coin_accounts`、`coin_ledger`、`coin_holds`、`reward_policies`、`reward_grants` | 2 |
 | **Approval** | 统一审核中心（状态机、历史、防重复审批） | `approval_requests`、`approval_events` | 2 |
 | **Task** | 任务定义、排期规则、每日实例、步骤、提交、自检、长期目标 | `tasks`、`task_steps`、`task_schedules`、`task_instances`、`task_instance_steps`、`task_submissions` | 2 |
 | **Habit** | 习惯定义与打卡记录（弹性连续） | `habits`、`habit_records` | 2 |

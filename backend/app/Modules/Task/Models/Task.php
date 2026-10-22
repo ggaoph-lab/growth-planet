@@ -67,6 +67,7 @@ class Task extends Model
             'icon' => $this->icon,
             'xp_reward' => $this->xp_reward,
             'coin_reward' => $this->coin_reward,
+            'point_reward' => $this->point_reward,
             'requires_approval' => $this->requires_approval,
             'requires_self_check' => $this->requires_self_check,
             'with_parent' => $this->with_parent,

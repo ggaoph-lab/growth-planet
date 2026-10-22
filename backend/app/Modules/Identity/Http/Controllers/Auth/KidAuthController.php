@@ -46,13 +46,19 @@ class KidAuthController
     {
         $device = $this->requireDevice($request);
 
-        $children = $this->loginableChildren($device)->get()->map(fn (ChildProfile $c) => [
-            'id' => $c->id,
-            'nickname' => $c->nickname,
-            'avatar' => $c->avatar,
-            'theme_color' => $c->theme_color,
-            'pin_required' => $c->member->user->pin_hash !== null,
-        ]);
+        $children = $this->loginableChildren($device)->get()->map(function (ChildProfile $c) {
+            $user = $c->member->user;
+            $pinRequired = $user->pin_hash !== null;
+
+            return [
+                'id' => $c->id,
+                'nickname' => $c->nickname,
+                'avatar' => $c->avatar,
+                'theme_color' => $c->theme_color,
+                'pin_required' => $pinRequired,
+                'pin_length' => $pinRequired ? (int) ($user->pin_length ?? 4) : null,
+            ];
+        });
 
         return response()->json(['data' => $children]);
     }

@@ -13,7 +13,10 @@ use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Models\Family;
 use App\Modules\Ledger\Models\CoinAccount;
 use App\Modules\Ledger\Models\CoinHold;
+use App\Modules\Ledger\Models\PointAccount;
+use App\Modules\Ledger\Models\PointHold;
 use App\Modules\Ledger\Services\CoinLedgerService;
+use App\Modules\Ledger\Services\PointLedgerService;
 use App\Modules\Shop\Enums\RedemptionStatus;
 use App\Modules\Shop\Enums\RewardStatus;
 use App\Modules\Shop\Models\Reward;
@@ -27,6 +30,7 @@ class RedemptionService
     public function __construct(
         private readonly Clock $clock,
         private readonly CoinLedgerService $coins,
+        private readonly PointLedgerService $points,
         private readonly ApprovalService $approvals,
     ) {}
 
@@ -44,11 +48,19 @@ class RedemptionService
             throw new ApiException('LIMIT_REACHED', BiMsg::of('商品已兑完', 'This item is sold out'), 422);
         }
 
-        $coinAccount = CoinAccount::query()->where('child_id', $child->id)->firstOrFail();
+        $price = $reward->priceAmount();
+        if ($price < 1) {
+            throw new ApiException('VALIDATION_FAILED', BiMsg::of('商品价格无效', 'Invalid reward price'), 422);
+        }
+
+        $usePoints = $reward->pricedInPoints();
         $snapshot = [
             'name' => $reward->name,
             'kind' => $reward->kind->value,
-            'coin_price' => $reward->coin_price,
+            'currency' => $usePoints ? 'point' : 'coin',
+            'coin_price' => (int) ($reward->coin_price ?? 0),
+            'point_price' => (int) ($reward->point_price ?? 0),
+            'price' => $price,
         ];
 
         try {
@@ -58,7 +70,8 @@ class RedemptionService
                 'child_id' => $child->id,
                 'reward_id' => $reward->id,
                 'reward_snapshot' => $snapshot,
-                'coin_price' => $reward->coin_price,
+                'coin_price' => $usePoints ? 0 : $price,
+                'point_price' => $usePoints ? $price : null,
                 'status' => RedemptionStatus::Requested,
                 'idempotency_key' => $idempotencyKey,
             ]);
@@ -69,14 +82,27 @@ class RedemptionService
             throw $e;
         }
 
-        $hold = $this->coins->hold(
-            $coinAccount,
-            $reward->coin_price,
-            'reward_redemption',
-            $redemption->id,
-            'redemption:'.$redemption->ulid.':hold',
-        );
-        $redemption->coin_hold_id = $hold->id;
+        if ($usePoints) {
+            $account = PointAccount::query()->where('child_id', $child->id)->firstOrFail();
+            $hold = $this->points->hold(
+                $account,
+                $price,
+                'reward_redemption',
+                $redemption->id,
+                'redemption:'.$redemption->ulid.':hold',
+            );
+            $redemption->point_hold_id = $hold->id;
+        } else {
+            $account = CoinAccount::query()->where('child_id', $child->id)->firstOrFail();
+            $hold = $this->coins->hold(
+                $account,
+                $price,
+                'reward_redemption',
+                $redemption->id,
+                'redemption:'.$redemption->ulid.':hold',
+            );
+            $redemption->coin_hold_id = $hold->id;
+        }
         $redemption->save();
 
         if ($reward->requires_approval) {
@@ -108,10 +134,7 @@ class RedemptionService
                 throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能取消', 'Cannot cancel in the current state'), 409);
             }
 
-            if ($redemption->coin_hold_id) {
-                $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
-                $this->coins->release($hold);
-            }
+            $this->releaseHold($redemption);
             $redemption->status = RedemptionStatus::Cancelled;
             $redemption->save();
 
@@ -128,7 +151,7 @@ class RedemptionService
     }
 
     /**
-     * Parent writes off a pending redemption: capture the coin hold and mark it delivered.
+     * Parent writes off a pending redemption: capture the hold and mark it delivered.
      */
     public function fulfill(RewardRedemption $redemption, Family $family, ?int $approvedBy): void
     {
@@ -152,15 +175,28 @@ class RedemptionService
             return;
         }
 
-        $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
         $businessDate = $this->clock->today($family->timezone)->toDateString();
-        $entry = $this->coins->capture(
-            $hold,
-            'redemption:'.$redemption->ulid.':debit',
-            $businessDate,
-            $approvedBy,
-        );
-        $redemption->coin_ledger_id = $entry->id;
+
+        if ($redemption->point_hold_id) {
+            $hold = PointHold::query()->findOrFail($redemption->point_hold_id);
+            $entry = $this->points->capture(
+                $hold,
+                'redemption:'.$redemption->ulid.':debit',
+                $businessDate,
+                $approvedBy,
+            );
+            $redemption->point_ledger_id = $entry->id;
+        } else {
+            $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
+            $entry = $this->coins->capture(
+                $hold,
+                'redemption:'.$redemption->ulid.':debit',
+                $businessDate,
+                $approvedBy,
+            );
+            $redemption->coin_ledger_id = $entry->id;
+        }
+
         $redemption->status = RedemptionStatus::Approved;
         $redemption->save();
 
@@ -176,11 +212,22 @@ class RedemptionService
         if ($redemption->status === RedemptionStatus::Rejected) {
             return;
         }
+        $this->releaseHold($redemption);
+        $redemption->status = RedemptionStatus::Rejected;
+        $redemption->save();
+    }
+
+    private function releaseHold(RewardRedemption $redemption): void
+    {
+        if ($redemption->point_hold_id) {
+            $hold = PointHold::query()->findOrFail($redemption->point_hold_id);
+            $this->points->release($hold);
+
+            return;
+        }
         if ($redemption->coin_hold_id) {
             $hold = CoinHold::query()->findOrFail($redemption->coin_hold_id);
             $this->coins->release($hold);
         }
-        $redemption->status = RedemptionStatus::Rejected;
-        $redemption->save();
     }
 }

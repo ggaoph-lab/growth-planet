@@ -23,9 +23,10 @@ function taskHeading(item: ApprovalRequest): string {
 
 function rewardLine(item: ApprovalRequest): string {
   const xp = item.summary?.xp_reward ?? 0
+  const points = item.summary?.point_reward ?? 0
   const coins = item.summary?.coin_reward ?? 0
-  if (!xp && !coins) return ''
-  return t('parent.approvals.rewardAfter', { xp, coins })
+  if (!xp && !points && !coins) return ''
+  return t('parent.approvals.rewardAfter', { xp, points, coins })
 }
 
 function isRedemption(item: ApprovalRequest): boolean {
@@ -89,9 +90,10 @@ async function decide(item: ApprovalRequest, action: 'approve' | 'reject' | 'ret
     }
   } else {
     const xp = item.summary?.xp_reward ?? 0
+    const points = item.summary?.point_reward ?? 0
     const coins = item.summary?.coin_reward ?? 0
-    const message = item.type === 'task_completion' && (xp || coins)
-      ? t('parent.approvals.approveTask', { xp, coins })
+    const message = item.type === 'task_completion' && (xp || points || coins)
+      ? t('parent.approvals.approveTask', { xp, points, coins })
       : t('common.approvalConfirm')
     try {
       await ElMessageBox.confirm(message, t('common.approveTitle'), {

@@ -13,4 +13,5 @@ enum SourceModule: string
     case Exploration = 'exploration';
     case Item = 'item';
     case Game = 'game';
+    case System = 'system';
 }

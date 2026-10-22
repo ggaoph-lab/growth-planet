@@ -19,11 +19,17 @@ const message = ref('')
 const busy = ref(false)
 const pinpad = ref<InstanceType<typeof PinPad> | null>(null)
 
+function prefetchKidHome(): void {
+  void import('@/kid/KidLayout.vue')
+  void import('@/kid/pages/KidHomePage.vue')
+}
+
 onMounted(async () => {
   if (session.isParent) await session.logout()
   try {
     profiles.value = await api.get<KidLoginProfile[]>('/auth/kid/profiles')
     state.value = 'ready'
+    prefetchKidHome()
   } catch (e) {
     if (e instanceof ApiError && e.code === 'DEVICE_NOT_AUTHORIZED') state.value = 'unauthorized'
     else message.value = e instanceof ApiError ? e.message : t('common.loadFailed')
@@ -31,7 +37,7 @@ onMounted(async () => {
 })
 
 async function login(pin: string | null): Promise<void> {
-  if (!selected.value) return
+  if (!selected.value || busy.value) return
   busy.value = true
   message.value = ''
   try {
@@ -48,7 +54,13 @@ async function login(pin: string | null): Promise<void> {
 function choose(p: KidLoginProfile): void {
   message.value = ''
   selected.value = p
+  prefetchKidHome()
   if (!p.pin_required) void login(null)
+}
+
+function pinLength(p: KidLoginProfile): number {
+  const n = p.pin_length ?? 4
+  return Math.min(6, Math.max(4, n))
 }
 </script>
 
@@ -78,7 +90,7 @@ function choose(p: KidLoginProfile): void {
       <h1>{{ selected.nickname }}</h1>
       <template v-if="selected.pin_required">
         <p class="sub">{{ t('auth.enterPin') }}</p>
-        <PinPad ref="pinpad" :disabled="busy" @submit="login" />
+        <PinPad ref="pinpad" :length="pinLength(selected)" :disabled="busy" @submit="login" />
       </template>
     </template>
 

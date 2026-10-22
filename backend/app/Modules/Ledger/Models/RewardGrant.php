@@ -15,6 +15,7 @@ class RewardGrant extends Model
         return [
             'xp_amount' => 'integer',
             'coin_amount' => 'integer',
+            'point_amount' => 'integer',
             'status' => RewardGrantStatus::class,
             'source_module' => SourceModule::class,
             'occurred_at' => 'datetime',

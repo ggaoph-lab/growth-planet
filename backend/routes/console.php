@@ -14,3 +14,5 @@ Schedule::command('queue:prune-failed --hours=168')->dailyAt('03:15');
 Schedule::command('english:prune-speak-attempts')->dailyAt('03:30');
 // Family-local 05:00, with catch-up after restarts and at most three bounded attempts per day.
 Schedule::command('english:prepare-day')->everyTenMinutes()->withoutOverlapping(60)->runInBackground();
+// Family-local daily points; runs often with grant-key idempotency so each child gets at most one grant per business day.
+Schedule::command('points:grant-daily-allowance')->everyTenMinutes()->withoutOverlapping(30)->runInBackground();

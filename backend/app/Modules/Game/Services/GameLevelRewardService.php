@@ -16,7 +16,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Once-per-day coins for finishing a game level: easy 1, practice 2, challenge 3.
+ * Once-per-day points for finishing a game level: easy 1, practice 2, challenge 3.
  */
 class GameLevelRewardService
 {
@@ -99,11 +99,12 @@ class GameLevelRewardService
                 sourceId: $row->id,
                 occurredAt: $this->clock->now(),
                 xpAmount: 0,
-                coinAmount: $coins,
+                coinAmount: 0,
+                pointAmount: $coins,
                 postImmediately: true,
             ));
             $row->reward_grant_id = $grant->id;
-            $awarded = $grant->status === RewardGrantStatus::Granted ? $grant->coin_amount : 0;
+            $awarded = $grant->status === RewardGrantStatus::Granted ? $grant->point_amount : 0;
             $row->coins_awarded = $awarded;
             $row->save();
         });

@@ -18,6 +18,7 @@ use Laravel\Sanctum\HasApiTokens;
  * @property string|null $email
  * @property string|null $password
  * @property string|null $pin_hash
+ * @property int|null $pin_length
  * @property int $failed_login_count
  * @property CarbonImmutable|null $locked_until
  * @property CarbonImmutable|null $last_login_at

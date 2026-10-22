@@ -59,6 +59,7 @@ type SubtaskForm = {
   end_date: string
   xp_reward: number
   coin_reward: number
+  point_reward: number
   with_parent: boolean
 }
 
@@ -93,6 +94,7 @@ function blankSubtask(): SubtaskForm {
     end_date: '',
     xp_reward: 10,
     coin_reward: 5,
+    point_reward: 0,
     with_parent: false,
   }
 }
@@ -124,6 +126,7 @@ const homeworkDraft = ref({
   items: [] as HomeworkItemPreview[],
   xp_reward: 0,
   coin_reward: 0,
+  point_reward: 0,
   notes: null as string | null,
   parser: 'rules' as HomeworkParserKind | string,
   ai_configured: false,
@@ -254,18 +257,31 @@ function subtaskFromTask(task: ParentTask): SubtaskForm {
     end_date: dateOnly(task.end_date),
     xp_reward: task.xp_reward,
     coin_reward: task.coin_reward,
+    point_reward: task.point_reward ?? 0,
     with_parent: !!task.with_parent,
   }
 }
 
-function rewardSummary(task: ParentTask): string {
+function rewardXp(task: ParentTask): number {
   const kids = task.children ?? []
-  if (kids.length > 0) {
-    const xp = kids.reduce((sum, child) => sum + child.xp_reward, 0)
-    const coins = kids.reduce((sum, child) => sum + child.coin_reward, 0)
-    return `${xp} XP · ${coins} ${t('common.coinShort')}`
-  }
-  return `${task.xp_reward} XP · ${task.coin_reward} ${t('common.coinShort')}`
+  if (kids.length > 0) return kids.reduce((sum, child) => sum + child.xp_reward, 0)
+  return task.xp_reward
+}
+
+function rewardPoints(task: ParentTask): number {
+  const kids = task.children ?? []
+  if (kids.length > 0) return kids.reduce((sum, child) => sum + (child.point_reward ?? 0), 0)
+  return task.point_reward ?? 0
+}
+
+function rewardCoins(task: ParentTask): number {
+  const kids = task.children ?? []
+  if (kids.length > 0) return kids.reduce((sum, child) => sum + child.coin_reward, 0)
+  return task.coin_reward
+}
+
+function rewardSummary(task: ParentTask): string {
+  return `${rewardXp(task)} ${t('common.xpLabel')} · ${rewardPoints(task)} ${t('common.pointsLabel')} · ${rewardCoins(task)} ${t('common.coinShort')}`
 }
 
 function subtaskTimes(task: ParentTask): string[] {
@@ -483,6 +499,7 @@ function buildSavePayload(scopeFields: { edit_scope?: EditScope; scope_date?: st
     end_date: endDates[endDates.length - 1] ?? startDates[0] ?? todayIso(),
     xp_reward: 0,
     coin_reward: 0,
+    point_reward: 0,
     with_parent: false,
     schedules: [{ frequency: 'once' as const }],
     child_id: form.value.child_id ?? null,
@@ -495,6 +512,7 @@ function buildSavePayload(scopeFields: { edit_scope?: EditScope; scope_date?: st
       end_date: sub.recurring ? sub.end_date : sub.start_date,
       xp_reward: sub.xp_reward,
       coin_reward: sub.coin_reward,
+      point_reward: sub.point_reward,
       with_parent: sub.with_parent,
       schedules: buildSubtaskSchedules(sub),
     })),
@@ -611,6 +629,7 @@ async function openHomework(): Promise<void> {
     items: [],
     xp_reward: 0,
     coin_reward: 0,
+    point_reward: 0,
     notes: null,
     parser: 'rules',
     ai_configured: false,
@@ -631,6 +650,7 @@ function applyPreview(preview: HomeworkParseResult): void {
     })),
     xp_reward: preview.xp_reward,
     coin_reward: preview.coin_reward,
+    point_reward: preview.point_reward ?? 0,
     notes: preview.notes,
     parser: preview.parser,
     ai_configured: preview.ai_configured,
@@ -703,6 +723,7 @@ async function confirmHomework(): Promise<void> {
       items,
       xp_reward: homeworkDraft.value.xp_reward,
       coin_reward: homeworkDraft.value.coin_reward,
+      point_reward: homeworkDraft.value.point_reward,
       with_parent: homeworkWithParent.value,
       source_text: homeworkDraft.value.source_text || homeworkRaw.value.trim(),
     })
@@ -823,12 +844,16 @@ onMounted(load)
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('growth.coins')" width="150">
-            <template #default="{ row }">
-              {{ rewardSummary(row as ParentTask) }}
-            </template>
+          <el-table-column :label="t('common.xpLabel')" width="72" align="center">
+            <template #default="{ row }">{{ rewardXp(row as ParentTask) }}</template>
           </el-table-column>
-          <el-table-column :label="t('common.actions')" width="140" fixed="right">
+          <el-table-column :label="t('common.pointsLabel')" width="72" align="center">
+            <template #default="{ row }">{{ rewardPoints(row as ParentTask) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('common.growthCoin')" width="88" align="center">
+            <template #default="{ row }">{{ rewardCoins(row as ParentTask) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('common.actions')" width="140" align="center">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit(row as ParentTask)">{{ t('common.edit') }}</el-button>
               <el-button link type="danger" @click="deleteTask(row as ParentTask)">{{ t('common.delete') }}</el-button>
@@ -1025,6 +1050,9 @@ onMounted(load)
           <el-form-item :label="t('common.xpLabel')">
             <el-input-number v-model="sub.xp_reward" :min="0" />
           </el-form-item>
+          <el-form-item :label="t('common.pointsLabel')">
+            <el-input-number v-model="sub.point_reward" :min="0" />
+          </el-form-item>
           <el-form-item :label="t('common.growthCoin')">
             <el-input-number v-model="sub.coin_reward" :min="0" />
           </el-form-item>
@@ -1119,7 +1147,9 @@ onMounted(load)
             <div>
               <div>{{ sub.title }}</div>
               <div class="muted">
-                {{ sub.xp_reward }} XP · {{ sub.coin_reward }} {{ t('common.coinShort') }}
+                {{ sub.xp_reward }} {{ t('common.xpLabel') }}
+                · {{ sub.point_reward }} {{ t('common.pointsLabel') }}
+                · {{ sub.coin_reward }} {{ t('common.coinShort') }}
                 <template v-if="sub.with_parent"> · {{ t('common.withParentTag') }}</template>
               </div>
             </div>
@@ -1201,6 +1231,9 @@ onMounted(load)
           </el-form-item>
           <el-form-item :label="t('common.xpLabel')">
             <el-input-number v-model="homeworkDraft.xp_reward" :min="0" :max="100" />
+          </el-form-item>
+          <el-form-item :label="t('common.pointsLabel')">
+            <el-input-number v-model="homeworkDraft.point_reward" :min="0" :max="100" />
           </el-form-item>
           <el-form-item :label="t('common.growthCoin')">
             <el-input-number v-model="homeworkDraft.coin_reward" :min="0" :max="50" />

@@ -2,8 +2,10 @@
 
 namespace App\Modules\Shop\Http\Controllers\Parent;
 
+use App\Modules\Core\Exceptions\ApiException;
 use App\Modules\Core\Models\Attachment;
 use App\Modules\Core\Services\ImageAttachmentService;
+use App\Modules\Core\Support\BiMsg;
 use App\Modules\Identity\Support\CurrentContext;
 use App\Modules\Shop\Enums\RewardKind;
 use App\Modules\Shop\Enums\RewardStatus;
@@ -39,12 +41,15 @@ class RewardController
         $data = $this->validated($request, creating: true);
 
         $reward = DB::transaction(function () use ($request, $data) {
+            $kind = RewardKind::from($data['kind']);
+            [$coinPrice, $pointPrice] = $this->resolvePrices($data);
             $reward = Reward::query()->create([
                 'family_id' => $this->context->familyId(),
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
-                'kind' => $data['kind'],
-                'coin_price' => $data['coin_price'],
+                'kind' => $kind,
+                'coin_price' => $coinPrice,
+                'point_price' => $pointPrice,
                 'stock' => $data['stock'] ?? null,
                 'requires_approval' => $data['requires_approval'] ?? true,
                 'status' => $data['status'] ?? RewardStatus::Draft,
@@ -65,6 +70,16 @@ class RewardController
     {
         $reward = $this->find($id);
         $data = $this->validated($request, creating: false);
+        $kind = isset($data['kind']) ? RewardKind::from($data['kind']) : $reward->kind;
+        if (isset($data['kind']) || array_key_exists('coin_price', $data) || array_key_exists('point_price', $data)) {
+            [$coinPrice, $pointPrice] = $this->resolvePrices([
+                'coin_price' => $data['coin_price'] ?? $reward->coin_price,
+                'point_price' => array_key_exists('point_price', $data) ? $data['point_price'] : $reward->point_price,
+            ]);
+            $data['kind'] = $kind;
+            $data['coin_price'] = $coinPrice;
+            $data['point_price'] = $pointPrice;
+        }
         $reward->fill($data);
         $reward->version++;
         $reward->save();
@@ -149,12 +164,34 @@ class RewardController
             'name' => [$creating ? 'required' : 'sometimes', 'string', 'max:128'],
             'description' => ['nullable', 'string'],
             'kind' => [$creating ? 'required' : 'sometimes', Rule::enum(RewardKind::class)],
-            'coin_price' => [$creating ? 'required' : 'sometimes', 'integer', 'min:1'],
+            'coin_price' => ['nullable', 'integer', 'min:0'],
+            'point_price' => ['nullable', 'integer', 'min:0'],
             'stock' => ['nullable', 'integer', 'min:0'],
             'requires_approval' => ['nullable', 'boolean'],
             'status' => ['nullable', Rule::enum(RewardStatus::class)],
             'image' => ['nullable', 'file', 'max:10240'],
         ]);
+    }
+
+    /**
+     * Currency is chosen by the parent: point_price >= 1 → 积分, else 成长币.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array{0: int, 1: int|null}
+     */
+    private function resolvePrices(array $data): array
+    {
+        $point = (int) ($data['point_price'] ?? 0);
+        if ($point >= 1) {
+            return [0, $point];
+        }
+
+        $coin = (int) ($data['coin_price'] ?? 0);
+        if ($coin < 1) {
+            throw new ApiException('VALIDATION_FAILED', BiMsg::of('请填写价格', 'Enter a price'), 422);
+        }
+
+        return [$coin, null];
     }
 
     private function attachImage(Reward $reward, Request $request): void

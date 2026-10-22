@@ -112,7 +112,13 @@ class ChildController
         $data = $request->validate(['pin' => ['present', 'nullable', 'string', 'regex:/^\d{4,6}$/']]);
 
         $user = $child->member->user;
-        $user->pin_hash = $data['pin'] === null ? null : Hash::make($data['pin']);
+        if ($data['pin'] === null) {
+            $user->pin_hash = null;
+            $user->pin_length = null;
+        } else {
+            $user->pin_hash = Hash::make($data['pin']);
+            $user->pin_length = strlen($data['pin']);
+        }
         $user->save();
         $this->audit->log('child.pin_changed', $child->family_id, $child, ['pin_enabled' => $data['pin'] !== null]);
 

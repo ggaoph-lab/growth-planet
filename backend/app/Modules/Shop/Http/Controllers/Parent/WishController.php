@@ -42,16 +42,24 @@ class WishController
         $wish = $this->find($id);
         $data = $request->validate([
             'coin_price' => ['nullable', 'integer', 'min:1', 'max:1000000'],
+            'point_price' => ['nullable', 'integer', 'min:1', 'max:1000000'],
             'kind' => ['nullable', Rule::enum(RewardKind::class)],
         ]);
 
-        $price = $data['coin_price'] ?? $wish->coin_price;
+        $kind = isset($data['kind']) ? RewardKind::from($data['kind']) : RewardKind::Physical;
+        $price = $kind->pricedInPoints()
+            ? ($data['point_price'] ?? $data['coin_price'] ?? $wish->coin_price)
+            : ($data['coin_price'] ?? $wish->coin_price);
         if ($price === null) {
-            throw new ApiException('WISH_PRICE_REQUIRED', BiMsg::of('请先填写成长币价格', 'Enter a coin price first'));
+            throw new ApiException(
+                'WISH_PRICE_REQUIRED',
+                $kind->pricedInPoints()
+                    ? BiMsg::of('请先填写积分价格', 'Enter a point price first')
+                    : BiMsg::of('请先填写成长币价格', 'Enter a coin price first'),
+            );
         }
 
-        $kind = isset($data['kind']) ? RewardKind::from($data['kind']) : RewardKind::Physical;
-        $converted = $this->wishes->convert($wish, $price, $kind);
+        $converted = $this->wishes->convert($wish, (int) $price, $kind);
 
         return response()->json(['data' => $converted]);
     }

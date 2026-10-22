@@ -104,11 +104,12 @@ class SchulteScoreService
                     sourceId: $score->id,
                     occurredAt: $this->clock->now(),
                     xpAmount: 0,
-                    coinAmount: $rule['coins'],
+                    coinAmount: 0,
+                    pointAmount: $rule['coins'],
                     postImmediately: true,
                 ));
                 $score->reward_grant_id = $grant->id;
-                $awarded = $grant->status === RewardGrantStatus::Granted ? $grant->coin_amount : 0;
+                $awarded = $grant->status === RewardGrantStatus::Granted ? $grant->point_amount : 0;
                 $score->coins_awarded = $awarded;
             }
             if ($score->isDirty()) {

@@ -29,12 +29,16 @@ erDiagram
     families ||--o{ system_settings : configures
 
     child_profiles ||--|| xp_accounts : owns
+    child_profiles ||--|| point_accounts : owns
     child_profiles ||--|| coin_accounts : owns
     xp_accounts ||--o{ xp_ledger : records
+    point_accounts ||--o{ point_ledger : records
+    point_accounts ||--o{ point_holds : reserves
     coin_accounts ||--o{ coin_ledger : records
     coin_accounts ||--o{ coin_holds : reserves
     reward_policies ||--o{ reward_grants : limits
     reward_grants ||--o| xp_ledger : posts
+    reward_grants ||--o| point_ledger : posts
     reward_grants ||--o| coin_ledger : posts
 
     approval_requests ||--o{ approval_events : history
@@ -176,27 +180,28 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 
 ## 4. 账本与奖励（第二阶段）
 
-### `xp_accounts` / `coin_accounts`
+### `xp_accounts` / `point_accounts` / `coin_accounts`
 | 列 | 说明 |
 |---|---|
 | id, family_id | |
 | child_id | UNIQUE |
-| balance | INT UNSIGNED，`CHECK (balance >= 0)` |
-| held（仅金币） | INT UNSIGNED，`CHECK (held <= balance)`；兑换预留 |
-| lifetime_earned | |
+| level（仅 XP） | 当前等级，默认 1 |
+| balance | INT UNSIGNED，`CHECK (balance >= 0)`；XP 为当前等级内经验 |
+| held（积分/金币） | INT UNSIGNED，`CHECK (held <= balance)`；兑换预留 |
+| lifetime_earned | 终身入账；升级不扣减 |
 | lock_version, updated_at | |
 
-可用金币 = `balance − held`。
+可用积分/金币 = `balance − held`。
 
-### `xp_ledger` / `coin_ledger`（只追加）
+### `xp_ledger` / `point_ledger` / `coin_ledger`（只追加）
 | 列 | 说明 |
 |---|---|
 | id, ulid（交易 ID） | |
 | family_id, account_id, child_id | |
-| amount | 有符号，≠ 0；XP 表只允许 `> 0`，冲正除外（见 points-rules.md §1） |
+| amount | 有符号，≠ 0 |
 | balance_before / balance_after | |
-| entry_type | `reward`、`redemption`、`refund`、`reversal`、`parent_bonus`… |
-| source_module | `task`、`habit`、`shop`、`movie`、`english`、`exploration`、`parent`、`item` |
+| entry_type | `reward`、`redemption`、`refund`、`reversal`、`parent_bonus`、`level_up`、`daily_allowance`… |
+| source_module | `task`、`habit`、`shop`、`movie`、`english`、`exploration`、`parent`、`item`、`game`、`system` |
 | source_type / source_id | 来源业务对象 |
 | idempotency_key | UNIQUE |
 | reversal_of_id | UNIQUE NULL（同一笔只能冲正一次） |
@@ -206,11 +211,11 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 | business_date | DATE（家庭时区） |
 | created_at | |
 
-### `coin_holds`
+### `point_holds` / `coin_holds`
 `id`、`family_id`、`account_id`、`amount`、`source_type`、`source_id`、`status`（`active`/`captured`/`released`）、`idempotency_key UNIQUE`、`captured_ledger_id`、`timestamps`。
 
 ### `reward_policies`
-`id`、`family_id`、`code`（如 `task.complete`、`movie.first_start`、`movie.completion`、`movie.cross_movie`、`english.active_choice`、`item.checklist.before_school`、`item.checklist.after_school`）、`xp_amount`、`coin_amount`、`requires_approval`、`max_per_event`、`max_per_day`、`max_per_week`、`max_per_subject`（同一业务对象最多次数）、`is_active`、timestamps。所有金额与限额可配置，代码中只有默认种子值。
+`id`、`family_id`、`code`（如 `task.complete`、`points.daily_allowance`、`game.schulte`…）、`xp_amount`、`coin_amount`、`point_amount`、`requires_approval`、`max_per_event`、`max_per_day`、`max_per_week`、`max_per_subject`、`is_active`、timestamps。
 
 ### `reward_grants`
 | 列 | 说明 |
@@ -220,10 +225,10 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 | grant_key | VARCHAR(128) **UNIQUE**，确定性业务键（如 `movie:completion:{library_id}`） |
 | source_module, source_type, source_id | |
 | occurred_at | 业务事件实际发生时间（用于"按事件顺序"判断） |
-| xp_amount, coin_amount | 计划发放 |
+| xp_amount, coin_amount, point_amount | 计划发放 |
 | status | `pending_approval` / `granted` / `rejected` / `capped` / `reversed` |
 | approval_request_id | NULL |
-| xp_ledger_id, coin_ledger_id | |
+| xp_ledger_id, point_ledger_id, coin_ledger_id | |
 | cap_detail | JSON：被哪条限额截断 |
 | timestamps | |
 
@@ -249,7 +254,7 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 ## 6. 任务与习惯（第二阶段）
 
 ### `tasks`（任务定义）
-`id`、`family_id`、`child_id NULL`（NULL=全部孩子）、`category`、`title`、`icon`、`description`、`kind`（`standard`/`stepped`/`long_term`）、`start_date`、`end_date NULL`、`estimated_minutes NULL`、`xp_reward`、`coin_reward`、`requires_approval`、`requires_self_check`、`with_parent`（与家长协作完成）、`is_active`、`version`、`created_by`、timestamps、deleted_at。
+`id`、`family_id`、`child_id NULL`（NULL=全部孩子）、`category`、`title`、`icon`、`description`、`kind`（`standard`/`stepped`/`long_term`）、`start_date`、`end_date NULL`、`estimated_minutes NULL`、`xp_reward`、`coin_reward`、`point_reward`（默认 0）、`requires_approval`、`requires_self_check`、`with_parent`（与家长协作完成）、`is_active`、`version`、`created_by`、timestamps、deleted_at。
 
 ### `task_steps`
 `id`、`task_id`、`title`、`is_required`、`is_self_check`（如"检查有没有漏题"）、`sort`。
@@ -266,16 +271,16 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 步骤快照与每次提交（`attempt_no`、`note`、`returned_reason`）。
 
 ### `habits` / `habit_records`
-`habits`：`id`、`family_id`、`child_id`、`title`、`icon`、`frequency`、`target_per_period`、`xp_reward`、`coin_reward`、`is_active`。
+`habits`：`id`、`family_id`、`child_id`、`title`、`icon`、`frequency`、`target_per_period`、`xp_reward`、`point_reward`、`coin_reward`、`is_active`。新建默认 `xp_reward`/`point_reward`/`coin_reward` = 1。
 `habit_records`：`id`、`habit_id`、`child_id`、`record_date`、`recorded_by`、`note`；UNIQUE(`habit_id`, `record_date`)。连续天数在查询时计算，弹性规则（如 7 天内 5 天）不清零永久 XP。
 
 ## 7. 奖励商城（第二阶段）
 
 ### `rewards`
-`id`、`family_id`、`name`、`image_attachment_id`、`description`、`kind`（`physical`/`family_activity`/`virtual_decoration`）、`coin_price`、`stock NULL`、`requires_approval`、`status`（`draft`/`on_shelf`/`off_shelf`）、`version`、timestamps、deleted_at。
+`id`、`family_id`、`name`、`image_attachment_id`、`description`、`kind`（`physical`/`family_activity`/`virtual_decoration`/`screen_time`）、`coin_price`（实体）、`point_price`（虚拟/时间类）、`stock NULL`、`requires_approval`、`status`（`draft`/`on_shelf`/`off_shelf`）、`version`、timestamps、deleted_at。
 
 ### `reward_redemptions`
-`id`、`ulid`、`family_id`、`child_id`、`reward_id`、`reward_snapshot JSON`、`coin_price`、`status`（`requested`/`approved`/`rejected`/`cancelled`/`fulfilled`）、`coin_hold_id`、`coin_ledger_id`、`approval_request_id`、`idempotency_key UNIQUE`、timestamps。
+`id`、`ulid`、`family_id`、`child_id`、`reward_id`、`reward_snapshot JSON`、`coin_price`、`point_price`、`status`（`requested`/`approved`/`rejected`/`cancelled`/`fulfilled`）、`coin_hold_id`、`point_hold_id`、`coin_ledger_id`、`point_ledger_id`、`approval_request_id`、`idempotency_key UNIQUE`、timestamps。
 
 流程：申请 → `coin_holds(active)` → 批准：扣款 `coin_ledger` + hold `captured` / 拒绝：hold `released`。
 

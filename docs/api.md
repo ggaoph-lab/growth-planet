@@ -89,7 +89,7 @@
 |---|---|---|
 | 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`（ISO 1–7，weekly 必填）、`due_time`、`end_date`、`with_parent`；更新可带 `edit_scope=this_day|weekday_forward` + `scope_date`：`this_day` 只改当天 pending 快照不改模板，`weekday_forward` 改模板并只刷新 `scope_date` 起同一周几的 pending；无 `edit_scope` 时仍刷新全部 pending）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`；孩子提交后立即完成并发放奖励，不进入审核中心）、`/parent/task-instances?date=` | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，同一条 Edge 连接）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit|withdraw` 🔁 |
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
-| 账本 | `GET /parent/children/{id}/ledger?asset=xp|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus` 🔁🔐 | `GET /kid/wallet` |
+| 账本 | `GET /parent/children/{id}/ledger?asset=xp|point|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus`（`xp`/`coin`/`point`）🔁🔐 | `GET /kid/wallet`（`xp` 含 `level`/`to_next`/`progress`，另有 `points` 与 `coin`） |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |
 | 商城 | `GET/POST/PUT/DELETE /parent/rewards`（创建可带 `image` multipart；`POST/DELETE /parent/rewards/{id}/image`；`GET .../image`）、`GET /parent/redemptions` | `GET /kid/shop`、`GET /kid/shop/{id}/image`、`POST /kid/redemptions` 🔁、`POST /kid/redemptions/{ulid}/cancel` 🔁 |
 | 审核中心 | `GET /parent/approvals?status=PENDING`、`POST /parent/approvals/{id}/approve|reject|return` 🔁🔒、`GET /parent/approvals/{id}/events` | `GET /kid/requests`（我的申请状态） |

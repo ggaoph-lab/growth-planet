@@ -56,6 +56,7 @@ class HomeworkController
             'items.*.suggested_xp' => ['nullable', 'integer', 'min:0', 'max:100'],
             'xp_reward' => ['required', 'integer', 'min:0', 'max:100'],
             'coin_reward' => ['required', 'integer', 'min:0', 'max:50'],
+            'point_reward' => ['nullable', 'integer', 'min:0', 'max:100'],
             'requires_approval' => ['nullable', 'boolean'],
             'requires_self_check' => ['nullable', 'boolean'],
             'with_parent' => ['nullable', 'boolean'],

@@ -11,6 +11,8 @@ use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\RewardGrantStatus;
 use App\Modules\Ledger\Models\CoinAccount;
 use App\Modules\Ledger\Models\CoinLedgerEntry;
+use App\Modules\Ledger\Models\PointAccount;
+use App\Modules\Ledger\Models\PointLedgerEntry;
 use App\Modules\Ledger\Models\RewardGrant;
 use App\Modules\Ledger\Models\RewardPolicy;
 use App\Modules\Ledger\Models\XpAccount;
@@ -23,6 +25,7 @@ class RewardGrantService
         private readonly Clock $clock,
         private readonly XpLedgerService $xpLedger,
         private readonly CoinLedgerService $coinLedger,
+        private readonly PointLedgerService $pointLedger,
     ) {}
 
     public function grant(RewardIntent $intent): RewardGrant
@@ -44,15 +47,17 @@ class RewardGrantService
 
         $xp = $intent->xpAmount ?? $policy->xp_amount;
         $coin = $intent->coinAmount ?? $policy->coin_amount;
-        $capDetail = $this->applyCaps($intent, $policy, $xp, $coin);
+        $point = $intent->pointAmount ?? $policy->point_amount;
+        $capDetail = $this->applyCaps($intent, $policy, $xp, $coin, $point);
         $xp = $capDetail['xp'];
         $coin = $capDetail['coin'];
+        $point = $capDetail['point'];
 
         $status = RewardGrantStatus::Granted;
         if ($intent->approvalRequestId !== null && ! $intent->postImmediately) {
             $status = RewardGrantStatus::PendingApproval;
         }
-        if ($xp === 0 && $coin === 0) {
+        if ($xp === 0 && $coin === 0 && $point === 0) {
             $status = RewardGrantStatus::Capped;
         }
 
@@ -68,6 +73,7 @@ class RewardGrantService
                 'occurred_at' => $intent->occurredAt,
                 'xp_amount' => $xp,
                 'coin_amount' => $coin,
+                'point_amount' => $point,
                 'status' => $status,
                 'approval_request_id' => $intent->approvalRequestId,
                 'cap_detail' => $capDetail['detail'] ?: null,
@@ -109,13 +115,14 @@ class RewardGrantService
             occurredAt: $grant->occurred_at,
             xpAmount: $grant->xp_amount,
             coinAmount: $grant->coin_amount,
+            pointAmount: $grant->point_amount,
             approvalRequestId: $grant->approval_request_id,
             approvedBy: $approvedBy,
             postImmediately: true,
         );
 
         $this->postLedgers($grant, $intent, $businessDate);
-        $grant->status = $grant->xp_amount === 0 && $grant->coin_amount === 0
+        $grant->status = $grant->xp_amount === 0 && $grant->coin_amount === 0 && $grant->point_amount === 0
             ? RewardGrantStatus::Capped
             : RewardGrantStatus::Granted;
         $grant->save();
@@ -157,6 +164,13 @@ class RewardGrantService
             }
         }
 
+        if ($grant->point_ledger_id !== null) {
+            $entry = PointLedgerEntry::query()->whereKey($grant->point_ledger_id)->first();
+            if ($entry !== null && $entry->reversal_of_id === null) {
+                $this->pointLedger->reverse($entry, 'reversal:grant:'.$grant->id.':point', $operatorId);
+            }
+        }
+
         $suffix = ':reversed:'.$grant->id;
         if (! str_ends_with($grant->grant_key, $suffix)) {
             $grant->grant_key = mb_substr($grant->grant_key, 0, 128 - strlen($suffix)).$suffix;
@@ -168,14 +182,15 @@ class RewardGrantService
     }
 
     /**
-     * @return array{xp: int, coin: int, detail: array<string, mixed>}
+     * @return array{xp: int, coin: int, point: int, detail: array<string, mixed>}
      */
-    private function applyCaps(RewardIntent $intent, RewardPolicy $policy, int $xp, int $coin): array
+    private function applyCaps(RewardIntent $intent, RewardPolicy $policy, int $xp, int $coin, int $point): array
     {
         $detail = [];
         if ($policy->max_per_event !== null) {
             $coin = min($coin, $policy->max_per_event);
             $xp = min($xp, $policy->max_per_event);
+            $point = min($point, $policy->max_per_event);
         }
 
         $family = Family::query()->findOrFail($intent->familyId);
@@ -195,6 +210,19 @@ class RewardGrantService
                 $detail['daily_coin_cap'] = ['requested' => $coin, 'granted' => $remaining];
                 $coin = $remaining;
             }
+
+            $dayPoint = RewardGrant::query()
+                ->where('child_id', $intent->childId)
+                ->where('policy_code', $intent->policyCode)
+                ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
+                ->whereDate('occurred_at', '>=', $today)
+                ->whereDate('occurred_at', '<', $this->clock->today($family->timezone)->addDay()->toDateString())
+                ->sum('point_amount');
+            $pointRemaining = max(0, $policy->max_per_day - (int) $dayPoint);
+            if ($point > $pointRemaining) {
+                $detail['daily_point_cap'] = ['requested' => $point, 'granted' => $pointRemaining];
+                $point = $pointRemaining;
+            }
         }
 
         if ($policy->max_per_week !== null) {
@@ -208,6 +236,18 @@ class RewardGrantService
             if ($coin > $remaining) {
                 $detail['weekly_coin_cap'] = ['requested' => $coin, 'granted' => $remaining];
                 $coin = $remaining;
+            }
+
+            $weekPoint = RewardGrant::query()
+                ->where('child_id', $intent->childId)
+                ->where('policy_code', $intent->policyCode)
+                ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
+                ->where('occurred_at', '>=', $weekStart)
+                ->sum('point_amount');
+            $pointRemaining = max(0, $policy->max_per_week - (int) $weekPoint);
+            if ($point > $pointRemaining) {
+                $detail['weekly_point_cap'] = ['requested' => $point, 'granted' => $pointRemaining];
+                $point = $pointRemaining;
             }
         }
 
@@ -223,15 +263,16 @@ class RewardGrantService
                 $detail['max_per_subject'] = true;
                 $xp = 0;
                 $coin = 0;
+                $point = 0;
             }
         }
 
-        return ['xp' => $xp, 'coin' => $coin, 'detail' => $detail];
+        return ['xp' => $xp, 'coin' => $coin, 'point' => $point, 'detail' => $detail];
     }
 
     private function postLedgers(RewardGrant $grant, RewardIntent $intent, ?string $businessDate = null): void
     {
-        if ($grant->xp_ledger_id !== null || $grant->coin_ledger_id !== null) {
+        if ($grant->xp_ledger_id !== null || $grant->coin_ledger_id !== null || $grant->point_ledger_id !== null) {
             return;
         }
 
@@ -268,6 +309,22 @@ class RewardGrantService
                 $intent->approvedBy,
             );
             $grant->coin_ledger_id = $coinEntry->id;
+        }
+
+        if ($grant->point_amount > 0) {
+            $pointAccount = PointAccount::query()->where('child_id', $grant->child_id)->firstOrFail();
+            $pointEntry = $this->pointLedger->credit(
+                $pointAccount,
+                $grant->point_amount,
+                LedgerEntryType::Reward,
+                $grant->source_module,
+                $grant->source_type,
+                $grant->source_id,
+                'grant:'.$grant->id.':point',
+                $businessDate,
+                $intent->approvedBy,
+            );
+            $grant->point_ledger_id = $pointEntry->id;
         }
 
         $grant->save();

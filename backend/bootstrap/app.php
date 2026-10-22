@@ -9,6 +9,7 @@ use App\Modules\English\Console\DiagnoseEnglishAiCommand;
 use App\Modules\English\Console\PrepareEnglishDayCommand;
 use App\Modules\English\Console\PruneEnglishSpeakAttemptsCommand;
 use App\Modules\Identity\Console\CreateFamilyCommand;
+use App\Modules\Ledger\Console\GrantDailyPointsCommand;
 use App\Modules\Identity\Http\Middleware\EnsureRole;
 use App\Modules\Identity\Http\Middleware\RequireSudo;
 use Illuminate\Foundation\Application;
@@ -41,6 +42,7 @@ return Application::configure(basePath: dirname(__DIR__))
         DiagnoseEnglishAiCommand::class,
         PrepareEnglishDayCommand::class,
         PrepareEncyclopediaZhCommand::class,
+        GrantDailyPointsCommand::class,
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
         ApiExceptionRenderer::register($exceptions);

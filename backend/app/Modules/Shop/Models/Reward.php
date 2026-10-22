@@ -21,7 +21,21 @@ class Reward extends Model
             'kind' => RewardKind::class,
             'status' => RewardStatus::class,
             'requires_approval' => 'boolean',
+            'coin_price' => 'integer',
+            'point_price' => 'integer',
         ];
+    }
+
+    public function pricedInPoints(): bool
+    {
+        return (int) ($this->point_price ?? 0) > 0;
+    }
+
+    public function priceAmount(): int
+    {
+        return $this->pricedInPoints()
+            ? (int) ($this->point_price ?? 0)
+            : (int) ($this->coin_price ?? 0);
     }
 
     public function image(): BelongsTo

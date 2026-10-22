@@ -36,6 +36,9 @@ class SettingsRegistry
             'ai.qwen_model' => ['type' => 'string', 'default' => 'qwen-turbo', 'label' => '通义千问模型'],
             'ai.openai_api_key' => ['type' => 'secret', 'default' => '', 'label' => 'ChatGPT API Key'],
             'ai.openai_model' => ['type' => 'string', 'default' => 'gpt-4o-mini', 'label' => 'ChatGPT 模型'],
+
+            'points.daily_allowance' => ['type' => 'int', 'default' => 10, 'min' => 0, 'max' => 100, 'label' => '每日积分津贴'],
+            'xp.max_level' => ['type' => 'int', 'default' => 300, 'min' => 1, 'max' => 300, 'label' => '最高等级'],
         ];
     }
 

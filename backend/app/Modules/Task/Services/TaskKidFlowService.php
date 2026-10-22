@@ -272,6 +272,7 @@ class TaskKidFlowService
             occurredAt: $now,
             xpAmount: (int) ($snapshot['xp_reward'] ?? 0),
             coinAmount: (int) ($snapshot['coin_reward'] ?? 0),
+            pointAmount: (int) ($snapshot['point_reward'] ?? 0),
             postImmediately: true,
         ));
     }

@@ -29,7 +29,10 @@ class CreateChild
     {
         return DB::transaction(function () use ($familyId, $data, $actor) {
             $user = new User;
-            $user->pin_hash = isset($data['pin']) ? Hash::make($data['pin']) : null;
+            if (isset($data['pin'])) {
+                $user->pin_hash = Hash::make($data['pin']);
+                $user->pin_length = strlen($data['pin']);
+            }
             $user->save();
 
             $member = new FamilyMember(['display_name' => $data['nickname']]);

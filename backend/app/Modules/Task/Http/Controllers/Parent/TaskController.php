@@ -60,6 +60,7 @@ class TaskController
                 'estimated_minutes' => $data['estimated_minutes'] ?? null,
                 'xp_reward' => $data['xp_reward'] ?? 0,
                 'coin_reward' => $data['coin_reward'] ?? 0,
+                'point_reward' => $data['point_reward'] ?? 0,
                 'requires_approval' => false,
                 'requires_self_check' => $data['requires_self_check'] ?? false,
                 'with_parent' => $data['with_parent'] ?? false,
@@ -193,6 +194,7 @@ class TaskController
             'estimated_minutes' => ['nullable', 'integer', 'min:1'],
             'xp_reward' => ['nullable', 'integer', 'min:0'],
             'coin_reward' => ['nullable', 'integer', 'min:0'],
+            'point_reward' => ['nullable', 'integer', 'min:0'],
             'requires_approval' => ['nullable', 'boolean'],
             'requires_self_check' => ['nullable', 'boolean'],
             'with_parent' => ['nullable', 'boolean'],
@@ -218,6 +220,7 @@ class TaskController
             'subtasks.*.end_date' => ['nullable', 'date'],
             'subtasks.*.xp_reward' => ['nullable', 'integer', 'min:0'],
             'subtasks.*.coin_reward' => ['nullable', 'integer', 'min:0'],
+            'subtasks.*.point_reward' => ['nullable', 'integer', 'min:0'],
             'subtasks.*.with_parent' => ['nullable', 'boolean'],
             'subtasks.*.due_time' => ['nullable', 'date_format:H:i'],
             'subtasks.*.schedules' => ['nullable', 'array'],
@@ -406,6 +409,7 @@ class TaskController
             'end_date' => array_key_exists('end_date', $sub) ? $sub['end_date'] : $parent->end_date,
             'xp_reward' => $sub['xp_reward'] ?? $parent->xp_reward,
             'coin_reward' => $sub['coin_reward'] ?? $parent->coin_reward,
+            'point_reward' => $sub['point_reward'] ?? $parent->point_reward,
             'with_parent' => array_key_exists('with_parent', $sub)
                 ? (bool) $sub['with_parent']
                 : $parent->with_parent,
@@ -509,6 +513,9 @@ class TaskController
         }
         if (array_key_exists('coin_reward', $payload)) {
             $snapshot['coin_reward'] = (int) $payload['coin_reward'];
+        }
+        if (array_key_exists('point_reward', $payload)) {
+            $snapshot['point_reward'] = (int) $payload['point_reward'];
         }
         if (array_key_exists('with_parent', $payload)) {
             $snapshot['with_parent'] = (bool) $payload['with_parent'];

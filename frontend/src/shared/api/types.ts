@@ -123,6 +123,8 @@ export interface KidLoginProfile {
   avatar: string
   theme_color: string
   pin_required: boolean
+  /** Digit count when pin_required; used so the pad can auto-submit. */
+  pin_length: number | null
 }
 
 export interface Planet {
@@ -211,6 +213,7 @@ export interface ApprovalRequest {
     description?: string | null
     xp_reward?: number
     coin_reward?: number
+    point_reward?: number
     kind?: string | null
     coin_price?: number
   } | null
@@ -253,6 +256,7 @@ export interface ParentTask {
   end_date: string | null
   xp_reward: number
   coin_reward: number
+  point_reward: number
   requires_approval: boolean
   requires_self_check: boolean
   with_parent: boolean
@@ -282,6 +286,7 @@ export interface HomeworkParseResult {
   items: HomeworkItemPreview[]
   xp_reward: number
   coin_reward: number
+  point_reward?: number
   confidence: number
   notes: string | null
   source_text: string
@@ -306,6 +311,7 @@ export interface TaskInstance {
     description?: string | null
     xp_reward?: number
     coin_reward?: number
+    point_reward?: number
     due_time?: string | null
     with_parent?: boolean
     requires_self_check?: boolean
@@ -337,11 +343,13 @@ export interface ParentHabit {
   target_per_period: number
   xp_reward: number
   coin_reward: number
+  point_reward: number
   is_active: boolean
 }
 
-export type RewardKind = 'physical' | 'family_activity' | 'virtual_decoration'
+export type RewardKind = 'physical' | 'family_activity' | 'virtual_decoration' | 'screen_time'
 export type RewardStatus = 'draft' | 'on_shelf' | 'off_shelf'
+export type RewardCurrency = 'coin' | 'point'
 
 export interface Reward {
   id: number
@@ -349,7 +357,10 @@ export interface Reward {
   name: string
   description: string | null
   kind: RewardKind
+  currency: RewardCurrency
   coin_price: number
+  point_price: number
+  price: number
   stock: number | null
   requires_approval: boolean
   status: RewardStatus
@@ -368,7 +379,8 @@ export interface RewardRedemption {
   reward_id: number
   status: RedemptionStatus
   coin_price: number
-  reward_snapshot: { name?: string } & Record<string, unknown>
+  point_price?: number | null
+  reward_snapshot: { name?: string; currency?: RewardCurrency; price?: number } & Record<string, unknown>
   created_at: string
 }
 
@@ -389,7 +401,15 @@ export interface Wish {
 }
 
 export interface KidWallet {
-  xp: { balance: number; lifetime_earned: number }
+  xp: {
+    balance: number
+    lifetime_earned: number
+    level: number
+    max_level: number
+    to_next: number
+    progress: number
+  }
+  points: { balance: number; held: number; available: number; lifetime_earned: number }
   coin: { balance: number; held: number; available: number; lifetime_earned: number }
 }
 

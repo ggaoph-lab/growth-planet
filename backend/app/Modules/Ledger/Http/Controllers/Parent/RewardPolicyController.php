@@ -27,6 +27,7 @@ class RewardPolicyController
             'code' => ['required', 'string', 'max:64'],
             'xp_amount' => ['sometimes', 'integer', 'min:0'],
             'coin_amount' => ['sometimes', 'integer', 'min:0'],
+            'point_amount' => ['sometimes', 'integer', 'min:0'],
             'max_per_day' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['sometimes', 'boolean'],
         ]);

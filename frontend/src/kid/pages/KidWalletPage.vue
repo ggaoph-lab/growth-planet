@@ -38,7 +38,19 @@ onMounted(async () => {
         <div class="orb xp">
           <div class="label">{{ t('common.xpLabel') }}</div>
           <div class="num">{{ wallet.xp.balance }}</div>
-          <div class="sub">{{ t('common.lifetimeEarned', { n: wallet.xp.lifetime_earned }) }}</div>
+          <div class="sub">
+            {{ t('kid.levelLine', { level: wallet.xp.level }) }}
+            <template v-if="wallet.xp.to_next > 0"> · {{ t('kid.toNextXp', { n: wallet.xp.to_next }) }}</template>
+          </div>
+          <div class="bar" aria-hidden="true">
+            <span :style="{ width: `${Math.round((wallet.xp.progress || 0) * 100)}%` }" />
+          </div>
+          <div class="sub muted">{{ t('common.lifetimeEarned', { n: wallet.xp.lifetime_earned }) }}</div>
+        </div>
+        <div class="orb points">
+          <div class="label">{{ t('common.pointsLabel') }}</div>
+          <div class="num">{{ wallet.points.available }}</div>
+          <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.points.held }}</div>
         </div>
         <div class="orb coin">
           <div class="label">{{ t('common.growthCoin') }}</div>
@@ -94,9 +106,14 @@ onMounted(async () => {
 }
 .hero {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 14px;
   margin-bottom: 20px;
+}
+@media (min-width: 640px) {
+  .hero {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
 }
 .orb {
   border-radius: 20px;
@@ -105,6 +122,9 @@ onMounted(async () => {
 }
 .orb.xp {
   background: linear-gradient(160deg, #5b8def, #3d5fc4);
+}
+.orb.points {
+  background: linear-gradient(160deg, #6bcf8e, #3fa66a);
 }
 .orb.coin {
   background: linear-gradient(160deg, #f5c542, #e89b1f);
@@ -122,6 +142,24 @@ onMounted(async () => {
 .sub {
   font-size: 12px;
   opacity: 0.85;
+}
+.sub.muted {
+  margin-top: 6px;
+  opacity: 0.7;
+}
+.bar {
+  margin: 10px auto 0;
+  height: 8px;
+  max-width: 160px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: #fff;
+  border-radius: inherit;
 }
 .tip {
   text-align: center;

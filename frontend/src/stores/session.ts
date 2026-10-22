@@ -55,7 +55,7 @@ export const useSessionStore = defineStore('session', () => {
   async function loginKid(childId: number, pin: string | null): Promise<void> {
     me.value = await api.post<Me>('/auth/kid/login', { child_id: childId, pin })
     loaded.value = true
-    await ensureCsrfCookie(true)
+    // Login regenerates the session and already refreshes XSRF via Set-Cookie — don't add another round-trip.
   }
 
   async function logout(): Promise<void> {
