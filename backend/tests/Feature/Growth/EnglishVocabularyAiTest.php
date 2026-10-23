@@ -102,7 +102,8 @@ class EnglishVocabularyAiTest extends TestCase
             );
         }
         $this->markEnglishFairyHeard($child, '2026-10-14');
-        $plan = $service->plan($child);
+        $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
+        $plan = $coach->preparingDay(fn () => $service->plan($child));
         $this->assertTrue(collect($plan['items'])->contains(fn ($item) => ($item['text'] ?? '') === 'tiger'));
         $chatgpt = DB::table('english_ai_records')
             ->where('business_date', '2026-10-14')
@@ -132,7 +133,7 @@ class EnglishVocabularyAiTest extends TestCase
             );
         }
         $this->markEnglishFairyHeard($child, '2026-10-15');
-        $service->plan($child);
+        $coach->preparingDay(fn () => $service->plan($child));
 
         $qwen = DB::table('english_ai_records')
             ->where('business_date', '2026-10-15')
@@ -221,7 +222,9 @@ class EnglishVocabularyAiTest extends TestCase
             ]);
         });
 
-        $first = $service->plan($child);
+        $coach = app(\App\Modules\English\Services\EnglishAiCoach::class);
+        // AI probe fills belong to background preparation, not kid plan/answer taps.
+        $first = $coach->preparingDay(fn () => $service->plan($child));
         $firstSentences = collect($first['items'])
             ->filter(fn ($item) => ($item['kind'] ?? '') === 'sentence')
             ->pluck('text')
@@ -235,7 +238,7 @@ class EnglishVocabularyAiTest extends TestCase
             $service->answer($child, $card['key'], $answer);
         }
 
-        $second = $service->plan($child);
+        $second = $coach->preparingDay(fn () => $service->plan($child));
         $secondSentences = collect($second['items'])
             ->filter(fn ($item) => ($item['kind'] ?? '') === 'sentence')
             ->pluck('text')
@@ -249,5 +252,50 @@ class EnglishVocabularyAiTest extends TestCase
             'refill should surface AI sentences, not only ladder repeats',
         );
         $this->assertGreaterThanOrEqual(2, $probeCalls, 'refill should call AI again for new probe cards');
+    }
+
+    public function test_interactive_plan_does_not_call_ai_for_probe_refill(): void
+    {
+        config([
+            'services.openai.api_key' => 'sk-test',
+            'services.openai.base_url' => 'https://openai.test/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        app(Settings::class)->set('ai.provider', 'openai', $family->id);
+        $service = app(EnglishLearningService::class);
+        $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
+
+        for ($i = 0; $i < 10; $i++) {
+            DB::table('english_learning_progress')->insert([
+                'child_id' => $child->id,
+                'item_key' => 'word:ai-seed'.$i,
+                'stage' => 1,
+                'introduced_date' => '2026-10-13',
+                'due_date' => '2026-10-14',
+                'completed_date' => '2026-10-13',
+            ]);
+        }
+        $this->markEnglishFairyHeard($child, '2026-10-13');
+        DB::table('english_ai_records')->insert([
+            'child_id' => $child->id,
+            'purpose' => 'daily_word_pack',
+            'business_date' => '2026-10-13',
+            'profile_snapshot' => json_encode(['seed' => true], JSON_UNESCAPED_UNICODE),
+            'items' => json_encode([], JSON_UNESCAPED_UNICODE),
+            'status' => 'local',
+            'provider' => null,
+            'model' => null,
+            'created_at' => now(),
+        ]);
+
+        Http::fake([
+            'https://openai.test/*' => Http::response(['choices' => [['message' => ['content' => '{"items":[]}']]]]),
+        ]);
+
+        $plan = $service->plan($child);
+        $this->assertNotEmpty($plan['items']);
+        Http::assertNothingSent();
     }
 }

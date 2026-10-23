@@ -2638,6 +2638,12 @@ class EnglishVocabularyService
             return ['items' => [], 'provider' => null, 'model' => null];
         }
 
+        // Same rule as daily_word_pack: kid plan/answer must not wait on the LLM.
+        // Nightly/manual preparation owns AI probes; interactive refills use the local ladder.
+        if (! $this->coach->isPreparingDay()) {
+            return ['items' => [], 'provider' => null, 'model' => null];
+        }
+
         $system = $this->probeAiSystemPrompt($band, $mode);
         $reply = $this->coach->chatJson($child, [
             ['role' => 'system', 'content' => $system],

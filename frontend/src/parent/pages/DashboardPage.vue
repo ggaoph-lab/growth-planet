@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { warmGet } from '@/shared/api/warmGet'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { ApprovalRequest, Dashboard } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
 import { auditLabel } from '@/shared/auditLabels'
@@ -10,9 +10,9 @@ import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
 const session = useSessionStore()
-const data = ref<Dashboard | null>(null)
-const pendingApprovals = ref(0)
-const loading = ref(true)
+const data = ref<Dashboard | null>(peekWarmGet<Dashboard>('/parent/dashboard') ?? null)
+const pendingApprovals = ref(peekWarmGet<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' })?.length ?? 0)
+const loading = ref(data.value == null)
 
 function childStatusLabel(status: string): string {
   if (status === 'paused') return t('common.statusListedPaused')

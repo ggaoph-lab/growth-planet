@@ -44,7 +44,9 @@ async function login(pin: string | null): Promise<void> {
   message.value = ''
   try {
     prefetchKidHome()
+    await ensureCsrfCookie()
     await session.loginKid(selected.value.id, pin)
+    // /kid/home is already warming inside loginKid; navigate as soon as auth succeeds.
     await router.replace({ name: 'kid-home' })
   } catch (e) {
     message.value = e instanceof ApiError ? e.message : t('auth.loginFailed')

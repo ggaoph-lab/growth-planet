@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { api, ApiError } from '@/shared/api/client'
 import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import { chinesePinyin, chinesePinyinUnits, loadChinesePinyin, onChinesePinyinReady } from '@/shared/chinesePinyin'
-import { canSpeak, isSpeakUnlocked, speakPhrase, stopSpeaking, unlockSpeak, warmPhrases } from '@/shared/speak'
+import { canSpeak, isSpeakUnlocked, speakPhrase, stopSpeaking, unlockSpeak, warmPhrases, warmPhrasesNow } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 type Item = {
@@ -499,8 +499,10 @@ function linePinyinUnits(text: string) {
   void pinyinTick.value
   return chinesePinyinUnits(text)
 }
-/** Prefetch neural audio for the whole daily queue after the first card is interactive. */
-function warmPlanAudio(items: Item[]) {
+/** Prefetch the visible card immediately; warm the rest of the daily queue in the background. */
+function warmPlanAudio(items: Item[], priority?: Item | null) {
+  if (priority?.text) warmPhrasesNow([priority.text], 'en-US')
+  if (priority?.meaning && !priority.challenge) warmPhrasesNow([priority.meaning], 'zh-CN')
   const run = () => {
     const english: string[] = []
     const chinese: string[] = []
@@ -521,9 +523,9 @@ function warmPlanAudio(items: Item[]) {
     if (chinese.length) warmPhrases(chinese, 'zh-CN')
   }
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(run, { timeout: 1500 })
+    window.requestIdleCallback(run, { timeout: 800 })
   } else {
-    window.setTimeout(run, 300)
+    window.setTimeout(run, 100)
   }
 }
 /** True when the current card should auto-read but media may still be locked (Chrome / iPad). */
@@ -587,10 +589,10 @@ function choose(item?: Item) {
     ;[choices.value[i], choices.value[j]] = [choices.value[j]!, choices.value[i]!]
   }
   audioMessage.value = ''
-  if (item?.text) warmPhrases([item.text], 'en-US')
-  if (item?.meaning && !item.challenge) warmPhrases([item.meaning], 'zh-CN')
+  if (item?.text) warmPhrasesNow([item.text], 'en-US')
+  if (item?.meaning && !item.challenge) warmPhrasesNow([item.meaning], 'zh-CN')
   const chineseChoices = choices.value.filter(isChineseText)
-  if (chineseChoices.length) warmPhrases(chineseChoices, 'zh-CN')
+  if (chineseChoices.length) warmPhrasesNow(chineseChoices, 'zh-CN')
   if (!item || !audioSupported) return
   scheduleAutoRead(item)
 }
@@ -599,8 +601,8 @@ async function load(force = false) {
   error.value = ''
   try {
     plan.value = await warmGet<Plan>('/kid/english/learning', undefined, { force })
-    warmPlanAudio(plan.value.items)
     if (!current.value || force) choose(plan.value.items[0])
+    warmPlanAudio(plan.value.items, current.value)
   } catch (e) { error.value = e instanceof ApiError ? e.message : label('学习任务加载失败，请重试。', 'Could not load your mission. Please retry.') }
   finally { busy.value = false }
 }

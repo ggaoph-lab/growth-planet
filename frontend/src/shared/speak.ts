@@ -162,13 +162,17 @@ function audioKey(text: string, lang: string): string {
 
 const WARM_CHUNK = 8
 const pendingWarm = new Set<string>()
-const warmQueue: Array<{ texts: string[]; lang: string }> = []
+/** Queued/in-flight warm work so speak can await it instead of racing /kid/tts. */
+const warmInFlight = new Map<string, Promise<void>>()
+type WarmJob = { texts: string[]; lang: string; settle: () => void }
+const warmQueue: WarmJob[] = []
 let warming = 0
 
 function drainWarmQueue(): void {
   while (warming < 2 && warmQueue.length) {
     const job = warmQueue.shift()!
     warming += 1
+    const keys = job.texts.map((text) => audioKey(text, job.lang))
     void api.post<{ items: Array<{ text: string; audio_base64: string | null; mime: string | null }> }>('/kid/tts/warm', {
       texts: job.texts, lang: job.lang,
     }).then((data) => {
@@ -178,24 +182,54 @@ function drainWarmQueue(): void {
     }).catch(() => {
       /* A tap can still request audio if background warming fails. */
     }).finally(() => {
-      for (const text of job.texts) pendingWarm.delete(audioKey(text, job.lang))
+      for (const key of keys) {
+        pendingWarm.delete(key)
+        warmInFlight.delete(key)
+      }
+      job.settle()
       warming -= 1
       drainWarmQueue()
     })
   }
 }
 
-/** Deduplicate queued/in-flight lines and leave room for interactive playback requests. */
-export function warmPhrases(phrases: string[], lang = 'zh-CN'): void {
+function enqueueWarm(phrases: string[], lang: string, priority: boolean): void {
   const texts = [...new Set(phrases.map((phrase) => phrase.trim()).filter(Boolean))].filter(
     (phrase) => !preparedAudio.has(audioKey(phrase, lang)) && !pendingWarm.has(audioKey(phrase, lang)),
   )
+  // Priority chunks should stay in call order at the front of the queue.
+  const chunks: string[][] = []
   for (let i = 0; i < texts.length; i += WARM_CHUNK) {
-    const chunk = texts.slice(i, i + WARM_CHUNK)
-    for (const text of chunk) pendingWarm.add(audioKey(text, lang))
-    warmQueue.push({ texts: chunk, lang })
+    chunks.push(texts.slice(i, i + WARM_CHUNK))
+  }
+  if (priority) chunks.reverse()
+  for (const chunk of chunks) {
+    let settle!: () => void
+    const done = new Promise<void>((resolve) => { settle = resolve })
+    for (const text of chunk) {
+      const key = audioKey(text, lang)
+      pendingWarm.add(key)
+      warmInFlight.set(key, done)
+    }
+    if (priority) warmQueue.unshift({ texts: chunk, lang, settle })
+    else warmQueue.push({ texts: chunk, lang, settle })
   }
   drainWarmQueue()
+}
+
+/** Deduplicate queued/in-flight lines and leave room for interactive playback requests. */
+export function warmPhrases(phrases: string[], lang = 'zh-CN'): void {
+  enqueueWarm(phrases, lang, false)
+}
+
+/** Prefetch the card the child is looking at first (ahead of the rest of the daily queue). */
+export function warmPhrasesNow(phrases: string[], lang = 'zh-CN'): void {
+  enqueueWarm(phrases, lang, true)
+}
+
+async function awaitWarmIfPending(text: string, lang: string): Promise<void> {
+  const pending = warmInFlight.get(audioKey(text, lang))
+  if (pending) await pending
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
@@ -357,6 +391,12 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
 
   try {
     let ready = preparedAudio.get(audioKey(text, apiLang))
+    if (!ready) {
+      // Reuse an in-flight warm instead of opening a second synthesize (lock wait).
+      await awaitWarmIfPending(text, apiLang)
+      if (epoch !== speakEpoch) return false
+      ready = preparedAudio.get(audioKey(text, apiLang))
+    }
     if (!ready) {
       const result = await api.post<{
         available: boolean; audio_base64: string | null; mime: string | null; provider: string | null

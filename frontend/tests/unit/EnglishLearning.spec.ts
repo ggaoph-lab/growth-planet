@@ -4,7 +4,7 @@ import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
 import { clearWarmGets } from '@/shared/api/warmGet'
-import { isSpeakUnlocked, unlockSpeak, speakPhrase, warmPhrases } from '@/shared/speak'
+import { isSpeakUnlocked, unlockSpeak, speakPhrase, warmPhrases, warmPhrasesNow } from '@/shared/speak'
 
 function answerButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAll('.answers .answer').find(button => button.find('.answer-main').text() === label)
@@ -19,6 +19,7 @@ vi.mock('@/shared/speak', () => ({
   speakPhrase: vi.fn().mockResolvedValue(true),
   stopSpeaking: vi.fn(),
   warmPhrases: vi.fn(),
+  warmPhrasesNow: vi.fn(),
 }))
 const card = { key: 'apple', theme: '水果野餐', kind: 'word', text: 'apple', meaning: '苹果', emoji: '🍎', ipa: '/ˈæpl/', pos: 'n.', options: ['苹果', '香蕉', '水'], review: false, stage: 0 }
 const plan = {
@@ -350,6 +351,7 @@ describe('English learning', () => {
     vi.useFakeTimers()
     const wrapper = mount(EnglishLearning)
     await flushPromises()
+    expect(warmPhrasesNow).toHaveBeenCalledWith(['apple'], 'en-US')
     await vi.advanceTimersByTimeAsync(1600)
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['apple', 'banana', 'water', 'milk', 'juice']), 'en-US')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['苹果', '香蕉', '水']), 'zh-CN')

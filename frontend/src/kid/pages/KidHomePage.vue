@@ -76,7 +76,8 @@ function open(planet: Planet): void {
 <template>
   <main class="home">
     <p v-if="error" class="error">{{ error }}</p>
-    <template v-if="home">
+    <p v-else-if="!home" class="loading" aria-live="polite">{{ t('common.loading') }}</p>
+    <template v-else>
       <section class="greet">
         <h1>{{ t('kid.hello', { name: home.profile.nickname }) }}</h1>
         <p>{{ t('kid.ageGrade', { age: home.profile.age, grade: home.profile.grade }) }}</p>
@@ -135,9 +136,11 @@ function open(planet: Planet): void {
     grid-template-columns: repeat(4, 1fr);
   }
 }
-.error {
+.error,
+.loading {
   text-align: center;
   padding: 40px 0;
+  opacity: 0.85;
 }
 .toast {
   position: fixed;

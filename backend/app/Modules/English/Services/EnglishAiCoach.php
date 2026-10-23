@@ -359,8 +359,13 @@ class EnglishAiCoach
         $suffix = $round <= 1 ? $date : $date.'-'.$round;
         $cards = [];
         foreach (['grammar', 'story'] as $kind) {
-            $built = $this->generateChallengeDraft($child, $kind, $snapshot + ['band' => $band, 'path' => 'rich']);
-            $payload = $built['payload'];
+            // Interactive plan/answer uses local templates; preparation may call the LLM.
+            if ($this->preparingDay) {
+                $built = $this->generateChallengeDraft($child, $kind, $snapshot + ['band' => $band, 'path' => 'rich']);
+                $payload = $built['payload'];
+            } else {
+                $payload = $this->localChallenge($kind, $band);
+            }
             $cards[] = [
                 ...$payload,
                 'key' => $kind.':rich-'.$suffix,
@@ -462,35 +467,38 @@ class EnglishAiCoach
         $provider = null;
         $model = null;
         $ordered = null;
-        $reply = $this->chatJson($child, [
-            [
-                'role' => 'system',
-                'content' => 'You reorder a young child\'s English practice cards. Reply JSON only: {"order":["key1","key2"]}. Use every key exactly once. Prefer missed_words related cards earlier. No personal data.',
-            ],
-            [
-                'role' => 'user',
-                'content' => json_encode([
-                    'profile' => $snapshot,
-                    'keys' => $keys,
-                    'cards' => array_map(fn ($item) => [
-                        'key' => $item['key'],
-                        'text' => $item['text'] ?? '',
-                        'kind' => $item['kind'] ?? '',
-                        'review' => (bool) ($item['review'] ?? false),
-                        'probe' => (bool) ($item['probe'] ?? false),
-                        'challenge' => (bool) ($item['challenge'] ?? false),
-                    ], $candidates),
-                ], JSON_UNESCAPED_UNICODE),
-            ],
-        ]);
+        // Kid plan/answer must stay snappy; nightly preparation owns AI reorder.
+        if ($this->preparingDay) {
+            $reply = $this->chatJson($child, [
+                [
+                    'role' => 'system',
+                    'content' => 'You reorder a young child\'s English practice cards. Reply JSON only: {"order":["key1","key2"]}. Use every key exactly once. Prefer missed_words related cards earlier. No personal data.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => json_encode([
+                        'profile' => $snapshot,
+                        'keys' => $keys,
+                        'cards' => array_map(fn ($item) => [
+                            'key' => $item['key'],
+                            'text' => $item['text'] ?? '',
+                            'kind' => $item['kind'] ?? '',
+                            'review' => (bool) ($item['review'] ?? false),
+                            'probe' => (bool) ($item['probe'] ?? false),
+                            'challenge' => (bool) ($item['challenge'] ?? false),
+                        ], $candidates),
+                    ], JSON_UNESCAPED_UNICODE),
+                ],
+            ]);
 
-        if ($reply !== null) {
-            $provider = $reply['provider'];
-            $model = $reply['model'];
-            $decoded = $this->decodeJson($reply['content']);
-            $ordered = is_array($decoded['order'] ?? null)
-                ? $this->gate->reorderKeys($keys, $decoded['order'])
-                : null;
+            if ($reply !== null) {
+                $provider = $reply['provider'];
+                $model = $reply['model'];
+                $decoded = $this->decodeJson($reply['content']);
+                $ordered = is_array($decoded['order'] ?? null)
+                    ? $this->gate->reorderKeys($keys, $decoded['order'])
+                    : null;
+            }
         }
 
         $status = $ordered === null ? 'local' : 'ai';
@@ -547,39 +555,43 @@ class EnglishAiCoach
         $provider = null;
         $model = null;
         $fromAi = [];
-        $reply = $this->chatJson($child, [
-            [
-                'role' => 'system',
-                'content' => 'You write one short Simplified Chinese coaching tip per card for a young child who missed it. Reply JSON only: {"tips":[{"key":"...","tip":"..."}]} . Tip max 40 Chinese characters. Include a tiny English example when helpful. No personal data.',
-            ],
-            [
-                'role' => 'user',
-                'content' => json_encode([
-                    'profile' => $snapshot,
-                    'items' => array_map(fn ($item) => [
-                        'key' => $item['key'],
-                        'text' => $item['text'] ?? '',
-                        'meaning' => $item['meaning'] ?? ($item['question'] ?? ''),
-                    ], $missing),
-                ], JSON_UNESCAPED_UNICODE),
-            ],
-        ]);
+        $reply = null;
+        // Kid plan/answer must not wait on tips LLM; preparation prebuilds coach_tips.
+        if ($this->preparingDay) {
+            $reply = $this->chatJson($child, [
+                [
+                    'role' => 'system',
+                    'content' => 'You write one short Simplified Chinese coaching tip per card for a young child who missed it. Reply JSON only: {"tips":[{"key":"...","tip":"..."}]} . Tip max 40 Chinese characters. Include a tiny English example when helpful. No personal data.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => json_encode([
+                        'profile' => $snapshot,
+                        'items' => array_map(fn ($item) => [
+                            'key' => $item['key'],
+                            'text' => $item['text'] ?? '',
+                            'meaning' => $item['meaning'] ?? ($item['question'] ?? ''),
+                        ], $missing),
+                    ], JSON_UNESCAPED_UNICODE),
+                ],
+            ]);
 
-        if ($reply !== null) {
-            $provider = $reply['provider'];
-            $model = $reply['model'];
-            $decoded = $this->decodeJson($reply['content']);
-            foreach ($decoded['tips'] ?? [] as $row) {
-                if (! is_array($row)) {
-                    continue;
+            if ($reply !== null) {
+                $provider = $reply['provider'];
+                $model = $reply['model'];
+                $decoded = $this->decodeJson($reply['content']);
+                foreach ($decoded['tips'] ?? [] as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $key = (string) ($row['key'] ?? '');
+                    $tip = trim((string) ($row['tip'] ?? ''));
+                    if ($key === '' || $tip === '' || mb_strlen($tip) > 80) {
+                        continue;
+                    }
+                    $fromAi[] = ['key' => $key, 'tip' => $tip];
+                    $map[$key] = $tip;
                 }
-                $key = (string) ($row['key'] ?? '');
-                $tip = trim((string) ($row['tip'] ?? ''));
-                if ($key === '' || $tip === '' || mb_strlen($tip) > 80) {
-                    continue;
-                }
-                $fromAi[] = ['key' => $key, 'tip' => $tip];
-                $map[$key] = $tip;
             }
         }
 
@@ -617,6 +629,21 @@ class EnglishAiCoach
         }
 
         $fallback = $this->fallbackTip($text, $meaning);
+        // Wrong-answer taps must not block on the LLM (often ~5s+). Use prepared tips or local copy.
+        if (! $this->preparingDay) {
+            $items = is_array($tips) ? $tips : [];
+            $items[] = ['key' => $key, 'tip' => $fallback];
+            if ($record === null) {
+                $this->storeRecord($child, 'coach_tips', $date, ['on_demand' => true], $items, 'local', $this->selectedProvider($child), null);
+            } else {
+                DB::table('english_ai_records')->where('id', $record->id)->update([
+                    'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
+                ]);
+            }
+
+            return $fallback;
+        }
+
         $reply = $this->chatJson($child, [
             [
                 'role' => 'system',

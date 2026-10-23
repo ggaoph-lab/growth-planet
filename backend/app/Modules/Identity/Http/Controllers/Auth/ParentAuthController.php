@@ -80,16 +80,27 @@ class ParentAuthController
         $user->failed_login_count = 0;
         $user->locked_until = null;
         $user->last_login_at = $this->clock->now();
-        // Rehash when BCRYPT_ROUNDS drops (e.g. NAS tuning) so later logins stay cheap.
-        if (Hash::needsRehash((string) $user->password)) {
-            $user->password = $data['password'];
-        }
         $user->save();
 
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
 
         $this->audit->log('auth.login', $member->family_id, $user, actor: $user);
+
+        // Rehash after the response so a cost-12 → cost-8 upgrade does not add another
+        // full bcrypt to the login wait (NAS CPUs feel that as an extra second).
+        if (Hash::needsRehash((string) $user->password)) {
+            $userId = (int) $user->id;
+            $plain = (string) $data['password'];
+            app()->terminating(function () use ($userId, $plain): void {
+                $fresh = User::query()->find($userId);
+                if ($fresh === null || ! Hash::needsRehash((string) $fresh->password)) {
+                    return;
+                }
+                $fresh->password = $plain;
+                $fresh->save();
+            });
+        }
 
         return response()->json(['data' => $this->me->present($user, $request->session())]);
     }

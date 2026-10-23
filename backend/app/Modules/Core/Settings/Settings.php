@@ -9,26 +9,55 @@ class Settings
 {
     public function get(string $key, ?int $familyId = null): mixed
     {
-        $def = SettingsRegistry::definition($key);
+        return $this->getMany([$key], $familyId)[$key];
+    }
+
+    /**
+     * Resolve many keys in one query (family override > system override > default).
+     *
+     * @param  list<string>  $keys
+     * @return array<string, mixed>
+     */
+    public function getMany(array $keys, ?int $familyId = null): array
+    {
+        $keys = array_values(array_unique($keys));
+        $out = [];
+        if ($keys === []) {
+            return $out;
+        }
 
         $rows = DB::table('system_settings')
-            ->where('key', $key)
+            ->whereIn('key', $keys)
             ->where(fn ($q) => $q->whereNull('family_id')->when($familyId, fn ($q) => $q->orWhere('family_id', $familyId)))
-            ->get(['family_id', 'value']);
+            ->get(['key', 'family_id', 'value'])
+            ->groupBy('key');
 
-        $row = ($familyId !== null ? $rows->firstWhere('family_id', $familyId) : null)
-            ?? $rows->firstWhere('family_id', null);
+        foreach ($keys as $key) {
+            $def = SettingsRegistry::definition($key);
+            $keyRows = $rows->get($key);
+            $row = null;
+            if ($keyRows !== null) {
+                $row = ($familyId !== null ? $keyRows->firstWhere('family_id', $familyId) : null)
+                    ?? $keyRows->firstWhere('family_id', null);
+            }
 
-        if ($row === null) {
-            return $def['default'];
+            if ($row === null) {
+                $out[$key] = $def['default'];
+
+                continue;
+            }
+
+            $decoded = json_decode($row->value, true);
+            if ($def['type'] === 'secret') {
+                $out[$key] = $this->decryptSecret(is_string($decoded) ? $decoded : '');
+
+                continue;
+            }
+
+            $out[$key] = SettingsRegistry::cast($key, $decoded);
         }
 
-        $decoded = json_decode($row->value, true);
-        if ($def['type'] === 'secret') {
-            return $this->decryptSecret(is_string($decoded) ? $decoded : '');
-        }
-
-        return SettingsRegistry::cast($key, $decoded);
+        return $out;
     }
 
     public function set(string $key, mixed $value, ?int $familyId = null, ?int $updatedBy = null): void

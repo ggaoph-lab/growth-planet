@@ -35,9 +35,11 @@ async function submit(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
+    // CSRF + shell chunks in parallel with the password verify round-trip.
     prefetchParentShell()
+    await ensureCsrfCookie()
     await session.loginParent(form.login, form.password)
-    // Overlap destination data with the route chunk resolve.
+    // Warm destination data while the router resolves already-prefetched chunks.
     void warmGet<Dashboard>('/parent/dashboard')
     void warmGet<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' })
     await router.replace({ name: 'parent-dashboard' })
@@ -63,7 +65,14 @@ async function submit(): Promise<void> {
             <el-input v-model="form.login" size="large" autocomplete="username" autocapitalize="off" />
           </el-form-item>
           <el-form-item :label="t('auth.password')" :error="error">
-            <el-input v-model="form.password" size="large" type="password" show-password autocomplete="current-password" />
+            <el-input
+              v-model="form.password"
+              size="large"
+              type="password"
+              show-password
+              autocomplete="current-password"
+              @focus="prefetchParentShell"
+            />
           </el-form-item>
           <el-button type="primary" size="large" native-type="submit" class="submit" :loading="submitting">{{ t('auth.login') }}</el-button>
         </el-form>

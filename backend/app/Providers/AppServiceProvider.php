@@ -21,6 +21,8 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(Clock::class);
         $this->app->singleton(ApprovalHandlerRegistry::class);
+        // preparingDay() is process-wide; all English services must share one coach instance.
+        $this->app->singleton(\App\Modules\English\Services\EnglishAiCoach::class);
         $this->app->scoped(CurrentContext::class);
     }
 

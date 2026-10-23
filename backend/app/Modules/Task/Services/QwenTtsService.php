@@ -50,10 +50,20 @@ class QwenTtsService
         }
 
         $lock = Cache::lock($cacheKey.':lock', 25);
-        try {
-            $lock->block(12);
-        } catch (LockTimeoutException) {
-            return $this->readCache($cacheKey);
+        // Prefer waiting briefly for a sibling warm/speak over blocking kids for ~12s.
+        if (! $lock->get()) {
+            for ($i = 0; $i < 10; $i++) {
+                usleep(200_000);
+                $cached = $this->readCache($cacheKey);
+                if ($cached !== null) {
+                    return $cached;
+                }
+            }
+            try {
+                $lock->block(2);
+            } catch (LockTimeoutException) {
+                return $this->readCache($cacheKey);
+            }
         }
 
         try {
@@ -63,6 +73,7 @@ class QwenTtsService
             }
 
             $result = null;
+            // Edge first for interactive latency; Gemini only when explicitly preferred.
             if ($preferGemini) {
                 $result = $this->synthesizeGemini($text, $geminiKey, $lang);
             }

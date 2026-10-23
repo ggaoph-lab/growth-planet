@@ -91,6 +91,39 @@ class EnglishLabCoachTest extends TestCase
         ]);
     }
 
+    public function test_wrong_answer_uses_local_tip_without_llm_wait(): void
+    {
+        config([
+            'services.openai.api_key' => 'sk-test',
+            'services.openai.base_url' => 'https://openai.test/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        app(\App\Modules\Core\Settings\Settings::class)->set('ai.provider', 'openai', $family->id);
+        \Illuminate\Support\Facades\Http::fake([
+            'https://openai.test/*' => function () {
+                usleep(200_000);
+
+                return \Illuminate\Support\Facades\Http::response([
+                    'choices' => [['message' => ['content' => '{"tip":"来自模型的慢提示"}']]],
+                ]);
+            },
+        ]);
+
+        $service = app(EnglishLearningService::class);
+        $card = $service->plan($child)['items'][0];
+        $wrong = collect($card['options'])->first(fn ($option) => $option !== $card['meaning']);
+        $started = microtime(true);
+        $result = $service->answer($child, $card['key'], (string) $wrong);
+        $elapsedMs = (microtime(true) - $started) * 1000;
+
+        $this->assertFalse($result['correct']);
+        $this->assertStringContainsString((string) $card['text'], (string) $result['coach_tip']);
+        $this->assertLessThan(500, $elapsedMs, 'kid answer must not wait on coach LLM');
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
     public function test_local_ai_record_retries_after_provider_switch(): void
     {
         ['family' => $family] = $this->makeFamily();

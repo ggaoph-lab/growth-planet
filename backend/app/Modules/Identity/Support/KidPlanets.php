@@ -39,7 +39,17 @@ class KidPlanets
 
     public static function forFamily(int $familyId): array
     {
-        return array_values(array_filter(self::all(), fn ($planet) => self::enabled($planet['key'], $familyId)));
+        $all = self::all();
+        // One settings round-trip — kid home used to pay ~12 sequential queries here.
+        $flags = app(Settings::class)->getMany(
+            array_map(fn (array $planet) => 'planets.'.$planet['key'], $all),
+            $familyId,
+        );
+
+        return array_values(array_filter(
+            $all,
+            fn (array $planet) => (bool) ($flags['planets.'.$planet['key']] ?? true),
+        ));
     }
 
     /** Shared by the child API guard; TTS stays available across modules. */
