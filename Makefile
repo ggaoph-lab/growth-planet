@@ -1,5 +1,6 @@
 COMPOSE      := docker compose
 COMPOSE_PROD := docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod
+COMPOSE_PROD_BUILD := $(COMPOSE_PROD) -f compose.build.yaml
 # Local preview: prod stack + bind-mount host frontend/dist so 8088 picks up rebuilds.
 COMPOSE_PREVIEW := $(COMPOSE_PROD) -f compose.preview.yaml
 APP          := $(COMPOSE) exec app
@@ -8,8 +9,8 @@ PROD_APP     := $(COMPOSE_PROD) exec app
 
 .PHONY: help init up down build ps logs shell composer artisan key migrate fresh seed-demo \
         test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev preview family \
-        prod-init prod-check prod-build prod-up prod-down prod-ps prod-logs prod-migrate prod-artisan \
-        prod-preflight prod-family prod-backup
+        prod-init prod-check prod-pull prod-build prod-build-host-frontend prod-up prod-down prod-ps prod-logs \
+        prod-migrate prod-artisan prod-preflight prod-family prod-backup
 
 help:
 	@echo "Development"
@@ -23,10 +24,11 @@ help:
 	@echo "  make preview         构建前端并把 dist 挂到 nginx（预览固定 http://localhost:8088）"
 	@echo "  make frontend-dev    监听前端改动并写入 dist（需先 make preview）"
 	@echo ""
-	@echo "Production (Oracle Cloud ARM / compose.prod.yaml)"
+	@echo "Production (GHCR pull / compose.prod.yaml)"
 	@echo "  make prod-init       生成 deploy/compose/.env.prod"
 	@echo "  make prod-check      主机兼容性检查"
-	@echo "  make prod-build      构建生产镜像（php + nginx/前端）"
+	@echo "  make prod-pull       拉取 GHCR 预构建镜像"
+	@echo "  make prod-build      本地构建生产镜像（调试；日常请用 CI + prod-pull）"
 	@echo "  make prod-up/down    启动 / 停止生产容器"
 	@echo "  make prod-migrate    执行 migrate --force"
 	@echo "  make prod-preflight  生产配置预检"
@@ -115,17 +117,20 @@ prod-init:
 prod-check:
 	bash deploy/scripts/check-host.sh
 
+prod-pull:
+	$(COMPOSE_PROD) pull app nginx
+
 prod-build:
 	mkdir -p deploy/certs
-	$(COMPOSE_PROD) build
+	$(COMPOSE_PROD_BUILD) build
 
 # If Docker Hub cannot pull node:*, build the SPA on the host then:
 #   make frontend-install frontend-build
 #   make prod-build-host-frontend
 prod-build-host-frontend:
 	mkdir -p deploy/certs
-	$(COMPOSE_PROD) build app
-	$(COMPOSE_PROD) build --build-arg FRONTEND_DIST=host nginx
+	$(COMPOSE_PROD_BUILD) build app
+	FRONTEND_DIST=host $(COMPOSE_PROD_BUILD) build nginx
 
 prod-up:
 	mkdir -p deploy/certs backups

@@ -1,0 +1,36 @@
+# Optional overlay: build images locally instead of pulling from GHCR.
+# Usage:
+#   docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod \
+#     -f compose.build.yaml build
+#   make prod-build
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/docker/php/Dockerfile
+      target: prod
+      args:
+        PHP_BASE: ${PHP_BASE:-php:8.4-fpm-bookworm}
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/docker/php/Dockerfile
+      target: prod
+      args:
+        PHP_BASE: ${PHP_BASE:-php:8.4-fpm-bookworm}
+  scheduler:
+    build:
+      context: .
+      dockerfile: deploy/docker/php/Dockerfile
+      target: prod
+      args:
+        PHP_BASE: ${PHP_BASE:-php:8.4-fpm-bookworm}
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/docker/nginx/Dockerfile
+      target: prod
+      args:
+        NODE_BASE: ${NODE_BASE:-node:22-bookworm}
+        NGINX_BASE: ${NGINX_BASE:-nginx:1.27-alpine}
+        FRONTEND_DIST: ${FRONTEND_DIST:-docker}

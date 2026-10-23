@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Update Growth Planet on Synology from GitHub main.
-# Safe to run on the NAS host (or via SSH) from /volume1/docker/growth-planet.
+# Update Growth Planet on Synology (or any Docker host) from GitHub + GHCR.
+#
+# Default path (fast): sync compose/scripts → docker compose pull → up → migrate.
+# Fallback: LOCAL_BUILD=1 builds images on the NAS (slow; avoid unless offline).
+#
+# Safe to run from /volume1/docker/growth-planet (SSH or Task Scheduler).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -10,6 +14,8 @@ REPO_URL="${REPO_URL:-https://github.com/ggaoph-lab/growth-planet}"
 BRANCH="${BRANCH:-main}"
 COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
 ENV_FILE="${ENV_FILE:-deploy/compose/.env.prod}"
+# Set LOCAL_BUILD=1 to build on the NAS instead of pulling GHCR images.
+LOCAL_BUILD="${LOCAL_BUILD:-0}"
 KEEP_PATHS=(
   "deploy/compose/.env.prod"
   "deploy/compose/.env.oracle.original"
@@ -93,27 +99,49 @@ new_commit="$(curl -fsSL "https://api.github.com/repos/ggaoph-lab/growth-planet/
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')"
 printf '%s\n' "$new_commit" >"$ROOT/DEPLOYED-COMMIT"
 
+compose() {
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+}
+
 if [[ "$DOCKER_OK" -eq 1 ]]; then
-  echo "Building and restarting containers ..."
   if [[ -x "$ROOT/deploy/scripts/nas-backup.sh" || -x "$ROOT/deploy/scripts/backup.sh" ]]; then
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm --no-deps backup \
-      true 2>/dev/null || true
+    compose run --rm --no-deps backup true 2>/dev/null || true
   fi
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build app nginx
-  # Explicitly bring up queue/scheduler too — Container Manager / partial ups have left them missing.
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans app nginx worker scheduler mysql
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan migrate --force
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan points:grant-daily-allowance || true
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T app php artisan app:preflight || true
-  missing="$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps --status running --services 2>/dev/null || true)"
+
+  if [[ "$LOCAL_BUILD" == "1" ]]; then
+    echo "LOCAL_BUILD=1 — building images on this host (slow) ..."
+    if [[ -f "$ROOT/compose.build.yaml" ]]; then
+      docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -f "$ROOT/compose.build.yaml" build app nginx
+    else
+      compose build app nginx
+    fi
+  else
+    echo "Pulling prebuilt images from registry (PHP_IMAGE / NGINX_IMAGE in $ENV_FILE) ..."
+    if ! compose pull app nginx; then
+      echo >&2
+      echo "ERROR: docker compose pull failed." >&2
+      echo "Common fixes:" >&2
+      echo "  1) Wait for GitHub Actions 'Docker images' workflow to finish on main." >&2
+      echo "  2) Make GHCR packages public, or: docker login ghcr.io -u USER --password-stdin  (PAT: read:packages)" >&2
+      echo "  3) Emergency only: LOCAL_BUILD=1 bash deploy/scripts/nas-update-from-github.sh" >&2
+      exit 1
+    fi
+  fi
+
+  # Explicitly bring up worker/scheduler too — Container Manager / partial ups have left them missing.
+  compose up -d --remove-orphans app nginx worker scheduler mysql
+  compose exec -T app php artisan migrate --force
+  compose exec -T app php artisan points:grant-daily-allowance || true
+  compose exec -T app php artisan app:preflight || true
+  running="$(compose ps --status running --services 2>/dev/null || true)"
   for svc in app nginx worker scheduler mysql; do
-    if ! printf '%s\n' "$missing" | grep -qx "$svc"; then
+    if ! printf '%s\n' "$running" | grep -qx "$svc"; then
       echo "WARN: service '$svc' is not running after update." >&2
     fi
   done
 else
   echo "Code synced to commit $new_commit."
-  echo "Next: open Container Manager → growth-planet → Build / Start (include worker + scheduler)."
+  echo "Next: open Container Manager → growth-planet → Pull / Start (include worker + scheduler)."
 fi
 
 http_port="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"

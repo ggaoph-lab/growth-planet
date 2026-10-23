@@ -68,6 +68,16 @@ make lint        # Pint + ESLint
 make typecheck   # vue-tsc
 ```
 
+## 生产部署（群晖 / Docker）
+
+镜像由 GitHub Actions 推送到 GHCR；NAS 上日常只需：
+
+```bash
+bash deploy/scripts/nas-update-from-github.sh   # sync + pull + up + migrate
+```
+
+详见 [deployment](docs/deployment.md)。
+
 ## 文档
 
 | 文档 | 内容 |
@@ -76,6 +86,7 @@ make typecheck   # vue-tsc
 | [database](docs/database.md) | 数据表设计 |
 | [api](docs/api.md) | 接口约定与清单 |
 | [security](docs/security.md) | 权限、隐私、内容安全、密钥管理 |
+| [deployment](docs/deployment.md) | 群晖 Docker、GHCR 更新与回滚 |
 | [development-plan](docs/development-plan.md) | 分阶段计划、验收标准、待家长确认的问题 |
 
 `prd.md`、`points-rules.md`、`item-tracking.md`、`test-plan.md`、`deployment.md` 为 V0 规划稿，已被 V1.0 文档取代，仅供参考。

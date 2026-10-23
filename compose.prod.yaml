@@ -1,5 +1,10 @@
-# Production Compose for Oracle Cloud ARM Ampere (linux/arm64) and amd64.
-# Usage: docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod up -d
+# Production Compose (Synology / Docker hosts).
+# Default: pull prebuilt images from GHCR (see .github/workflows/docker-images.yml).
+# Local build fallback: add -f compose.build.yaml (or: make prod-build).
+#
+# Usage:
+#   docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod pull
+#   docker compose -f compose.prod.yaml --env-file deploy/compose/.env.prod up -d
 name: growth-planet
 
 x-app-env: &app-env
@@ -39,13 +44,7 @@ x-app-env: &app-env
   QWEN_MODEL: ${QWEN_MODEL:-qwen-turbo}
 
 x-app-image: &app-image
-  build:
-    context: .
-    dockerfile: deploy/docker/php/Dockerfile
-    target: prod
-    args:
-      PHP_BASE: ${PHP_BASE:-php:8.4-fpm-bookworm}
-  image: growth-planet-php:prod
+  image: ${PHP_IMAGE:-ghcr.io/ggaoph-lab/growth-planet-php:main}
   env_file:
     - deploy/compose/.env.prod
   environment:
@@ -122,14 +121,7 @@ services:
       start_period: 40s
 
   nginx:
-    build:
-      context: .
-      dockerfile: deploy/docker/nginx/Dockerfile
-      target: prod
-      args:
-        NODE_BASE: ${NODE_BASE:-node:22-bookworm}
-        NGINX_BASE: ${NGINX_BASE:-nginx:1.27-alpine}
-    image: growth-planet-nginx:prod
+    image: ${NGINX_IMAGE:-ghcr.io/ggaoph-lab/growth-planet-nginx:main}
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
