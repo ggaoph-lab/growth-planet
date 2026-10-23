@@ -124,7 +124,7 @@ class EnglishVocabularyService
         return $cards;
     }
 
-    /** Keep today's completed cards for history, but replace stale unstarted words. */
+    /** Keep today's completed/in-progress cards; replace only stale words known from before today. */
     private function removePreviouslyLearnedPackWords(ChildProfile $child, string $date, object $record, array $cards): array
     {
         $known = array_fill_keys(array_map('strtolower', $this->profile($child)['known_words']), true);
@@ -135,8 +135,15 @@ class EnglishVocabularyService
         foreach ($cards as $card) {
             $row = $progress->get((string) ($card['key'] ?? ''));
             $word = strtolower($this->gate->expression((string) ($card['text'] ?? '')));
-            $alreadySeen = $row !== null || isset($known[$word]);
-            if ($alreadySeen && ($row?->completed_date ?? null) !== $date && empty($card['collected'])) {
+            $completedToday = $row !== null && (string) ($row->completed_date ?? '') === $date;
+            $introducedToday = $row !== null && (string) ($row->introduced_date ?? '') === $date;
+            // Same-day misses create a progress row; keep those cards so the kid can retry.
+            // Drop only prior knowledge (known list or older introductions) that is not done today.
+            $stalePriorKnowledge = ! $completedToday
+                && ! $introducedToday
+                && empty($card['collected'])
+                && (isset($known[$word]) || $row !== null);
+            if ($stalePriorKnowledge) {
                 continue;
             }
             $kept[] = $card;

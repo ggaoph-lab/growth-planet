@@ -421,7 +421,7 @@ describe('English learning', () => {
 
   it('lets the child pick again after a miss without leaving the quiz', async () => {
     vi.mocked(api.postIdempotent)
-      .mockResolvedValueOnce({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [{ ...card, review: true, options: ['apple', 'banana', 'water'] }] } })
+      .mockResolvedValueOnce({ correct: false, meaning: '苹果', xp: 0, coins: 0, next_review: '2026-10-13', plan: { ...plan, items: [card] } })
       .mockResolvedValueOnce({ correct: true, meaning: '苹果', xp: 2, coins: 1, next_review: '2026-10-14', plan: { ...plan, items: [] } })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
@@ -429,6 +429,7 @@ describe('English learning', () => {
     await flushPromises()
     expect(answerButton(wrapper, '香蕉')!.classes()).toContain('wrong')
     expect(wrapper.find('h3').text()).toContain('apple')
+    expect(wrapper.text()).toContain('不对，再选一次')
     await answerButton(wrapper, '苹果')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('答对了')

@@ -924,7 +924,7 @@ async function answer(value: string) {
     result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: current.value.key, answer: trimmed })
     plan.value = result.value.plan
     // Keep remaining daily audio warm after the plan refreshes.
-    warmPlanAudio(plan.value.items)
+    warmPlanAudio(plan.value?.items ?? [])
     const multiChoice = choices.value.length > 0 && !isSpellingCard(current.value)
     if (result.value.correct) {
       phase.value = 'result'
@@ -942,11 +942,32 @@ async function answer(value: string) {
       wrongPicks.value = [...wrongPicks.value, trimmed]
       if (result.value.probe || result.value.challenge) {
         quizLocked.value = true
+      } else {
+        // Keep choices aligned with the server card if mode/options changed after the miss.
+        const refreshed = (plan.value?.items ?? []).find((item) => item.key === current.value?.key)
+        if (refreshed) {
+          current.value = refreshed
+          const nextChoices = [...(refreshed.options ?? [])]
+          if (nextChoices.join('\0') !== choices.value.join('\0')) {
+            choices.value = nextChoices
+            for (let i = choices.value.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1))
+              ;[choices.value[i], choices.value[j]] = [choices.value[j]!, choices.value[i]!]
+            }
+            wrongPicks.value = wrongPicks.value.filter((pick) => choices.value.includes(pick))
+          }
+        }
       }
     } else {
       phase.value = 'result'
     }
-  } catch (e) { error.value = e instanceof ApiError ? e.message : label('提交失败，请重试。', 'Could not save your answer. Please retry.') }
+  } catch (e) {
+    if (e instanceof ApiError) {
+      error.value = Object.values(e.fieldErrors).flat()[0] || e.message
+    } else {
+      error.value = label('提交失败，请重试。', 'Could not save your answer. Please retry.')
+    }
+  }
   finally { busy.value = false }
 }
 function next() {

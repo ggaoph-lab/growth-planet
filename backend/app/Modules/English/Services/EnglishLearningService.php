@@ -111,7 +111,16 @@ class EnglishLearningService
         foreach (array_slice($packPending, 0, $newWordSlots) as $card) {
             $key = (string) $card['key'];
             $row = $progress->get($key);
-            $isReview = $row !== null && (string) $row->due_date <= $today && $row->completed_date !== $today;
+            // Same-day misses on a brand-new word keep learning mode (Chinese options) so the
+            // kid UI can retry other choices. Only flip to review after a prior introduction day.
+            $sameDayNewMiss = $row !== null
+                && (string) ($row->introduced_date ?? '') === $today
+                && $row->completed_date === null
+                && (int) ($row->stage ?? 0) === 0;
+            $isReview = $row !== null
+                && ! $sameDayNewMiss
+                && (string) $row->due_date <= $today
+                && $row->completed_date !== $today;
             if ($isReview) {
                 $reviewCard = $this->reviewCardFor($child, $key, $catalog, $wordPack);
                 $items[] = [

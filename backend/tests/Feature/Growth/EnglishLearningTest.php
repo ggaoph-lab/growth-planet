@@ -67,6 +67,32 @@ class EnglishLearningTest extends TestCase
         $this->assertSame('2026-10-17', $second['next_review']);
     }
 
+    public function test_same_day_miss_keeps_learning_options_for_retry(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $service = app(EnglishLearningService::class);
+        $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
+        $card = collect($service->plan($child)['items'])->first(
+            fn ($item) => empty($item['probe']) && empty($item['spelling']) && empty($item['challenge'])
+        );
+        $this->assertNotNull($card);
+        $this->assertFalse($card['review'] ?? false);
+        $wrongOption = collect($card['options'])->first(fn ($option) => $option !== $card['meaning']);
+        $this->assertNotNull($wrongOption);
+
+        $wrong = $service->answer($child, $card['key'], (string) $wrongOption);
+        $this->assertFalse($wrong['correct']);
+        $again = collect($wrong['plan']['items'])->firstWhere('key', $card['key']);
+        $this->assertNotNull($again);
+        $this->assertFalse($again['review'] ?? false);
+        $this->assertContains($card['meaning'], $again['options']);
+        $this->assertContains((string) $wrongOption, $again['options']);
+
+        $right = $service->answer($child, $card['key'], (string) $card['meaning']);
+        $this->assertTrue($right['correct']);
+    }
+
     public function test_wrong_answers_reset_progress_and_session_keeps_refilling(): void
     {
         ['family' => $family] = $this->makeFamily();
