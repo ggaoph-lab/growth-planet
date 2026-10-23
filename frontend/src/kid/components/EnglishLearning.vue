@@ -976,9 +976,10 @@ async function answer(value: string) {
     }
   }
   try {
-    result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: card.key, answer: trimmed })
-    plan.value = result.value.plan
-    if (result.value.correct) {
+    const answered = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: card.key, answer: trimmed })
+    result.value = answered
+    plan.value = answered.plan
+    if (answered.correct) {
       phase.value = 'result'
       void session.load(true).catch(() => {})
       clearAdvanceTimer()
@@ -997,7 +998,7 @@ async function answer(value: string) {
         result.value = null
       }
       if (!wrongPicks.value.includes(trimmed)) wrongPicks.value = [...wrongPicks.value, trimmed]
-      if (result.value.probe || result.value.challenge) {
+      if (answered.probe || answered.challenge) {
         quizLocked.value = true
       } else {
         const refreshed = (plan.value?.items ?? []).find((item) => item.key === current.value?.key)
