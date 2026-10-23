@@ -79,6 +79,22 @@ describe('api client', () => {
     expect(headers['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/i)
   })
 
+  it('generates Idempotency-Key when crypto.randomUUID is unavailable (LAN HTTP)', async () => {
+    const original = crypto.randomUUID
+    // @ts-expect-error simulate non-secure context (e.g. http://192.168.x.x)
+    delete crypto.randomUUID
+    fetchMock.mockResolvedValueOnce(json(200, { data: { ok: true } }))
+
+    try {
+      await api.postIdempotent('/kid/english/learning/answer', { key: 'word:1', answer: 'apple' })
+      const [, init] = fetchMock.mock.calls[0] ?? []
+      const headers = init?.headers as Record<string, string>
+      expect(headers['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/i)
+    } finally {
+      crypto.randomUUID = original
+    }
+  })
+
   it('reuses Idempotency-Key when retrying after 419', async () => {
     fetchMock
       .mockResolvedValueOnce(json(419, {}))

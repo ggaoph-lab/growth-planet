@@ -465,7 +465,7 @@ async function skipSpelling() {
       answer: '__skip__',
     })
     plan.value = result.value.plan
-    warmPlanAudio(plan.value.items)
+    warmPlanAudio(plan.value?.items ?? [])
     phase.value = 'result'
     wordSaveMessage.value = label(
       `已记下「${word}」，接下来会在词汇小测试里再见面`,
