@@ -178,6 +178,8 @@ async function logout(): Promise<void> {
   color: rgba(255, 255, 255, 0.8);
   text-decoration: none;
   min-height: 44px;
+  white-space: pre-line;
+  line-height: 1.25;
 }
 .side-link.active,
 .side-link:hover {
@@ -205,6 +207,8 @@ async function logout(): Promise<void> {
 .topbar h1 {
   margin: 0;
   font-size: 18px;
+  white-space: pre-line;
+  line-height: 1.25;
 }
 .actions {
   display: flex;
@@ -254,6 +258,11 @@ async function logout(): Promise<void> {
   background: transparent;
   cursor: pointer;
   padding: 0 4px;
+}
+.bottom-link .label {
+  white-space: pre-line;
+  line-height: 1.15;
+  text-align: center;
 }
 @media (orientation: landscape) {
   .phone .content {

@@ -3,7 +3,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { api, ApiError } from '@/shared/api/client'
-import { chinesePinyin, chinesePinyinUnits } from '@/shared/chinesePinyin'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
+import { chinesePinyin, chinesePinyinUnits, loadChinesePinyin, onChinesePinyinReady } from '@/shared/chinesePinyin'
 import { canSpeak, isSpeakUnlocked, speakPhrase, stopSpeaking, unlockSpeak, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
@@ -142,11 +143,11 @@ const { locale } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
 const label = (zh: string, en: string) => locale.value === 'en' ? en : locale.value === 'zh-en' ? `${zh} / ${en}` : zh
-const plan = ref<Plan | null>(null)
+const plan = ref<Plan | null>(peekWarmGet<Plan>('/kid/english/learning') ?? null)
 const current = ref<Item | null>(null)
 const phase = ref<'learn' | 'quiz' | 'result'>('learn')
 const result = ref<Result | null>(null)
-const busy = ref(false)
+const busy = ref(plan.value == null)
 const error = ref('')
 const audioMessage = ref('')
 const speaking = ref(false)
@@ -252,10 +253,10 @@ async function anotherRound() {
   fairyTale.value = null
   fairyReading.value = null
   error.value = ''
-  await load()
+  await load(true)
   // Backend should always refill; one quiet retry covers a race after the last answer.
   if (!current.value) {
-    await load()
+    await load(true)
   }
   if (!current.value) {
     const needWords = (plan.value?.new_words_completed ?? 0) < (plan.value?.new_words_goal ?? 10)
@@ -484,28 +485,46 @@ function stars(score: number | null | undefined) {
 function isChineseText(text: string) {
   return /[\u4e00-\u9fff]/.test(text)
 }
+/** Bumps when pinyin-pro finishes loading so templates re-render ruby text. */
+const pinyinTick = ref(0)
 function optionPinyin(text: string) {
+  void pinyinTick.value
   return isChineseText(text) ? chinesePinyin(text) : ''
 }
-/** Prefetch neural audio for the whole daily queue so later cards play with less delay. */
+function meaningPinyin(text: string) {
+  void pinyinTick.value
+  return chinesePinyin(text)
+}
+function linePinyinUnits(text: string) {
+  void pinyinTick.value
+  return chinesePinyinUnits(text)
+}
+/** Prefetch neural audio for the whole daily queue after the first card is interactive. */
 function warmPlanAudio(items: Item[]) {
-  const english: string[] = []
-  const chinese: string[] = []
-  for (const item of items) {
-    if (item.text) english.push(item.text)
-    if (item.meaning && !item.challenge) chinese.push(item.meaning)
-    if (item.question && isChineseText(item.question)) chinese.push(item.question)
-    for (const example of [item.usage?.phrase, item.usage?.sentence]) {
-      if (example?.text) english.push(example.text)
-      if (example?.meaning) chinese.push(example.meaning)
+  const run = () => {
+    const english: string[] = []
+    const chinese: string[] = []
+    for (const item of items) {
+      if (item.text) english.push(item.text)
+      if (item.meaning && !item.challenge) chinese.push(item.meaning)
+      if (item.question && isChineseText(item.question)) chinese.push(item.question)
+      for (const example of [item.usage?.phrase, item.usage?.sentence]) {
+        if (example?.text) english.push(example.text)
+        if (example?.meaning) chinese.push(example.meaning)
+      }
+      for (const option of item.options ?? []) {
+        if (isChineseText(option)) chinese.push(option)
+        else if (option.trim()) english.push(option)
+      }
     }
-    for (const option of item.options ?? []) {
-      if (isChineseText(option)) chinese.push(option)
-      else if (option.trim()) english.push(option)
-    }
+    if (english.length) warmPhrases(english, 'en-US')
+    if (chinese.length) warmPhrases(chinese, 'zh-CN')
   }
-  if (english.length) warmPhrases(english, 'en-US')
-  if (chinese.length) warmPhrases(chinese, 'zh-CN')
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 1500 })
+  } else {
+    window.setTimeout(run, 300)
+  }
 }
 /** True when the current card should auto-read but media may still be locked (Chrome / iPad). */
 let pendingAutoRead = false
@@ -575,13 +594,13 @@ function choose(item?: Item) {
   if (!item || !audioSupported) return
   scheduleAutoRead(item)
 }
-async function load() {
-  busy.value = true
+async function load(force = false) {
+  if (force || plan.value == null) busy.value = true
   error.value = ''
   try {
-    plan.value = await api.get<Plan>('/kid/english/learning')
+    plan.value = await warmGet<Plan>('/kid/english/learning', undefined, { force })
     warmPlanAudio(plan.value.items)
-    choose(plan.value.items[0])
+    if (!current.value || force) choose(plan.value.items[0])
   } catch (e) { error.value = e instanceof ApiError ? e.message : label('学习任务加载失败，请重试。', 'Could not load your mission. Please retry.') }
   finally { busy.value = false }
 }
@@ -746,6 +765,7 @@ async function playFairyLines(lang: 'zh' | 'en') {
   }
 }
 function fairyPairedLines(tale: FairyTaleBody) {
+  void pinyinTick.value
   const count = Math.max(tale.zh_lines.length, tale.en_lines.length)
   return Array.from({ length: count }, (_, index) => ({
     zh: tale.zh_lines[index] ?? '',
@@ -1252,8 +1272,24 @@ async function finishRecording() {
 watch(speakPrompt, (prompt) => {
   if (prompt?.available) void refreshMicPermission()
 })
-onMounted(load)
+let stopPinyinReady: (() => void) | undefined
+onMounted(() => {
+  void loadChinesePinyin()
+  stopPinyinReady = onChinesePinyinReady(() => {
+    pinyinTick.value += 1
+  })
+  const cached = peekWarmGet<Plan>('/kid/english/learning')
+  if (cached && !current.value) {
+    plan.value = cached
+    busy.value = false
+    choose(cached.items[0])
+    warmPlanAudio(cached.items)
+  }
+  // Refresh in the background when warm; only blocks the UI when there is no cache yet.
+  void load(false)
+})
 onUnmounted(() => {
+  stopPinyinReady?.()
   clearAdvanceTimer()
   micHeld = false
   stopSpeaking()
@@ -1327,7 +1363,7 @@ onUnmounted(() => {
             <div class="fairy-title fairy-line" role="heading" aria-level="3">
               <p class="fairy-zh-text" lang="zh">
                 <span
-                  v-for="(unit, uIdx) in chinesePinyinUnits(historyTale.tale.title_zh)"
+                  v-for="(unit, uIdx) in linePinyinUnits(historyTale.tale.title_zh)"
                   :key="`ht-${uIdx}`"
                   class="fairy-syllable"
                   :class="{ punct: !unit.pinyin }"
@@ -1500,7 +1536,7 @@ onUnmounted(() => {
         <p v-else class="hint">{{ label('还没有记入已知表达，多做词汇小测试就会积累。', 'No known expressions yet — vocabulary checks will fill this list.') }}</p>
       </template>
     </div>
-    <p v-if="error" role="alert" class="error">{{ error }} <button :disabled="busy" @click="load">{{ label('重新加载', 'Reload') }}</button></p>
+    <p v-if="error" role="alert" class="error">{{ error }} <button :disabled="busy" @click="load(true)">{{ label('重新加载', 'Reload') }}</button></p>
     <p v-if="!plan && busy">{{ label('正在准备探索任务…', 'Preparing your mission…') }}</p>
     <article v-if="current" class="lesson">
       <div class="card-top"><span>{{ current.theme }} · {{ kindLabel(current) }}</span><span class="badge">{{ badgeLabel(current) }}</span></div>
@@ -1624,14 +1660,14 @@ onUnmounted(() => {
           <span class="word-emoji" aria-hidden="true">{{ cardEmoji(current) }}</span>
           <strong lang="en">{{ current.text }}</strong> · {{ result.meaning }}
         </p>
-        <p class="word-meaning-pinyin" lang="zh-Latn">{{ chinesePinyin(result.meaning) }}</p>
+        <p class="word-meaning-pinyin" lang="zh-Latn">{{ meaningPinyin(result.meaning) }}</p>
         <p v-if="wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
         <section v-if="result.correct && isNewWord(current) && current.usage" class="word-usage" aria-label="词组和例句 / Phrase and sentence">
           <h4>{{ label('把新词用起来', 'Use your new word') }}</h4>
           <div v-for="entry in (['phrase', 'sentence'] as const)" :key="entry" class="usage-example" :data-usage="entry">
             <span class="usage-label">{{ entry === 'phrase' ? label('词组', 'Phrase') : label('例句', 'Sentence') }}</span>
             <p lang="en">{{ current.usage[entry].text }}</p>
-            <p class="usage-pinyin" lang="zh-Latn">{{ chinesePinyin(current.usage[entry].meaning) }}</p>
+            <p class="usage-pinyin" lang="zh-Latn">{{ meaningPinyin(current.usage[entry].meaning) }}</p>
             <p class="usage-meaning">{{ current.usage[entry].meaning }}</p>
             <div class="listen-row">
               <button class="secondary" :disabled="!audioSupported || usageAudioPending === current.usage[entry].text" @click="speakUsage(current.usage[entry].text, 'en-US')">{{ usageAudioPending === current.usage[entry].text ? label('朗读中…', 'Reading…') : entry === 'phrase' ? label('听词组', 'Listen to phrase') : label('听例句', 'Listen to sentence') }}</button>
@@ -1677,7 +1713,7 @@ onUnmounted(() => {
           <div class="fairy-title fairy-line" role="heading" aria-level="3">
             <p class="fairy-zh-text" lang="zh">
               <span
-                v-for="(unit, uIdx) in chinesePinyinUnits(fairyTale.tale.title_zh)"
+                v-for="(unit, uIdx) in linePinyinUnits(fairyTale.tale.title_zh)"
                 :key="`ft-${uIdx}`"
                 class="fairy-syllable"
                 :class="{ punct: !unit.pinyin }"

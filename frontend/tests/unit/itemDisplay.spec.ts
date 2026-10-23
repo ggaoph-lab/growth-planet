@@ -13,6 +13,7 @@ describe('itemDisplay', () => {
 
   it('parses bilingual names', () => {
     expect(itemDisplay('画具 / Art kit')).toEqual({ emoji: '🎨', zh: '画具', en: 'Art kit' })
+    expect(itemDisplay('画具\nArt kit')).toEqual({ emoji: '🎨', zh: '画具', en: 'Art kit' })
   })
 
   it('falls back for unknown items', () => {

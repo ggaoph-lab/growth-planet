@@ -31,6 +31,12 @@ class EnglishAiCoach
         }
     }
 
+    /** True while the scheduled daily preparation job is building content. */
+    public function isPreparingDay(): bool
+    {
+        return $this->preparingDay;
+    }
+
     public function __construct(
         private readonly Clock $clock,
         private readonly FamilyAiConfig $ai,

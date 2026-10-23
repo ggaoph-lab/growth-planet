@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { api } from '@/shared/api/client'
-import type { Planet } from '@/shared/api/types'
 import { i18n } from '@/i18n'
+import { useKidHomeStore } from '@/stores/kidHome'
 import { useSessionStore } from '@/stores/session'
 
 declare module 'vue-router' {
@@ -89,6 +88,8 @@ router.beforeEach(async (to) => {
   if (required === 'child' && !session.isChild) return session.isParent ? { name: 'parent-dashboard' } : { name: 'kid-select' }
   if (required === 'guest' && session.isChild) return { name: 'kid-home' }
 
+  // Planet availability: only use already-cached home data so taps never wait on the network.
+  // Page APIs still enforce access when the cache is cold or stale.
   if (required === 'child' && to.name !== 'kid-home') {
     const modules: Record<string, string> = {
       tasks: 'task_planet', habits: 'task_planet', wallet: 'wallet', shop: 'shop',
@@ -97,12 +98,8 @@ router.beforeEach(async (to) => {
       encyclopedia: 'encyclopedia_planet', games: 'game_planet', collection: 'collection',
     }
     const key = modules[to.path.split('/')[2] ?? '']
-    if (key) {
-      try {
-        const home = await api.get<{ planets: Planet[] }>('/kid/home')
-        if (!home.planets.some((planet) => planet.key === key)) return { name: 'kid-home' }
-      } catch { return { name: 'kid-home' } }
-    }
+    const planets = useKidHomeStore().home?.planets
+    if (key && planets && !planets.some((planet) => planet.key === key)) return { name: 'kid-home' }
   }
   return true
 })

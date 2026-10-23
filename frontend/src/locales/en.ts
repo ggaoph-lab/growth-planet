@@ -431,7 +431,7 @@ export default {
     statusListedArchived: 'Archived',
   },
   lang: {
-    bilingual: '中英双语 / Bilingual',
+    bilingual: 'Bilingual',
     zh: '中文',
     en: 'English',
   },

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { chinesePinyin, chinesePinyinUnits } from '@/shared/chinesePinyin'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { chinesePinyin, chinesePinyinUnits, loadChinesePinyin } from '@/shared/chinesePinyin'
 
 describe('chinesePinyin', () => {
+  beforeAll(async () => {
+    await loadChinesePinyin()
+  })
+
   it('returns tone-marked pinyin for Chinese labels', () => {
     expect(chinesePinyin('苹果')).toMatch(/píng\s*guǒ/i)
     expect(chinesePinyin('我喜欢苹果。')).toMatch(/xǐ\s*huan/i)

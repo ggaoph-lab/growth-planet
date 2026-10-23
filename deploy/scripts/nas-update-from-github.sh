@@ -130,6 +130,8 @@ if [[ "$DOCKER_OK" -eq 1 ]]; then
 
   # Explicitly bring up worker/scheduler too — Container Manager / partial ups have left them missing.
   compose up -d --remove-orphans app nginx worker scheduler mysql
+  # Nginx caches upstream IPs at start; bounce it after app recreate so API is not 502.
+  compose restart nginx
   compose exec -T app php artisan migrate --force
   compose exec -T app php artisan points:grant-daily-allowance || true
   compose exec -T app php artisan app:preflight || true

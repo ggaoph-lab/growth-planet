@@ -2,12 +2,20 @@ import type zhCN from './zh-CN'
 
 type Dict = typeof zhCN
 
-/** Deep-merge Chinese + English into "中文 / English" strings (params placeholders kept once). */
+/** Join Chinese + English as stacked lines (中文 on top, English below). */
+export function biLabel(zh: string, en: string, locale: string): string {
+  if (locale === 'en') return en
+  if (locale === 'zh-CN') return zh
+  if (zh === en) return zh
+  return `${zh}\n${en}`
+}
+
+/** Deep-merge Chinese + English into stacked bilingual strings (params placeholders kept once). */
 export function buildBilingual(zh: Dict, en: Dict): Dict {
   const walk = (a: unknown, b: unknown): unknown => {
     if (typeof a === 'string' && typeof b === 'string') {
       if (a === b) return a
-      return `${a} / ${b}`
+      return `${a}\n${b}`
     }
     if (a && typeof a === 'object' && b && typeof b === 'object') {
       const out: Record<string, unknown> = {}

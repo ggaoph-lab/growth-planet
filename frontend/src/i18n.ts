@@ -21,7 +21,7 @@ export function storeLocale(locale: AppLocale): void {
 
 const zhEn = buildBilingual(zhCN, en)
 
-/** Default is bilingual (中文 / English). Users can switch to Chinese-only or English-only. */
+/** Default is bilingual (中文 above, English below). Users can switch to Chinese-only or English-only. */
 export const i18n = createI18n<[MessageSchema], AppLocale>({
   legacy: false,
   locale: typeof localStorage !== 'undefined' ? readStoredLocale() : 'zh-en',
@@ -33,8 +33,17 @@ export const i18n = createI18n<[MessageSchema], AppLocale>({
   },
 })
 
+function applyDocumentLocale(locale: AppLocale): void {
+  document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN'
+  document.documentElement.dataset.locale = locale
+}
+
 export function setAppLocale(locale: AppLocale): void {
   ;(i18n.global as unknown as { locale: { value: AppLocale } }).locale.value = locale
   storeLocale(locale)
-  document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN'
+  applyDocumentLocale(locale)
+}
+
+if (typeof document !== 'undefined') {
+  applyDocumentLocale(readStoredLocale())
 }

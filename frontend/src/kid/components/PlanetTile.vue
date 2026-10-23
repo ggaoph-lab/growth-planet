@@ -5,8 +5,12 @@ import type { Planet } from '@/shared/api/types'
 import { planetTitle } from '@/shared/planetTitle'
 
 const props = defineProps<{ planet: Planet; animate: boolean }>()
-const emit = defineEmits<{ open: [planet: Planet] }>()
+const emit = defineEmits<{ open: [planet: Planet]; prefetch: [planet: Planet] }>()
 const { t } = useI18n()
+
+function warm(): void {
+  if (props.planet.available) emit('prefetch', props.planet)
+}
 
 const title = computed(() => planetTitle(props.planet.key, props.planet.title))
 
@@ -29,7 +33,16 @@ const icon = computed(() => ICONS[props.planet.icon] ?? '⭐')
 </script>
 
 <template>
-  <button type="button" class="tile" :class="{ locked: !planet.available, animate }" :aria-disabled="!planet.available" @click="emit('open', planet)">
+  <button
+    type="button"
+    class="tile"
+    :class="{ locked: !planet.available, animate }"
+    :aria-disabled="!planet.available"
+    @pointerdown="warm"
+    @mouseenter="warm"
+    @focus="warm"
+    @click="emit('open', planet)"
+  >
     <span class="icon" aria-hidden="true">{{ icon }}</span>
     <span class="title">{{ title }}</span>
     <span v-if="!planet.available" class="badge">{{ t('kid.comingSoon') }}</span>
@@ -69,6 +82,9 @@ const icon = computed(() => ICONS[props.planet.icon] ?? '⭐')
 .title {
   font-size: 17px;
   font-weight: 600;
+  text-align: center;
+  white-space: pre-line;
+  line-height: 1.25;
 }
 .locked .icon {
   filter: grayscale(0.6);

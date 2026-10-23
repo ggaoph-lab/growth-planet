@@ -5,7 +5,9 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Enums\ChildStatus;
 use App\Modules\Identity\Models\TrustedDevice;
 use App\Modules\Identity\Services\DeviceTokens;
+use App\Modules\Identity\Services\PinHasher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class KidLoginTest extends TestCase
@@ -68,7 +70,26 @@ class KidLoginTest extends TestCase
             ->assertJsonPath('data.child.nickname', '小星星')
             ->assertJsonMissingPath('data.child.birth_date');
 
+        $this->assertTrue(str_starts_with((string) $child->member->user->fresh()->pin_hash, 'hmac:'));
+
         $this->withCookie(DeviceTokens::COOKIE, $token)->getJson('/api/v1/kid/home')->assertOk();
+    }
+
+    public function test_legacy_bcrypt_pin_is_accepted_and_upgraded(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $user = $child->member->user;
+        $user->forceFill(['pin_hash' => Hash::make('1234')])->save();
+        [, $token] = $this->makeDevice($family, $parent);
+
+        $this->withCookie(DeviceTokens::COOKIE, $token)
+            ->postJson('/api/v1/auth/kid/login', ['child_id' => $child->id, 'pin' => '1234'])
+            ->assertOk();
+
+        $upgraded = (string) $user->fresh()->pin_hash;
+        $this->assertTrue(str_starts_with($upgraded, 'hmac:'));
+        $this->assertTrue(PinHasher::check('1234', $upgraded));
     }
 
     public function test_pin_is_throttled_per_device_and_child(): void

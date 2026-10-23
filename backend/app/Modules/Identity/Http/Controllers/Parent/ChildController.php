@@ -8,12 +8,12 @@ use App\Modules\Identity\Enums\Avatar;
 use App\Modules\Identity\Enums\ChildStatus;
 use App\Modules\Identity\Http\Resources\ParentChildResource;
 use App\Modules\Identity\Models\ChildProfile;
+use App\Modules\Identity\Services\PinHasher;
 use App\Modules\Identity\Support\CurrentContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class ChildController
@@ -116,7 +116,7 @@ class ChildController
             $user->pin_hash = null;
             $user->pin_length = null;
         } else {
-            $user->pin_hash = Hash::make($data['pin']);
+            $user->pin_hash = PinHasher::make($data['pin']);
             $user->pin_length = strlen($data['pin']);
         }
         $user->save();

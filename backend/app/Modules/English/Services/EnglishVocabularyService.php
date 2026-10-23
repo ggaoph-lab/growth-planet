@@ -673,15 +673,19 @@ class EnglishVocabularyService
         $fromAi = [];
         $provider = null;
         $model = null;
-        $system = 'You pick exactly '.self::NEW_WORDS_DAILY_GOAL.' English vocabulary words for a child to learn today. Use the estimated vocabulary size and band in the user JSON. Prefer words slightly above what they already know; avoid known_words and learning_words. The skill_pilot is an optional teaching focus: prefer suitable candidate_words when they fit the child, but do not force them or repeat known words. Reply JSON only: {"items":[{"kind":"word","text":"bird","meaning":"鸟","emoji":"🐦","ipa":"/bɜːrd/","pos":"n.","options":["鸟","鱼","树"]}]}. Each item must be a single word (no spaces), simplified Chinese meaning, IPA, pos, emoji, and exactly 3 Chinese options including the meaning. No personal data.';
-        $reply = $this->coach->chatJson($child, [
-            ['role' => 'system', 'content' => $system],
-            ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
-        ]);
-        if ($reply !== null) {
-            $provider = $reply['provider'];
-            $model = $reply['model'];
-            $fromAi = $this->sanitizeDailyWordItems($reply['content'], $avoid, self::NEW_WORDS_DAILY_GOAL, $band);
+        // Kid taps must not wait on the LLM. Nightly/manual preparation owns the AI pack;
+        // interactive opens fall back to the local ladder so /kid/english/learning stays snappy.
+        if ($this->coach->isPreparingDay()) {
+            $system = 'You pick exactly '.self::NEW_WORDS_DAILY_GOAL.' English vocabulary words for a child to learn today. Use the estimated vocabulary size and band in the user JSON. Prefer words slightly above what they already know; avoid known_words and learning_words. The skill_pilot is an optional teaching focus: prefer suitable candidate_words when they fit the child, but do not force them or repeat known words. Reply JSON only: {"items":[{"kind":"word","text":"bird","meaning":"鸟","emoji":"🐦","ipa":"/bɜːrd/","pos":"n.","options":["鸟","鱼","树"]}]}. Each item must be a single word (no spaces), simplified Chinese meaning, IPA, pos, emoji, and exactly 3 Chinese options including the meaning. No personal data.';
+            $reply = $this->coach->chatJson($child, [
+                ['role' => 'system', 'content' => $system],
+                ['role' => 'user', 'content' => json_encode($snapshot, JSON_UNESCAPED_UNICODE)],
+            ]);
+            if ($reply !== null) {
+                $provider = $reply['provider'];
+                $model = $reply['model'];
+                $fromAi = $this->sanitizeDailyWordItems($reply['content'], $avoid, self::NEW_WORDS_DAILY_GOAL, $band);
+            }
         }
 
         $aiCount = count($fromAi);

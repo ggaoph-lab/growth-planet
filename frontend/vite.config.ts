@@ -33,5 +33,26 @@ export default defineConfig({
   },
   build: {
     target: 'es2020',
+    rollupOptions: {
+      output: {
+        // One shared chunk for the small planet pages so the first tap downloads them all.
+        // Keep English / games sub-pages separate — they are large or rarely opened together.
+        manualChunks(id) {
+          if (!id.includes('/kid/pages/')) return
+          // Keep the heaviest / entry pages on their own async chunks.
+          if (
+            id.includes('KidEnglishPage') ||
+            id.includes('KidSelectPage') ||
+            id.includes('KidHomePage') ||
+            id.includes('KidSchultePage') ||
+            id.includes('KidMirrorPage') ||
+            id.includes('KidSudokuPage')
+          ) {
+            return
+          }
+          return 'kid-planets'
+        },
+      },
+    },
   },
 })

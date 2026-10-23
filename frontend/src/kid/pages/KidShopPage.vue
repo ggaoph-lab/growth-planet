@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { KidWallet, Reward, Wish } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { useSessionStore } from '@/stores/session'
@@ -11,10 +12,10 @@ import WishProgress from '@/kid/components/WishProgress.vue'
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const rewards = ref<Reward[]>([])
-const wishes = ref<Wish[]>([])
-const wallet = ref<KidWallet | null>(null)
-const loading = ref(true)
+const rewards = ref<Reward[]>(peekWarmGet<Reward[]>('/kid/shop') ?? [])
+const wishes = ref<Wish[]>(peekWarmGet<Wish[]>('/kid/wishes') ?? [])
+const wallet = ref<KidWallet | null>(peekWarmGet<KidWallet>('/kid/wallet') ?? null)
+const loading = ref(peekWarmGet('/kid/shop') == null || peekWarmGet('/kid/wishes') == null || peekWarmGet('/kid/wallet') == null)
 const error = ref('')
 const busy = ref<number | null>(null)
 const wishBusy = ref(false)
@@ -80,14 +81,14 @@ function onKey(event: KeyboardEvent): void {
   if (event.key === 'Escape' && preview.value) closePreview()
 }
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || loading.value) loading.value = true
   error.value = ''
   try {
     const [shop, wishList, walletData] = await Promise.all([
-      api.get<Reward[]>('/kid/shop'),
-      api.get<Wish[]>('/kid/wishes'),
-      api.get<KidWallet>('/kid/wallet'),
+      warmGet<Reward[]>('/kid/shop', undefined, { force }),
+      warmGet<Wish[]>('/kid/wishes', undefined, { force }),
+      warmGet<KidWallet>('/kid/wallet', undefined, { force }),
     ])
     rewards.value = shop
     wishes.value = wishList

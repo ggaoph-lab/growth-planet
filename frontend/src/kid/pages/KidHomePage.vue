@@ -2,17 +2,22 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError, api } from '@/shared/api/client'
-import type { KidHome, Planet } from '@/shared/api/types'
+import { ApiError } from '@/shared/api/client'
+import type { Planet } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { unlockSpeak } from '@/shared/speak'
+import { useKidHomeStore } from '@/stores/kidHome'
 import { useSessionStore } from '@/stores/session'
 import { planetTitle } from '@/shared/planetTitle'
+import { prefetchKidRoute, prefetchKidRouteChunks } from '@/kid/prefetch'
 import PlanetTile from '../components/PlanetTile.vue'
+import { storeToRefs } from 'pinia'
 
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
+const kidHome = useKidHomeStore()
+const { home } = storeToRefs(kidHome)
 
 const planetRoutes: Record<string, string> = {
   task_planet: 'kid-tasks',
@@ -28,18 +33,27 @@ const planetRoutes: Record<string, string> = {
   game_planet: 'kid-games',
   collection: 'kid-collection',
 }
-const home = ref<KidHome | null>(null)
 const error = ref('')
 const toast = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(async () => {
   try {
-    home.value = await api.get<KidHome>('/kid/home')
+    const data = await kidHome.load()
+    const names = (data.planets ?? [])
+      .filter((planet) => planet.available)
+      .map((planet) => planetRoutes[planet.key])
+      .filter((name): name is string => Boolean(name))
+    prefetchKidRouteChunks(names)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('kid.planetSignalError')
   }
 })
+
+function warmPlanet(planet: Planet): void {
+  const routeName = planetRoutes[planet.key]
+  if (planet.available && routeName) prefetchKidRoute(routeName)
+}
 
 function open(planet: Planet): void {
   if (session.me?.child?.preferences.sounds) playTap()
@@ -52,7 +66,10 @@ function open(planet: Planet): void {
     return
   }
   const routeName = planetRoutes[planet.key]
-  if (routeName) void router.push({ name: routeName })
+  if (!routeName) return
+  // Prefer data already warmed on the home screen; still kick chunk+API for a cold tap.
+  prefetchKidRoute(routeName)
+  void router.push({ name: routeName })
 }
 </script>
 
@@ -65,7 +82,14 @@ function open(planet: Planet): void {
         <p>{{ t('kid.ageGrade', { age: home.profile.age, grade: home.profile.grade }) }}</p>
       </section>
       <section class="grid">
-        <PlanetTile v-for="p in home.planets" :key="p.key" :planet="p" :animate="session.me?.child?.preferences.animations ?? true" @open="open" />
+        <PlanetTile
+          v-for="p in home.planets"
+          :key="p.key"
+          :planet="p"
+          :animate="session.me?.child?.preferences.animations ?? true"
+          @prefetch="warmPlanet"
+          @open="open"
+        />
       </section>
     </template>
     <div v-if="toast" class="toast" role="status">{{ toast }}</div>

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { TaskInstance } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { canSpeak, speakTask, stopSpeaking, taskPhrase, warmPhrases } from '@/shared/speak'
@@ -11,8 +12,8 @@ import { useSessionStore } from '@/stores/session'
 const { t, locale } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const instances = ref<TaskInstance[]>([])
-const loading = ref(true)
+const instances = ref<TaskInstance[]>(peekWarmGet<TaskInstance[]>('/kid/tasks') ?? [])
+const loading = ref(peekWarmGet('/kid/tasks') == null)
 const error = ref('')
 const busy = ref<string | null>(null)
 const speakingKey = ref<string | null>(null)
@@ -185,11 +186,11 @@ const groups = computed<TaskGroup[]>(() => {
   return out
 })
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || peekWarmGet('/kid/tasks') == null) loading.value = true
   error.value = ''
   try {
-    instances.value = await api.get<TaskInstance[]>('/kid/tasks')
+    instances.value = await warmGet<TaskInstance[]>('/kid/tasks', undefined, { force })
     const phrases: string[] = []
     for (const inst of instances.value) {
       phrases.push(taskPhrase(titleOf(inst), descriptionOf(inst)))
@@ -352,7 +353,7 @@ async function toggleStep(inst: TaskInstance, step: StepLine): Promise<void> {
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.operationFailed')
     // Reload so a failed toggle does not leave a wrong checkmark.
-    await load()
+    await load(true)
   } finally {
     busy.value = null
   }

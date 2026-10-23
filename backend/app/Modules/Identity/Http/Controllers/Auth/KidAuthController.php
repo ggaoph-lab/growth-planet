@@ -13,11 +13,11 @@ use App\Modules\Identity\Http\Resources\MePresenter;
 use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Models\TrustedDevice;
 use App\Modules\Identity\Services\DeviceTokens;
+use App\Modules\Identity\Services\PinHasher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 
 class KidAuthController
@@ -82,7 +82,8 @@ class KidAuthController
         }
 
         $user = $child->member->user;
-        if ($user->pin_hash !== null && ! Hash::check((string) ($data['pin'] ?? ''), $user->pin_hash)) {
+        $pinHash = $user->pin_hash;
+        if ($pinHash !== null && ! PinHasher::check((string) ($data['pin'] ?? ''), $pinHash)) {
             RateLimiter::hit($throttleKey, self::PIN_DECAY_SECONDS);
             $this->audit->log('auth.kid_login_failed', $child->family_id, $child, ['device_id' => $device->id], $user);
 
@@ -90,13 +91,19 @@ class KidAuthController
         }
 
         RateLimiter::clear($throttleKey);
-        $user->forceFill(['last_login_at' => $this->clock->now()])->save();
+        $user->last_login_at = $this->clock->now();
+        // Upgrade legacy bcrypt PINs to HMAC so the next login skips the slow hash on NAS CPUs.
+        if ($pinHash !== null && PinHasher::needsRehash($pinHash)) {
+            $user->pin_hash = PinHasher::make((string) $data['pin']);
+        }
+        $user->save();
         $device->forceFill(['last_used_at' => $this->clock->now()])->save();
 
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
         $request->session()->put(EnsureRole::SESSION_DEVICE_KEY, $device->id);
 
+        $user->loadMissing(['member.family', 'member.childProfile']);
         $this->audit->log('auth.kid_login', $child->family_id, $child, ['device_id' => $device->id], $user);
 
         return response()->json(['data' => $me->present($user, $request->session())]);

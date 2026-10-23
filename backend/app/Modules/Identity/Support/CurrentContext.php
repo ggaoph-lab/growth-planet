@@ -24,6 +24,9 @@ class CurrentContext
             throw new AuthenticationException;
         }
 
+        // Kid/parent APIs always need membership + family; load once per request.
+        $user->loadMissing(['member.family', 'member.childProfile']);
+
         return $user;
     }
 

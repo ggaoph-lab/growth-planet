@@ -9,10 +9,10 @@ use App\Modules\Identity\Enums\MemberStatus;
 use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Models\FamilyMember;
 use App\Modules\Identity\Models\User;
+use App\Modules\Identity\Services\PinHasher;
 use App\Modules\Ledger\Services\AccountProvisioner;
 use App\Modules\ScreenTime\Services\ScreenTimePolicySeeder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 
 class CreateChild
 {
@@ -30,7 +30,7 @@ class CreateChild
         return DB::transaction(function () use ($familyId, $data, $actor) {
             $user = new User;
             if (isset($data['pin'])) {
-                $user->pin_hash = Hash::make($data['pin']);
+                $user->pin_hash = PinHasher::make($data['pin']);
                 $user->pin_length = strlen($data['pin']);
             }
             $user->save();

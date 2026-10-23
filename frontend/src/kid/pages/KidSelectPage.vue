@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError, api } from '@/shared/api/client'
+import { ApiError, api, ensureCsrfCookie } from '@/shared/api/client'
 import type { KidLoginProfile } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
 import { useSessionStore } from '@/stores/session'
@@ -20,11 +20,13 @@ const busy = ref(false)
 const pinpad = ref<InstanceType<typeof PinPad> | null>(null)
 
 function prefetchKidHome(): void {
+  void ensureCsrfCookie()
   void import('@/kid/KidLayout.vue')
   void import('@/kid/pages/KidHomePage.vue')
 }
 
 onMounted(async () => {
+  void ensureCsrfCookie()
   if (session.isParent) await session.logout()
   try {
     profiles.value = await api.get<KidLoginProfile[]>('/auth/kid/profiles')
@@ -41,6 +43,7 @@ async function login(pin: string | null): Promise<void> {
   busy.value = true
   message.value = ''
   try {
+    prefetchKidHome()
     await session.loginKid(selected.value.id, pin)
     await router.replace({ name: 'kid-home' })
   } catch (e) {

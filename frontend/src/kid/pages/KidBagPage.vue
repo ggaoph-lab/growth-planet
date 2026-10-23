@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type {
   ChecklistCompleteResult,
   ItemEvent,
@@ -19,8 +20,8 @@ type ZoneKey = 'mine' | `loc:${number}`
 const { t, locale } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const bag = ref<KidBag | null>(null)
-const loading = ref(true)
+const bag = ref<KidBag | null>(peekWarmGet<KidBag>('/kid/bag') ?? null)
+const loading = ref(bag.value == null)
 const error = ref('')
 const toast = ref('')
 const completeBusy = ref(false)
@@ -227,11 +228,11 @@ function onZoneTap(zone: ZoneKey): void {
   moveItemToZone(selectedId.value, zone)
 }
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || bag.value == null) loading.value = true
   error.value = ''
   try {
-    bag.value = await api.get<KidBag>('/kid/bag')
+    bag.value = await warmGet<KidBag>('/kid/bag', undefined, { force })
     const open = bag.value.checklists.find((c) => c.status === 'open')
     const prefer =
       bag.value.checklists.find((c) => c.id === activeChecklistId.value) ??
@@ -266,7 +267,7 @@ async function completeChecklist(): Promise<void> {
       ? t('common.checklistRewardClaimed', { coins: result.reward.coins, xp: result.reward.xp })
       : t('common.checklistCompleted')
     setTimeout(() => (toast.value = ''), 2500)
-    await load()
+    await load(true)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.saveFailed')
   } finally {
@@ -284,7 +285,7 @@ async function reopenChecklist(): Promise<void> {
     await api.postIdempotent(`/kid/item-checklists/${cl.id}/reopen`, {})
     toast.value = t('common.checklistReopened')
     setTimeout(() => (toast.value = ''), 2500)
-    await load()
+    await load(true)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.saveFailed')
   } finally {

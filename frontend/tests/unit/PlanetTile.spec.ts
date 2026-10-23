@@ -27,4 +27,12 @@ describe('PlanetTile', () => {
 
     expect(wrapper.emitted('open')).toEqual([[planet]])
   })
+
+  it('emits prefetch on pointerdown for available planets', async () => {
+    const available = { ...planet, available: true }
+    const wrapper = mount(PlanetTile, { props: { planet: available, animate: true } })
+    await wrapper.trigger('pointerdown')
+
+    expect(wrapper.emitted('prefetch')).toEqual([[available]])
+  })
 })

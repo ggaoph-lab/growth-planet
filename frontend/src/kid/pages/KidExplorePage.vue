@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { ExplorationProject } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { useSessionStore } from '@/stores/session'
@@ -10,17 +11,17 @@ import { useSessionStore } from '@/stores/session'
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const projects = ref<ExplorationProject[]>([])
-const loading = ref(true)
+const projects = ref<ExplorationProject[]>(peekWarmGet<ExplorationProject[]>('/kid/explorations') ?? [])
+const loading = ref(peekWarmGet('/kid/explorations') == null)
 const error = ref('')
 const title = ref('')
 const busy = ref(false)
 const toast = ref('')
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || peekWarmGet('/kid/explorations') == null) loading.value = true
   try {
-    projects.value = await api.get<ExplorationProject[]>('/kid/explorations')
+    projects.value = await warmGet<ExplorationProject[]>('/kid/explorations', undefined, { force })
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.loadFailed')
   } finally {
@@ -57,7 +58,7 @@ async function logStage(p: ExplorationProject): Promise<void> {
       willing_next: 'yes',
       child_words: t('kid.exploreTryAgain'),
     })
-    await load()
+    await load(true)
     toast.value = t('common.recordSuccess')
     setTimeout(() => (toast.value = ''), 2000)
   } catch (e) {

@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type { AiModelChoice, AiModelList, AiSettings, Family, ParentAccount, RewardPolicy, TaskCategory } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
+import { biLabel } from '@/locales/bilingual'
 import { useSessionStore } from '@/stores/session'
 import { planetTitle } from '@/shared/planetTitle'
 import type { Planet } from '@/shared/api/types'
@@ -20,7 +21,7 @@ const planets = ref<(Planet & { enabled: boolean })[]>([])
 const savingPlanet = ref<string | null>(null)
 const { locale } = useI18n()
 function label(zh: string, en: string): string {
-  return locale.value === 'en' ? en : locale.value === 'zh-CN' ? zh : `${zh} / ${en}`
+  return biLabel(zh, en, locale.value)
 }
 async function loadPlanets(): Promise<void> {
   planets.value = await api.get('/parent/planet-settings')

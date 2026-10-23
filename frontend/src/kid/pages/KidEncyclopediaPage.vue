@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type {
   EncyclopediaDomainDetail,
   EncyclopediaSubject,
@@ -16,10 +17,10 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
 
-const subject = ref<EncyclopediaSubject | null>(null)
+const subject = ref<EncyclopediaSubject | null>(peekWarmGet<EncyclopediaSubject>('/kid/encyclopedia') ?? null)
 const domain = ref<EncyclopediaDomainDetail | null>(null)
 const article = ref<EncyclopediaTopicDetail | null>(null)
-const loading = ref(true)
+const loading = ref(subject.value == null)
 const error = ref('')
 const speaking = ref(false)
 const savingRead = ref(false)
@@ -34,9 +35,14 @@ function tap(): void {
   if (session.me?.child?.preferences.sounds) playTap()
 }
 
-/** Prefer the locale side of BiMsg "中文 / English" strings for speech and compact UI. */
+/** Prefer the locale side of BiMsg stacked or "中文 / English" strings for speech and compact UI. */
+function biParts(raw: string): string[] {
+  if (raw.includes('\n')) return raw.split(/\n/).map((s) => s.trim()).filter(Boolean)
+  return raw.split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean)
+}
+
 function displayText(raw: string): string {
-  const parts = raw.split(/\s*\/\s*/)
+  const parts = biParts(raw)
   if (parts.length < 2) return raw
   if (locale.value === 'en') return parts[parts.length - 1] ?? raw
   if (locale.value === 'zh-en') return raw
@@ -44,16 +50,16 @@ function displayText(raw: string): string {
 }
 
 function speakText(raw: string): string {
-  const parts = raw.split(/\s*\/\s*/)
+  const parts = biParts(raw)
   if (locale.value === 'en') return parts[parts.length - 1] ?? raw
   return parts[0] ?? raw
 }
 
-async function loadHome(): Promise<void> {
-  loading.value = true
+async function loadHome(force = false): Promise<void> {
+  if (force || subject.value == null) loading.value = true
   error.value = ''
   try {
-    subject.value = await api.get<EncyclopediaSubject>('/kid/encyclopedia')
+    subject.value = await warmGet<EncyclopediaSubject>('/kid/encyclopedia', undefined, { force })
     domain.value = null
     article.value = null
   } catch (e) {

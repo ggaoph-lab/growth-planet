@@ -51,6 +51,7 @@ class ParentAuthController
         }
 
         $user = User::query()
+            ->with(['member.family', 'member.childProfile'])
             ->where(fn ($q) => $q->where('username', $login)->orWhere('email', $login))
             ->whereNotNull('password')
             ->first();
@@ -76,7 +77,14 @@ class ParentAuthController
         }
 
         RateLimiter::clear($throttleKey);
-        $user->forceFill(['failed_login_count' => 0, 'locked_until' => null, 'last_login_at' => $this->clock->now()])->save();
+        $user->failed_login_count = 0;
+        $user->locked_until = null;
+        $user->last_login_at = $this->clock->now();
+        // Rehash when BCRYPT_ROUNDS drops (e.g. NAS tuning) so later logins stay cheap.
+        if (Hash::needsRehash((string) $user->password)) {
+            $user->password = $data['password'];
+        }
+        $user->save();
 
         Auth::guard('web')->login($user);
         $request->session()->regenerate();

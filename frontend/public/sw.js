@@ -1,4 +1,4 @@
-const CACHE = 'growth-planet-shell-v7'
+const CACHE = 'growth-planet-shell-v8'
 
 self.addEventListener('install', (event) => {
   // Don't precache HTML — it must always point at the latest hashed assets.
@@ -32,19 +32,20 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Hashed /assets/*: network-first in preview so a rebuild is never stuck behind an old shell.
-  // Filenames still change on build; cache is only a soft offline assist.
+  // Hashed /assets/*: cache-first. Build hashes change on deploy, so stale shells cannot stick.
+  // Network-first made every planet tap wait on NAS even when the chunk was already cached.
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
+      caches.match(request).then((cached) => {
+        if (cached) return cached
+        return fetch(request).then((response) => {
           if (response.ok && url.origin === self.location.origin) {
             const copy = response.clone()
             caches.open(CACHE).then((cache) => cache.put(request, copy))
           }
           return response
         })
-        .catch(() => caches.match(request).then((cached) => cached || Response.error())),
+      }),
     )
     return
   }

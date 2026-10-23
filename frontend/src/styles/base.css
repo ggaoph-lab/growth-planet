@@ -30,6 +30,49 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Bilingual locale: i18n joins 中文\\nEnglish — show as stacked lines, not "中文 / English". */
+html[data-locale='zh-en'] #app,
+html[data-locale='zh-en'] .el-overlay,
+html[data-locale='zh-en'] .el-message,
+html[data-locale='zh-en'] .el-message-box,
+html[data-locale='zh-en'] .el-notification,
+html[data-locale='zh-en'] .el-popper {
+  white-space: pre-line;
+}
+html[data-locale='zh-en'] .el-button,
+html[data-locale='zh-en'] .el-menu-item,
+html[data-locale='zh-en'] .el-sub-menu__title,
+html[data-locale='zh-en'] .el-dialog__title,
+html[data-locale='zh-en'] .el-drawer__title,
+html[data-locale='zh-en'] .el-empty__description,
+html[data-locale='zh-en'] .el-tabs__item,
+html[data-locale='zh-en'] .el-form-item__label,
+html[data-locale='zh-en'] .el-radio-button__inner,
+html[data-locale='zh-en'] .el-checkbox-button__inner,
+html[data-locale='zh-en'] .el-tag,
+html[data-locale='zh-en'] .el-page-header__content,
+html[data-locale='zh-en'] .el-table th.el-table__cell .cell,
+html[data-locale='zh-en'] .el-message-box__title,
+html[data-locale='zh-en'] .el-message-box__message,
+html[data-locale='zh-en'] .el-dropdown-menu__item {
+  white-space: pre-line;
+  height: auto;
+  line-height: 1.25;
+}
+html[data-locale='zh-en'] .el-button {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+html[data-locale='zh-en'] .el-form-item__label {
+  align-items: flex-start;
+}
+html[data-locale='zh-en'] .bottom-link {
+  min-height: 72px;
+}
+html[data-locale='zh-en'] .phone .content {
+  padding-bottom: calc(104px + env(safe-area-inset-bottom));
+}
+
 button {
   font: inherit;
 }

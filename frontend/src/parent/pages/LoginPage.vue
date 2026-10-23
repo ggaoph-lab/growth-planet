@@ -5,7 +5,9 @@ import { useI18n } from 'vue-i18n'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import LanguageSwitch from '@/shared/LanguageSwitch.vue'
-import { ApiError } from '@/shared/api/client'
+import { ApiError, ensureCsrfCookie } from '@/shared/api/client'
+import { warmGet } from '@/shared/api/warmGet'
+import type { ApprovalRequest, Dashboard } from '@/shared/api/types'
 import { useSessionStore } from '@/stores/session'
 
 const { t, locale } = useI18n()
@@ -17,8 +19,15 @@ const form = reactive({ login: '', password: '' })
 const error = ref('')
 const submitting = ref(false)
 
+function prefetchParentShell(): void {
+  void import('@/parent/ParentLayout.vue')
+  void import('@/parent/pages/DashboardPage.vue')
+}
+
 onMounted(() => {
+  void ensureCsrfCookie()
   void session.checkDevice()
+  prefetchParentShell()
 })
 
 async function submit(): Promise<void> {
@@ -26,8 +35,12 @@ async function submit(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
+    prefetchParentShell()
     await session.loginParent(form.login, form.password)
-    await router.push({ name: 'parent-dashboard' })
+    // Overlap destination data with the route chunk resolve.
+    void warmGet<Dashboard>('/parent/dashboard')
+    void warmGet<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' })
+    await router.replace({ name: 'parent-dashboard' })
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('auth.loginFailed')
   } finally {

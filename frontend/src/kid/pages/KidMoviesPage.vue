@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { KidCatalogItem, KidMovie, KidScreenTimeSummary, MovieViewing, MovieViewingUpdate } from '@/shared/api/types'
 import MoviePoster from '@/shared/MoviePoster.vue'
 import { overviewParagraphs } from '@/shared/movieOverview'
@@ -14,9 +15,9 @@ const EXPAND_KEY = 'gp.kid.movies.expanded'
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const catalog = ref<KidCatalogItem[]>([])
-const screenTime = ref<KidScreenTimeSummary | null>(null)
-const loading = ref(true)
+const catalog = ref<KidCatalogItem[]>(peekWarmGet<KidCatalogItem[]>('/kid/movies') ?? [])
+const screenTime = ref<KidScreenTimeSummary | null>(peekWarmGet<KidScreenTimeSummary>('/kid/screen-time') ?? null)
+const loading = ref(peekWarmGet('/kid/movies') == null || peekWarmGet('/kid/screen-time') == null)
 const error = ref('')
 const expanded = ref<Record<string, boolean>>(loadExpanded())
 const selected = ref<{ movie: KidMovie; order: number | null } | null>(null)
@@ -97,12 +98,12 @@ function onKey(event: KeyboardEvent): void {
   if (event.key === 'Escape') closeMovie()
 }
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || loading.value) loading.value = true
   try {
     const [items, st] = await Promise.all([
-      api.get<KidCatalogItem[]>('/kid/movies'),
-      api.get<KidScreenTimeSummary>('/kid/screen-time'),
+      warmGet<KidCatalogItem[]>('/kid/movies', undefined, { force }),
+      warmGet<KidScreenTimeSummary>('/kid/screen-time', undefined, { force }),
     ])
     catalog.value = items
     screenTime.value = st

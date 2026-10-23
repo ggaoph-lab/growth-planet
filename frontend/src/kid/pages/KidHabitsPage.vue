@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { ParentHabit } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { useSessionStore } from '@/stores/session'
@@ -10,17 +11,17 @@ import { useSessionStore } from '@/stores/session'
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const habits = ref<ParentHabit[]>([])
-const loading = ref(true)
+const habits = ref<ParentHabit[]>(peekWarmGet<ParentHabit[]>('/kid/habits') ?? [])
+const loading = ref(peekWarmGet('/kid/habits') == null)
 const error = ref('')
 const busy = ref<number | null>(null)
 const toast = ref('')
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || habits.value.length === 0) loading.value = true
   error.value = ''
   try {
-    habits.value = await api.get<ParentHabit[]>('/kid/habits')
+    habits.value = await warmGet<ParentHabit[]>('/kid/habits', undefined, { force })
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.loadFailed')
   } finally {

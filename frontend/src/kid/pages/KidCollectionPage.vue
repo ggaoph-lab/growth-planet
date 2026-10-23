@@ -2,20 +2,25 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError, api } from '@/shared/api/client'
+import { ApiError } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { CollectionStamp } from '@/shared/api/types'
 
 const { t } = useI18n()
 const router = useRouter()
-const stamps = ref<CollectionStamp[]>([])
+const cachedCollection = peekWarmGet<{ stamps: CollectionStamp[] }>('/kid/collection')
+const stamps = ref<CollectionStamp[]>(cachedCollection?.stamps ?? [])
 const error = ref('')
+const loading = ref(cachedCollection == null)
 
 onMounted(async () => {
   try {
-    const data = await api.get<{ stamps: CollectionStamp[] }>('/kid/collection')
+    const data = await warmGet<{ stamps: CollectionStamp[] }>('/kid/collection')
     stamps.value = data.stamps
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.loadFailed')
+  } finally {
+    loading.value = false
   }
 })
 </script>
@@ -27,7 +32,8 @@ onMounted(async () => {
       <h1>{{ t('kid.collection') }}</h1>
     </header>
     <p v-if="error" class="error">{{ error }}</p>
-    <div class="grid">
+    <p v-if="loading" class="error">{{ t('common.loading') }}</p>
+    <div v-else class="grid">
       <article v-for="stamp in stamps" :key="stamp.key" class="stamp" :class="{ earned: stamp.earned }">
         <div class="icon">{{ stamp.earned ? '🏅' : '🔒' }}</div>
         <p>{{ stamp.title }}</p>

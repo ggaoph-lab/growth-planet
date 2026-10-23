@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnglishLearning from '@/kid/components/EnglishLearning.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
+import { clearWarmGets } from '@/shared/api/warmGet'
 import { isSpeakUnlocked, unlockSpeak, speakPhrase, warmPhrases } from '@/shared/speak'
 
 function answerButton(wrapper: VueWrapper, label: string) {
@@ -36,6 +37,7 @@ const plan = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  clearWarmGets()
   vi.mocked(isSpeakUnlocked).mockReturnValue(true)
   vi.mocked(unlockSpeak).mockResolvedValue(true)
   vi.mocked(speakPhrase).mockResolvedValue(true)
@@ -172,9 +174,11 @@ describe('English learning', () => {
     })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
+    await vi.advanceTimersByTimeAsync(1600)
     await answerButton(wrapper, '苹果')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('答对了')
+    await vi.advanceTimersByTimeAsync(1600)
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['banana']), 'en-US')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['香蕉']), 'zh-CN')
     expect(wrapper.find('[data-usage="phrase"]').text()).toContain('a red apple')
@@ -343,11 +347,14 @@ describe('English learning', () => {
     const nextCard = { ...card, key: 'banana', text: 'banana', meaning: '香蕉', emoji: '🍌', options: ['香蕉', '苹果', '水'] }
     const review = { ...card, key: 'water', text: 'water', meaning: '水', review: true, options: ['water', 'milk', 'juice'] }
     vi.mocked(api.get).mockResolvedValue({ ...plan, items: [card, nextCard, review] })
+    vi.useFakeTimers()
     const wrapper = mount(EnglishLearning)
     await flushPromises()
+    await vi.advanceTimersByTimeAsync(1600)
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['apple', 'banana', 'water', 'milk', 'juice']), 'en-US')
     expect(warmPhrases).toHaveBeenCalledWith(expect.arrayContaining(['苹果', '香蕉', '水']), 'zh-CN')
     wrapper.unmount()
+    vi.useRealTimers()
   })
 
   it('shows speak-along mic on the finished page', async () => {

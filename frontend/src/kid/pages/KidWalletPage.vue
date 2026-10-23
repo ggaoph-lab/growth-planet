@@ -2,18 +2,19 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError, api } from '@/shared/api/client'
+import { ApiError } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { KidWallet } from '@/shared/api/types'
 
 const { t } = useI18n()
 const router = useRouter()
-const wallet = ref<KidWallet | null>(null)
-const loading = ref(true)
+const wallet = ref<KidWallet | null>(peekWarmGet<KidWallet>('/kid/wallet') ?? null)
+const loading = ref(wallet.value == null)
 const error = ref('')
 
 onMounted(async () => {
   try {
-    wallet.value = await api.get<KidWallet>('/kid/wallet')
+    wallet.value = await warmGet<KidWallet>('/kid/wallet')
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('common.loadFailed')
   } finally {

@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { ApiError, api, ensureCsrfCookie } from '@/shared/api/client'
+import { clearWarmGets } from '@/shared/api/warmGet'
 import type { Me, Preferences } from '@/shared/api/types'
 import { setAppLocale, type AppLocale } from '@/i18n'
+import { useKidHomeStore } from '@/stores/kidHome'
 
 export const useSessionStore = defineStore('session', () => {
   const me = ref<Me | null>(null)
@@ -17,7 +19,7 @@ export const useSessionStore = defineStore('session', () => {
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
     try {
-      await ensureCsrfCookie()
+      // GET /auth/me only needs the session cookie — skip an extra CSRF round-trip.
       me.value = await api.get<Me>('/auth/me')
       applyFamilyLocale(me.value)
     } catch (e) {
@@ -46,15 +48,22 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function loginParent(login: string, password: string): Promise<void> {
+    useKidHomeStore().clear()
+    clearWarmGets()
     me.value = await api.post<Me>('/auth/login', { login, password })
     applyFamilyLocale(me.value)
     loaded.value = true
-    await ensureCsrfCookie(true)
+    // Login Set-Cookie already refreshes XSRF — avoid a forced /sanctum/csrf-cookie hop.
   }
 
   async function loginKid(childId: number, pin: string | null): Promise<void> {
+    const kidHome = useKidHomeStore()
+    kidHome.clear()
+    clearWarmGets()
     me.value = await api.post<Me>('/auth/kid/login', { child_id: childId, pin })
     loaded.value = true
+    // Warm /kid/home while the router is still navigating so the planet grid is ready sooner.
+    void kidHome.load()
     // Login regenerates the session and already refreshes XSRF via Set-Cookie — don't add another round-trip.
   }
 
@@ -63,6 +72,8 @@ export const useSessionStore = defineStore('session', () => {
       await api.post('/auth/logout')
     } finally {
       me.value = null
+      useKidHomeStore().clear()
+      clearWarmGets()
       await ensureCsrfCookie(true)
     }
   }

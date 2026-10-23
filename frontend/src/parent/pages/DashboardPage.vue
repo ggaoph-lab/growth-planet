@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api } from '@/shared/api/client'
+import { warmGet } from '@/shared/api/warmGet'
 import type { ApprovalRequest, Dashboard } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
 import { auditLabel } from '@/shared/auditLabels'
@@ -23,8 +23,8 @@ function childStatusLabel(status: string): string {
 onMounted(async () => {
   try {
     const [dash, approvals] = await Promise.all([
-      api.get<Dashboard>('/parent/dashboard'),
-      api.get<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' }),
+      warmGet<Dashboard>('/parent/dashboard'),
+      warmGet<ApprovalRequest[]>('/parent/approvals', { status: 'PENDING' }),
     ])
     data.value = dash
     pendingApprovals.value = approvals.length

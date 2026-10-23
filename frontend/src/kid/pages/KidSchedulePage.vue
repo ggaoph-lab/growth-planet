@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError, api } from '@/shared/api/client'
+import { ApiError } from '@/shared/api/client'
+import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { KidScheduleOverview, ResolvedDaySchedule, SchoolSchedule } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
 import { useSessionStore } from '@/stores/session'
@@ -10,18 +11,18 @@ import { useSessionStore } from '@/stores/session'
 const { t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
-const loading = ref(true)
+const overview = ref<KidScheduleOverview | null>(peekWarmGet<KidScheduleOverview>('/kid/schedule') ?? null)
+const week = ref<SchoolSchedule | null>(peekWarmGet<SchoolSchedule | null>('/kid/schedule/week') ?? null)
+const loading = ref(overview.value == null)
 const error = ref('')
-const overview = ref<KidScheduleOverview | null>(null)
-const week = ref<SchoolSchedule | null>(null)
 const showWeek = ref(false)
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(force = false): Promise<void> {
+  if (force || overview.value == null) loading.value = true
   error.value = ''
   try {
-    overview.value = await api.get<KidScheduleOverview>('/kid/schedule')
-    week.value = await api.get<SchoolSchedule | null>('/kid/schedule/week')
+    overview.value = await warmGet<KidScheduleOverview>('/kid/schedule', undefined, { force })
+    week.value = await warmGet<SchoolSchedule | null>('/kid/schedule/week', undefined, { force })
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('network.error')
   } finally {
