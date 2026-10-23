@@ -247,8 +247,22 @@ async function withdrawSubtask(inst: TaskInstance): Promise<void> {
   tap()
   busy.value = `i-${inst.id}`
   error.value = ''
+  const snapshot = { ...inst }
+  // Optimistic undo so the row clears immediately.
+  replace({
+    ...inst,
+    status: 'pending',
+    can_withdraw: false,
+    ready_at: null,
+    first_step_at: null,
+    submitted_at: null,
+    completed_at: null,
+  })
   try {
-    await withdraw(inst)
+    const updated = await withdraw(inst)
+    if (!updated) replace(snapshot)
+  } catch {
+    replace(snapshot)
   } finally {
     busy.value = null
   }
@@ -262,24 +276,30 @@ function onSubtaskClick(inst: TaskInstance): void {
   void advanceSubtask(inst)
 }
 
-/** Tap a subtask row to complete it (start then submit when needed). */
+/** Tap a subtask row to complete it (one submit; self-check still starts first). */
 async function advanceSubtask(inst: TaskInstance): Promise<void> {
   if (!canActOn(inst) || busy.value) return
   tap()
   busy.value = `i-${inst.id}`
   error.value = ''
   try {
-    let current = inst
-    if (current.status === 'pending' || current.status === 'returned') {
-      const started = await ready(current)
-      if (!started) return
-      current = started
-      // Self-check tasks stay in progress until the kid confirms elsewhere.
-      if (current.snapshot?.requires_self_check) return
+    // Self-check tasks only start here; kid confirms done on a later tap.
+    if (inst.snapshot?.requires_self_check && (inst.status === 'pending' || inst.status === 'returned')) {
+      await ready(inst)
+      return
     }
-    if (current.status === 'in_progress') {
-      await submit(current)
-    }
+
+    const snapshot = { ...inst }
+    // Optimistic complete — UI should not wait on the reward ledger round-trip.
+    replace({
+      ...inst,
+      status: 'completed',
+      can_withdraw: true,
+      submitted_at: inst.submitted_at ?? new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    })
+    const updated = await submit(inst)
+    if (!updated) replace(snapshot)
   } finally {
     busy.value = null
   }
@@ -306,8 +326,17 @@ async function submitCard(inst: TaskInstance): Promise<void> {
   tap()
   busy.value = `i-${inst.id}`
   error.value = ''
+  const snapshot = { ...inst }
+  replace({
+    ...inst,
+    status: 'completed',
+    can_withdraw: true,
+    submitted_at: inst.submitted_at ?? new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+  })
   try {
-    await submit(inst)
+    const updated = await submit(inst)
+    if (!updated) replace(snapshot)
   } finally {
     busy.value = null
   }
@@ -705,8 +734,12 @@ onUnmounted(stopSpeaking)
   cursor: default;
   opacity: 0.75;
 }
-.check-row:disabled:not(.locked) {
+.check-row:disabled:not(.locked):not(.done) {
   opacity: 0.5;
+}
+.check-row.done:disabled {
+  cursor: wait;
+  opacity: 0.9;
 }
 .mark {
   flex-shrink: 0;

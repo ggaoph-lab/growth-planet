@@ -97,7 +97,12 @@ class TaskKidFlowService
 
                 return $locked;
             }
-            if (! in_array($locked->status, [TaskInstanceStatus::InProgress, TaskInstanceStatus::Returned], true)) {
+            // One-tap finish: start from pending/returned inside the same request.
+            if (in_array($locked->status, [TaskInstanceStatus::Pending, TaskInstanceStatus::Returned], true)) {
+                $locked->ready_at = $locked->ready_at ?? $this->clock->now();
+                $locked->status = TaskInstanceStatus::InProgress;
+            }
+            if ($locked->status !== TaskInstanceStatus::InProgress) {
                 throw new ApiException('INVALID_STATE', BiMsg::of('当前状态不能提交', 'Cannot submit in the current state'), 409);
             }
 

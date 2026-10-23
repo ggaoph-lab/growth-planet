@@ -52,6 +52,32 @@ class TaskApprovalTest extends TestCase
         $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
+    public function test_kid_can_submit_directly_from_pending_without_ready(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+        $this->seedTask($family, $parent, [
+            'xp_reward' => 15,
+            'coin_reward' => 8,
+        ]);
+
+        $this->loginKid($child->fresh(['member.user']), $device, $token);
+
+        $instanceId = $this->getJson('/api/v1/kid/tasks?date=2026-10-11')
+            ->assertOk()
+            ->json('data.0.id');
+
+        $this->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed')
+            ->assertJsonPath('data.can_withdraw', true);
+
+        $this->assertSame(15, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(8, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+    }
+
     public function test_pending_task_approvals_are_finished_and_hidden_from_the_approval_center(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
