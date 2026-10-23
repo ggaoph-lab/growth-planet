@@ -652,8 +652,60 @@ class EnglishLearningService
 
         return [
             ...$saved,
-            'plan' => $queueChanged ? $this->plan($child) : $plan,
+            'plan' => $queueChanged ? $this->planAfterAnswer($child, $plan, $key, $saved, $isSkip, $isProbe, $isChallenge, $isSpelling) : $plan,
             'coach_tip' => $coachTip,
+        ];
+    }
+
+    /**
+     * Avoid a second full plan() rebuild on ordinary correct taps when the queue still has cards.
+     * Full rebuild only when the session phase may have changed (empty queue, probes, fairy unlock, …).
+     *
+     * @param  array<string, mixed>  $plan
+     * @param  array<string, mixed>  $saved
+     * @return array<string, mixed>
+     */
+    private function planAfterAnswer(
+        ChildProfile $child,
+        array $plan,
+        string $answeredKey,
+        array $saved,
+        bool $isSkip,
+        bool $isProbe,
+        bool $isChallenge,
+        bool $isSpelling,
+    ): array {
+        $remaining = array_values(array_filter(
+            $plan['items'] ?? [],
+            static fn ($item) => is_array($item) && (string) ($item['key'] ?? '') !== $answeredKey,
+        ));
+        $today = $this->clock->today($child->family->timezone)->toDateString();
+        $newWordsCompleted = $this->vocabulary->newWordsCompletedToday($child, $today);
+        $wordGoal = $this->vocabulary->dailyWordGoal($child, $today);
+        $wasBelowGoal = (int) ($plan['new_words_completed'] ?? 0) < $wordGoal;
+        $fairyJustUnlocked = $wasBelowGoal && $newWordsCompleted >= $wordGoal;
+        $needsFullRebuild = $remaining === []
+            || $isSkip
+            || $isProbe
+            || $isChallenge
+            || $isSpelling
+            || $fairyJustUnlocked
+            || ! empty($saved['promoted_to_spelling']);
+
+        if ($needsFullRebuild) {
+            return $this->plan($child);
+        }
+
+        $fairyUnlocked = $newWordsCompleted >= $wordGoal;
+        $fairyHeardToday = (bool) ($plan['fairy_tale_heard_today'] ?? false);
+
+        return [
+            ...$plan,
+            'items' => $remaining,
+            'completed' => (int) ($plan['completed'] ?? 0) + (! empty($saved['correct']) ? 1 : 0),
+            'new_words_completed' => $newWordsCompleted,
+            'fairy_tale_unlocked' => $fairyUnlocked,
+            'review_unlocked' => $fairyUnlocked && $fairyHeardToday,
         ];
     }
 

@@ -846,44 +846,48 @@ async function playCurrentMeaning(): Promise<boolean> {
 }
 async function speak() {
   if (!current.value) return
-  const wasSpeaking = speaking.value && isSpeakUnlocked()
-  await unlockSpeak()
   pendingAutoRead = false
-  if (wasSpeaking && speaking.value && speakingLang.value === 'en') {
+  // During “准备语音…” speaking is still false — treat loading as active so rapid taps stop instead of cancelling each other.
+  if ((speaking.value || loadingAudio.value) && speakingLang.value === 'en' && !speakingOption.value) {
     haltSpeak()
     return
   }
-  if (speaking.value) haltSpeak()
+  await unlockSpeak()
+  if (speaking.value || loadingAudio.value) haltSpeak()
   await playCurrentText()
 }
 async function speakChinese() {
   if (!current.value?.meaning?.trim()) return
-  unlockSpeak()
   pendingAutoRead = false
-  if (speaking.value && speakingLang.value === 'zh' && !speakingOption.value) {
+  if ((speaking.value || loadingAudio.value) && speakingLang.value === 'zh' && !speakingOption.value) {
     haltSpeak()
     return
   }
-  if (speaking.value) haltSpeak()
+  void unlockSpeak()
+  if (speaking.value || loadingAudio.value) haltSpeak()
   await playCurrentMeaning()
 }
 async function speakOption(option: string) {
   const phrase = option.trim()
   if (!phrase || !audioSupported || !isChineseText(phrase)) return
-  unlockSpeak()
   pendingAutoRead = false
-  if (speaking.value && speakingLang.value === 'zh' && speakingOption.value === phrase) {
+  if ((speaking.value || loadingAudio.value) && speakingLang.value === 'zh' && speakingOption.value === phrase) {
     haltSpeak()
     return
   }
-  if (speaking.value) haltSpeak()
+  void unlockSpeak()
+  if (speaking.value || loadingAudio.value) haltSpeak()
   const token = ++speakToken
-  speaking.value = true
+  speaking.value = false
+  loadingAudio.value = true
   speakingLang.value = 'zh'
   speakingOption.value = phrase
   audioMessage.value = ''
+  warmPhrasesNow([phrase], 'zh-CN')
   try {
-    await speakPhrase(phrase, 'zh-CN')
+    await speakPhrase(phrase, 'zh-CN', () => {
+      if (token === speakToken) { loadingAudio.value = false; speaking.value = true }
+    })
   } catch {
     if (token === speakToken) audioMessage.value = label('暂时无法朗读，可以请家长陪你读。', 'Audio is unavailable. Ask a grown-up to read with you.')
     return false
@@ -926,10 +930,12 @@ async function speakTarget() {
   }
 }
 function listenText(idle: string, idleEn: string, lang: 'en' | 'zh' = 'en') {
-  if (loadingAudio.value && speakingLang.value === lang) return label('准备语音…', 'Loading audio…')
-  return speaking.value && speakingLang.value === lang
-    ? `⏹ ${label('停止', 'Stop')}`
-    : `🔊 ${label(idle, idleEn)}`
+  if ((speaking.value || loadingAudio.value) && speakingLang.value === lang && (lang === 'en' || !speakingOption.value)) {
+    return loadingAudio.value && !speaking.value
+      ? `⏹ ${label('准备中…', 'Getting ready…')}`
+      : `⏹ ${label('停止', 'Stop')}`
+  }
+  return `🔊 ${label(idle, idleEn)}`
 }
 const canListenChinese = computed(() => {
   const item = current.value
@@ -939,18 +945,35 @@ async function answer(value: string) {
   if (!current.value || busy.value || phase.value !== 'quiz' || quizLocked.value) return
   const trimmed = value.trim()
   if (!trimmed || wrongPicks.value.includes(trimmed)) return
-  unlockSpeak()
+  void unlockSpeak()
   pendingAutoRead = false
   error.value = ''
   const card = current.value
   const multiChoice = choices.value.length > 0 && !isSpellingCard(card)
-  // Paint a miss immediately so the kid can tap another option without waiting on the API.
+  // Paint miss/correct immediately so the kid never stares at a locked quiz for a slow NAS round-trip.
   const localCorrect = trimmed === (card.meaning ?? '') || trimmed === (card.text ?? '')
     || trimmed === (card.correct_answer ?? '') || trimmed === (card.answer ?? '')
   if (multiChoice && !localCorrect) {
     wrongPicks.value = [...wrongPicks.value, trimmed]
   } else {
     busy.value = true
+  }
+  if (localCorrect) {
+    phase.value = 'result'
+    result.value = {
+      correct: true,
+      meaning: card.meaning ?? card.question ?? trimmed,
+      xp: 0,
+      coins: 0,
+      next_review: '',
+      plan: plan.value ?? { items: [], completed: 0, due: 0, mastered: 0, learned: 0, total: 0, next_review: null },
+      coach_tip: '',
+    }
+    clearAdvanceTimer()
+    if (isNewWord(card) && card.usage) {
+      warmPhrasesNow([card.usage.phrase.text, card.usage.sentence.text], 'en-US')
+      warmPhrasesNow([card.usage.phrase.meaning, card.usage.sentence.meaning], 'zh-CN')
+    }
   }
   try {
     result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: card.key, answer: trimmed })
@@ -959,11 +982,6 @@ async function answer(value: string) {
       phase.value = 'result'
       void session.load(true).catch(() => {})
       clearAdvanceTimer()
-      // Warm only the companion lines + next card — full-plan warm steals PHP workers from listen taps.
-      if (isNewWord(card) && card.usage) {
-        warmPhrasesNow([card.usage.phrase.text, card.usage.sentence.text], 'en-US')
-        warmPhrasesNow([card.usage.phrase.meaning, card.usage.sentence.meaning], 'zh-CN')
-      }
       const upcoming = (plan.value?.items ?? []).find((item) => item.key !== card.key) ?? plan.value?.items?.[0]
       if (upcoming) warmPlanAudio([upcoming], upcoming)
       if (!isNewWord(card)) {
@@ -973,6 +991,11 @@ async function answer(value: string) {
         }, CORRECT_ADVANCE_MS)
       }
     } else if (multiChoice) {
+      // Server disagreed with the optimistic correct paint — snap back to the quiz.
+      if (localCorrect) {
+        phase.value = 'quiz'
+        result.value = null
+      }
       if (!wrongPicks.value.includes(trimmed)) wrongPicks.value = [...wrongPicks.value, trimmed]
       if (result.value.probe || result.value.challenge) {
         quizLocked.value = true
@@ -995,6 +1018,10 @@ async function answer(value: string) {
       phase.value = 'result'
     }
   } catch (e) {
+    if (localCorrect) {
+      phase.value = 'quiz'
+      result.value = null
+    }
     if (multiChoice && !localCorrect) {
       wrongPicks.value = wrongPicks.value.filter((pick) => pick !== trimmed)
     }

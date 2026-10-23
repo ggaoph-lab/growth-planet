@@ -101,7 +101,7 @@ class KidTtsTest extends TestCase
             ->assertJsonPath('data.provider', 'edge_tts');
     }
 
-    public function test_prefers_gemini_tts_when_a_gemini_key_is_configured(): void
+    public function test_falls_back_to_gemini_tts_when_edge_fails_and_prefer_gemini(): void
     {
         config([
             'services.tts.prefer_gemini' => true,
@@ -129,8 +129,9 @@ class KidTtsTest extends TestCase
                 ]],
             ]),
         ]);
+        // Interactive path always tries Edge first; Gemini is only the fallback.
         $this->mock(EdgeTtsClient::class, function ($mock): void {
-            $mock->shouldReceive('synthesize')->never();
+            $mock->shouldReceive('synthesize')->once()->andReturn(null);
         });
 
         $response = $this->actingAsKid($child, $device, $token)

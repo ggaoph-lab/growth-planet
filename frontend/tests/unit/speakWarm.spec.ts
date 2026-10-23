@@ -32,7 +32,7 @@ it('keeps cached phrases and allows retry after a failed prefetch', async () => 
   expect(api.post).toHaveBeenCalledTimes(2)
 })
 
-it('awaits an in-flight warm instead of opening a second synthesize', async () => {
+it('awaits a single-line warm instead of opening a second synthesize', async () => {
   let finishWarm!: (value: unknown) => void
   vi.mocked(api.post).mockImplementation((path: string) => {
     if (path === '/kid/tts/warm') {
@@ -45,10 +45,31 @@ it('awaits an in-flight warm instead of opening a second synthesize', async () =
   expect(api.post).toHaveBeenCalledWith('/kid/tts/warm', { texts: ['apple'], lang: 'en-US' })
   void speakPhrase('apple', 'en-US')
   await flushPromises()
-  // speakPrepared may re-queue the same line via warmPhrasesNow; never open /kid/tts while warm is live.
+  // Single-line warm is reused; do not open /kid/tts while that warm is live.
   expect(vi.mocked(api.post).mock.calls.every((call) => call[0] === '/kid/tts/warm')).toBe(true)
   finishWarm!({ items: [{ text: 'apple', audio_base64: 'YQ==', mime: 'audio/mpeg' }] })
   await flushPromises()
   stopSpeaking()
   expect(api.post).not.toHaveBeenCalledWith('/kid/tts', expect.anything())
+})
+
+it('falls through to /kid/tts when the phrase sits in a multi-line warm batch', async () => {
+  vi.mocked(api.post).mockImplementation((path: string) => {
+    if (path === '/kid/tts/warm') return new Promise(() => {})
+    return Promise.resolve({ available: true, audio_base64: 'Yg==', mime: 'audio/mpeg', provider: 'edge' })
+  })
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+    return Promise.resolve().then(() => {
+      // onended is attached after play() resolves — fire on the next macrotask.
+      window.setTimeout(() => this.dispatchEvent(new Event('ended')), 0)
+    })
+  })
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:batch')
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  const { warmPhrases, speakPhrase, stopSpeaking } = await import('@/shared/speak')
+  warmPhrases(['apple', 'banana', 'cherry'], 'en-US')
+  const speech = speakPhrase('apple', 'en-US')
+  await expect(speech).resolves.toBe(true)
+  expect(api.post).toHaveBeenCalledWith('/kid/tts', { text: 'apple', lang: 'en-US' })
+  stopSpeaking()
 })

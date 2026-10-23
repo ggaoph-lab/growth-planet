@@ -39,10 +39,10 @@ class QwenTtsService
         $cfg = $this->ai->resolve($familyId);
         $geminiKey = trim($cfg['gemini_api_key']);
         $qwenKey = trim($cfg['qwen_api_key']);
-        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', true);
-        $voiceTag = $preferGemini
-            ? 'gemini:'.$this->geminiVoiceFor($lang)
-            : $this->edgeVoiceFor($lang);
+        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', false);
+        // Always cache under Edge voice so warm + kid taps share one LAN-fast path.
+        // Gemini (when preferred) is only a fallback after Edge fails — never the first hop on NAS.
+        $voiceTag = $this->edgeVoiceFor($lang);
         $cacheKey = $this->cacheKey($text, $voiceTag);
         $cached = $this->readCache($cacheKey);
         if ($cached !== null) {
@@ -50,17 +50,17 @@ class QwenTtsService
         }
 
         $lock = Cache::lock($cacheKey.':lock', 25);
-        // Prefer waiting briefly for a sibling warm/speak over blocking kids for ~12s.
+        // Brief sibling wait only — interactive taps fall through to browser speech instead of ~4s silence.
         if (! $lock->get()) {
-            for ($i = 0; $i < 10; $i++) {
-                usleep(200_000);
+            for ($i = 0; $i < 4; $i++) {
+                usleep(100_000);
                 $cached = $this->readCache($cacheKey);
                 if ($cached !== null) {
                     return $cached;
                 }
             }
             try {
-                $lock->block(2);
+                $lock->block(1);
             } catch (LockTimeoutException) {
                 return $this->readCache($cacheKey);
             }
@@ -72,13 +72,11 @@ class QwenTtsService
                 return $cached;
             }
 
-            $result = null;
-            // Edge first for interactive latency; Gemini only when explicitly preferred.
-            if ($preferGemini) {
+            // Edge first for interactive latency on Synology / LAN.
+            $result = $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
+            if ($result === null && $preferGemini) {
                 $result = $this->synthesizeGemini($text, $geminiKey, $lang);
             }
-
-            $result ??= $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
             $english = str_starts_with($lang, 'en');
 
             if ($result === null && $qwenKey !== '') {
@@ -117,11 +115,8 @@ class QwenTtsService
     {
         $lang = $this->normalizeLang($lang);
         $cfg = $this->ai->resolve($familyId);
-        $geminiKey = trim($cfg['gemini_api_key']);
-        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', true);
-        $voiceTag = $preferGemini
-            ? 'gemini:'.$this->geminiVoiceFor($lang)
-            : $this->edgeVoiceFor($lang);
+        // Warm must fill the same Edge cache interactive speak() reads — Gemini-first left NAS kids waiting.
+        $voiceTag = $this->edgeVoiceFor($lang);
         $edgeVoice = $this->edgeVoiceFor($lang);
         $ordered = [];
         $aliases = [];
@@ -179,25 +174,6 @@ class QwenTtsService
 
             $pending[] = $text;
             $locks[$text] = $lock;
-        }
-
-        if ($pending !== [] && $preferGemini) {
-            $stillPending = [];
-            foreach ($pending as $text) {
-                $audio = $this->synthesizeGemini($text, $geminiKey, $lang);
-                if ($audio !== null) {
-                    $this->storeCache($this->cacheKey($text, $voiceTag), $audio);
-                    $ordered[$text] = array_merge($ordered[$text], $audio);
-                    Log::info('tts.ready', ['provider' => $audio['provider']]);
-                    if (isset($locks[$text])) {
-                        $locks[$text]->release();
-                        unset($locks[$text]);
-                    }
-                } else {
-                    $stillPending[] = $text;
-                }
-            }
-            $pending = $stillPending;
         }
 
         if ($pending !== []) {

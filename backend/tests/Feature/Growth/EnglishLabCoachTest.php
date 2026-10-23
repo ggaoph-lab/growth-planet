@@ -121,6 +121,27 @@ class EnglishLabCoachTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_correct_answer_reuses_plan_without_second_full_rebuild(): void
+    {
+        ['family' => $family] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $service = app(EnglishLearningService::class);
+        $before = $service->plan($child);
+        $this->assertGreaterThanOrEqual(2, count($before['items']));
+        $card = $before['items'][0];
+        $secondKey = (string) $before['items'][1]['key'];
+
+        $started = microtime(true);
+        $result = $service->answer($child, (string) $card['key'], (string) $card['meaning']);
+        $elapsedMs = (microtime(true) - $started) * 1000;
+
+        $this->assertTrue($result['correct']);
+        $keys = array_map(static fn ($item) => (string) ($item['key'] ?? ''), $result['plan']['items'] ?? []);
+        $this->assertNotContains((string) $card['key'], $keys);
+        $this->assertContains($secondKey, $keys);
+        $this->assertLessThan(800, $elapsedMs, 'correct course answer should skip a second full plan rebuild');
+    }
+
     public function test_local_ai_record_retries_after_provider_switch(): void
     {
         ['family' => $family] = $this->makeFamily();

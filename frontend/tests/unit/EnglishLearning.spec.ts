@@ -108,7 +108,7 @@ describe('English learning', () => {
     vi.mocked(speakPhrase).mockImplementation((_text, _lang, onStarted) => { start = onStarted!; return new Promise(resolve => { finish = resolve }) })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    expect(wrapper.text()).toContain('准备语音')
+    expect(wrapper.text()).toContain('准备中')
     expect(wrapper.text()).not.toContain('⏹ 停止')
     start()
     await flushPromises()
@@ -151,7 +151,8 @@ describe('English learning', () => {
     let finish!: (value: unknown) => void
     vi.mocked(api.postIdempotent).mockImplementation(() => new Promise(resolve => { finish = resolve }))
     await answerButton(wrapper, '苹果')!.trigger('click')
-    expect(wrapper.find('.answers .answer').attributes('disabled')).toBeDefined()
+    // Optimistic paint shows the result shell before the API returns rewards.
+    expect(wrapper.text()).toContain('答对了')
     expect(wrapper.text()).not.toContain('+2 XP')
     finish({ correct: true, meaning: '苹果', xp: 2, coins: 1, next_review: '2026-10-14', plan: { ...plan, items: [], completed: 1 } })
     await flushPromises()

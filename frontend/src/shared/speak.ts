@@ -156,14 +156,24 @@ function rememberAudio(text: string, base64: string, mime: string): void {
   preparedAudio.set(text, { base64, mime })
 }
 
+/** Drop in-memory TTS blobs (settings “clear cache”). Playback unlock is kept. */
+export function clearSpeakCache(): void {
+  stopSpeaking()
+  preparedAudio.clear()
+  pendingWarm.clear()
+  warmInFlight.clear()
+  warmQueue.length = 0
+  warming = 0
+}
+
 function audioKey(text: string, lang: string): string {
   return `${lang}\0${text}`
 }
 
 const WARM_CHUNK = 8
 const pendingWarm = new Set<string>()
-/** Queued/in-flight warm work so speak can await it instead of racing /kid/tts. */
-const warmInFlight = new Map<string, Promise<void>>()
+/** Queued/in-flight warm work so speak can await a single-line warm instead of racing /kid/tts. */
+const warmInFlight = new Map<string, { promise: Promise<void>; size: number }>()
 type WarmJob = { texts: string[]; lang: string; settle: () => void }
 const warmQueue: WarmJob[] = []
 let warming = 0
@@ -209,7 +219,7 @@ function enqueueWarm(phrases: string[], lang: string, priority: boolean): void {
     for (const text of chunk) {
       const key = audioKey(text, lang)
       pendingWarm.add(key)
-      warmInFlight.set(key, done)
+      warmInFlight.set(key, { promise: done, size: chunk.length })
     }
     if (priority) warmQueue.unshift({ texts: chunk, lang, settle })
     else warmQueue.push({ texts: chunk, lang, settle })
@@ -227,12 +237,16 @@ export function warmPhrasesNow(phrases: string[], lang = 'zh-CN'): void {
   enqueueWarm(phrases, lang, true)
 }
 
-/** Wait briefly for a warm hit; never block interactive taps on a long 8-phrase batch. */
-async function awaitWarmIfPending(text: string, lang: string, maxMs = 450): Promise<void> {
+/**
+ * Wait for a warm hit only when this line is alone in its job.
+ * Multi-phrase batches hold the TTS lock too long — interactive taps must not sit behind them.
+ */
+async function awaitWarmIfPending(text: string, lang: string): Promise<void> {
   const pending = warmInFlight.get(audioKey(text, lang))
   if (!pending) return
+  const maxMs = pending.size <= 1 ? 2_500 : 120
   await Promise.race([
-    pending,
+    pending.promise,
     new Promise<void>((resolve) => { window.setTimeout(resolve, maxMs) }),
   ])
 }
@@ -397,8 +411,7 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
   try {
     let ready = preparedAudio.get(audioKey(text, apiLang))
     if (!ready) {
-      // Prefer a just-queued single line; give up quickly and synthesize this phrase alone.
-      warmPhrasesNow([text], apiLang)
+      // Reuse a single-line warm already in flight; never enqueue a competing warm from a tap.
       await awaitWarmIfPending(text, apiLang)
       if (epoch !== speakEpoch) return false
       ready = preparedAudio.get(audioKey(text, apiLang))

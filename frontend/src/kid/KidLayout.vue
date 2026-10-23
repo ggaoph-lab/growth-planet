@@ -3,9 +3,11 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
+import { clearWarmGets } from '@/shared/api/warmGet'
 import type { Preferences } from '@/shared/api/types'
 import LanguageSwitch from '@/shared/LanguageSwitch.vue'
 import { avatarEmoji } from '@/shared/avatars'
+import { clearSpeakCache } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
@@ -14,6 +16,7 @@ const session = useSessionStore()
 const child = computed(() => session.me?.child ?? null)
 const settingsOpen = ref(false)
 const saveError = ref('')
+const clearingCache = ref(false)
 
 async function toggle(key: keyof Preferences): Promise<void> {
   if (!child.value) return
@@ -23,6 +26,28 @@ async function toggle(key: keyof Preferences): Promise<void> {
     session.setChildPreferences(prefs)
   } catch (e) {
     saveError.value = e instanceof ApiError ? e.message : t('common.prefsSaveFailed')
+  }
+}
+
+async function clearLocalCache(): Promise<void> {
+  if (clearingCache.value) return
+  clearingCache.value = true
+  saveError.value = ''
+  try {
+    clearWarmGets()
+    clearSpeakCache()
+    if ('caches' in window) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map((key) => caches.delete(key)))
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map((reg) => reg.unregister()))
+    }
+    window.location.reload()
+  } catch {
+    clearingCache.value = false
+    saveError.value = t('kid.clearCacheFailed')
   }
 }
 
@@ -58,6 +83,9 @@ function goHome(): void {
         </button>
         <button type="button" class="opt" @click="toggle('sounds')">
           <span>🔔 {{ t('kid.sounds') }}</span><span class="switch" :class="{ on: child.preferences.sounds }" />
+        </button>
+        <button type="button" class="opt" :disabled="clearingCache" @click="clearLocalCache">
+          <span>🧹 {{ clearingCache ? t('kid.clearingCache') : t('kid.clearCache') }}</span>
         </button>
         <p v-if="saveError" class="err">{{ saveError }}</p>
         <button type="button" class="big" @click="switchUser">👋 {{ t('kid.switchUser') }}</button>
@@ -178,6 +206,10 @@ function goHome(): void {
   color: #fff;
   font-size: 17px;
   cursor: pointer;
+}
+.opt:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 .switch {
   width: 48px;
