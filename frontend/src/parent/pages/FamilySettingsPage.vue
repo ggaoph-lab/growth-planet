@@ -73,12 +73,14 @@ const aiForm = reactive({
   gemini_model: 'gemini-3.1-flash-lite',
   qwen_model: 'qwen-turbo',
   openai_model: 'gpt-4o-mini',
+  openai_base_url: 'https://api.openai.com/v1',
   gemini_api_key: '',
   qwen_api_key: '',
   openai_api_key: '',
   clear_gemini_api_key: false,
   clear_qwen_api_key: false,
   clear_openai_api_key: false,
+  clear_openai_base_url: false,
 })
 const modelOptions = reactive<Record<AiProviderName, AiModelChoice[]>>({
   gemini: [],
@@ -138,12 +140,14 @@ async function loadAi(): Promise<void> {
   aiForm.gemini_model = data.gemini.model
   aiForm.qwen_model = data.qwen.model
   aiForm.openai_model = data.openai.model
+  aiForm.openai_base_url = data.openai.base_url || 'https://api.openai.com/v1'
   aiForm.gemini_api_key = ''
   aiForm.qwen_api_key = ''
   aiForm.openai_api_key = ''
   aiForm.clear_gemini_api_key = false
   aiForm.clear_qwen_api_key = false
   aiForm.clear_openai_api_key = false
+  aiForm.clear_openai_base_url = false
   modelTouched.gemini = false
   modelTouched.qwen = false
   modelTouched.openai = false
@@ -217,10 +221,13 @@ async function loadModels(provider: AiProviderName, key = ''): Promise<void> {
   const seq = ++modelRequest[provider]
   modelLoading[provider] = true
   try {
-    const body: { provider: AiProviderName; api_key?: string; preferred_model?: string } = { provider }
+    const body: { provider: AiProviderName; api_key?: string; preferred_model?: string; base_url?: string } = { provider }
     if (key) body.api_key = key
     const preferred = aiForm[modelField(provider)].trim()
     if (preferred) body.preferred_model = preferred
+    if (provider === 'openai' && !aiForm.clear_openai_base_url && aiForm.openai_base_url.trim()) {
+      body.base_url = aiForm.openai_base_url.trim()
+    }
     const data = await api.post<AiModelList>('/parent/ai-models', body)
     if (seq !== modelRequest[provider]) return
     applyModelList(provider, data)
@@ -502,6 +509,8 @@ async function saveAi(): Promise<void> {
     else if (aiForm.qwen_api_key.trim()) payload.qwen_api_key = aiForm.qwen_api_key.trim()
     if (aiForm.clear_openai_api_key) payload.clear_openai_api_key = true
     else if (aiForm.openai_api_key.trim()) payload.openai_api_key = aiForm.openai_api_key.trim()
+    if (aiForm.clear_openai_base_url) payload.clear_openai_base_url = true
+    else if (aiForm.openai_base_url.trim()) payload.openai_base_url = aiForm.openai_base_url.trim()
 
     ai.value = await api.put<AiSettings>('/parent/ai-settings', payload)
     aiForm.gemini_api_key = ''
@@ -510,10 +519,12 @@ async function saveAi(): Promise<void> {
     aiForm.clear_gemini_api_key = false
     aiForm.clear_qwen_api_key = false
     aiForm.clear_openai_api_key = false
+    aiForm.clear_openai_base_url = false
     aiForm.provider = ai.value.provider
     aiForm.gemini_model = ai.value.gemini.model
     aiForm.qwen_model = ai.value.qwen.model
     aiForm.openai_model = ai.value.openai.model
+    aiForm.openai_base_url = ai.value.openai.base_url || 'https://api.openai.com/v1'
     modelTouched.gemini = true
     modelTouched.qwen = true
     modelTouched.openai = true
@@ -556,6 +567,12 @@ watch(() => aiForm.qwen_api_key, (value) => {
 })
 watch(() => aiForm.openai_api_key, (value) => {
   if (tab.value === 'ai') scheduleModels('openai', value)
+})
+watch(() => aiForm.openai_base_url, () => {
+  if (tab.value === 'ai') scheduleModels('openai', draftKey('openai'))
+})
+watch(() => aiForm.clear_openai_base_url, () => {
+  if (tab.value === 'ai') scheduleModels('openai', draftKey('openai'))
 })
 watch(() => aiForm.clear_gemini_api_key, (clearing) => {
   if (tab.value !== 'ai') return
@@ -793,7 +810,7 @@ onMounted(load)
               <el-option :label="t('parent.settings.aiProviderAuto')" value="auto" />
               <el-option label="Gemini" value="gemini" />
               <el-option :label="t('common.homeworkParserQwen')" value="qwen" />
-              <el-option label="ChatGPT" value="openai" />
+              <el-option :label="t('parent.settings.aiProviderOpenAi')" value="openai" />
               <el-option :label="t('common.homeworkParserRules')" value="rules" />
             </el-select>
             <div class="hint">{{ t('parent.settings.aiProviderHint') }}</div>
@@ -881,11 +898,25 @@ onMounted(load)
             <div v-if="modelNote.qwen" class="hint">{{ modelNote.qwen }}</div>
           </el-form-item>
 
-          <el-divider content-position="left">ChatGPT</el-divider>
+          <el-divider content-position="left">{{ t('parent.settings.aiProviderOpenAi') }}</el-divider>
+          <p class="hint">{{ t('parent.settings.openaiRelayHint') }}</p>
           <div v-if="ai" class="ai-status">
             {{ sourceLabel(ai.openai.source) }}
             <span v-if="ai.openai.hint"> · {{ ai.openai.hint }}</span>
+            <span v-if="ai.openai.base_url_customized"> · {{ t('parent.settings.openaiRelayActive') }}</span>
           </div>
+          <el-form-item :label="t('parent.settings.openaiBaseUrl')">
+            <el-input
+              v-model="aiForm.openai_base_url"
+              maxlength="512"
+              :placeholder="t('parent.settings.openaiBaseUrlPlaceholder')"
+              :disabled="aiForm.clear_openai_base_url"
+            />
+            <div class="hint">{{ t('parent.settings.openaiBaseUrlHint') }}</div>
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="aiForm.clear_openai_base_url">{{ t('parent.settings.clearOpenAiBaseUrl') }}</el-checkbox>
+          </el-form-item>
           <el-form-item :label="t('parent.settings.apiKey')">
             <div class="api-key-row">
               <el-input
@@ -911,6 +942,8 @@ onMounted(load)
               v-if="modelOptions.openai.length > 0 || modelLoading.openai"
               v-model="aiForm.openai_model"
               filterable
+              allow-create
+              default-first-option
               style="width: 100%"
               :loading="modelLoading.openai"
               :placeholder="t('parent.settings.modelsLoading')"
@@ -920,6 +953,7 @@ onMounted(load)
             </el-select>
             <el-input v-else v-model="aiForm.openai_model" maxlength="128" @input="markModelTouched('openai')" />
             <div v-if="modelNote.openai" class="hint">{{ modelNote.openai }}</div>
+            <div class="hint">{{ t('parent.settings.openaiModelHint') }}</div>
           </el-form-item>
 
           <el-button type="primary" :loading="savingAi" native-type="submit">{{ t('common.save') }}</el-button>

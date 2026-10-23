@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AiSettingsController
 {
@@ -33,6 +34,7 @@ class AiSettingsController
         $data = $request->validate([
             'provider' => ['required', 'string', Rule::in(['gemini', 'qwen', 'openai'])],
             'api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
+            'base_url' => ['sometimes', 'nullable', 'string', 'max:512'],
             'preferred_model' => ['sometimes', 'nullable', 'string', 'max:128'],
         ]);
 
@@ -47,9 +49,12 @@ class AiSettingsController
         $cfg = $this->aiConfig->resolve($this->context->familyId());
         $draft = trim((string) ($data['api_key'] ?? ''));
         $apiKey = $draft !== '' ? $draft : (string) $cfg[$provider.'_api_key'];
+        $draftBase = trim((string) ($data['base_url'] ?? ''));
         $baseUrl = match ($provider) {
             'gemini' => (string) config('services.gemini.base_url'),
-            'openai' => (string) $cfg['openai_base_url'],
+            'openai' => $draftBase !== ''
+                ? FamilyAiConfig::normalizeOpenAiBaseUrl($draftBase)
+                : (string) $cfg['openai_base_url'],
             default => (string) config('services.qwen.base_url'),
         };
         $preferred = trim((string) ($data['preferred_model'] ?? ''));
@@ -72,9 +77,11 @@ class AiSettingsController
             'qwen_model' => ['sometimes', 'nullable', 'string', 'max:128'],
             'openai_api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
             'openai_model' => ['sometimes', 'nullable', 'string', 'max:128'],
+            'openai_base_url' => ['sometimes', 'nullable', 'string', 'max:512'],
             'clear_gemini_api_key' => ['sometimes', 'boolean'],
             'clear_qwen_api_key' => ['sometimes', 'boolean'],
             'clear_openai_api_key' => ['sometimes', 'boolean'],
+            'clear_openai_base_url' => ['sometimes', 'boolean'],
         ]);
 
         $familyId = $this->context->familyId();
@@ -131,6 +138,23 @@ class AiSettingsController
             if ($model !== '') {
                 $this->settings->set('ai.openai_model', $model, $familyId, $actorId);
                 $changes['openai_model'] = $model;
+            }
+        }
+
+        if (! empty($data['clear_openai_base_url'])) {
+            $this->settings->set('ai.openai_base_url', '', $familyId, $actorId);
+            $changes['openai_base_url'] = 'cleared';
+        } elseif (array_key_exists('openai_base_url', $data) && is_string($data['openai_base_url'])) {
+            $base = trim($data['openai_base_url']);
+            if ($base !== '') {
+                if (! filter_var($base, FILTER_VALIDATE_URL) || ! str_starts_with(strtolower($base), 'http')) {
+                    throw ValidationException::withMessages([
+                        'openai_base_url' => '请填写以 http:// 或 https:// 开头的中转站地址。',
+                    ]);
+                }
+                $normalized = FamilyAiConfig::normalizeOpenAiBaseUrl($base);
+                $this->settings->set('ai.openai_base_url', $normalized, $familyId, $actorId);
+                $changes['openai_base_url'] = $normalized;
             }
         }
 

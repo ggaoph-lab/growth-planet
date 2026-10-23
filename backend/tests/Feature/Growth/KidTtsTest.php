@@ -101,54 +101,36 @@ class KidTtsTest extends TestCase
             ->assertJsonPath('data.provider', 'edge_tts');
     }
 
-    public function test_falls_back_to_gemini_tts_when_edge_fails_and_prefer_gemini(): void
+    public function test_does_not_call_gemini_tts_when_edge_fails(): void
     {
         config([
-            'services.tts.prefer_gemini' => true,
             'services.gemini.api_key' => 'test-gemini-key',
-            'services.gemini.base_url' => 'https://generativelanguage.googleapis.com/v1beta',
-            'services.gemini.tts_model' => 'gemini-2.5-flash-preview-tts',
-            'services.gemini.tts_voice_en' => 'Kore',
+            'services.tts.prefer_gemini' => true,
         ]);
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
         [$device, $token] = $this->makeDevice($family, $parent);
 
-        $pcm = str_repeat("\0\0", 240); // 10ms of silence at 24kHz mono 16-bit
-        Http::fake([
-            'generativelanguage.googleapis.com/*' => Http::response([
-                'candidates' => [[
-                    'content' => [
-                        'parts' => [[
-                            'inlineData' => [
-                                'mimeType' => 'audio/L16;codec=pcm;rate=24000',
-                                'data' => base64_encode($pcm),
-                            ],
-                        ]],
-                    ],
-                ]],
-            ]),
-        ]);
-        // Interactive path always tries Edge first; Gemini is only the fallback.
+        Http::fake(function (\Illuminate\Http\Client\Request $request) {
+            if (str_contains($request->url(), 'generativelanguage.googleapis.com')) {
+                return Http::response(['error' => 'unused'], 500);
+            }
+            if (str_contains($request->url(), 'translate.google.com')) {
+                return Http::response(str_repeat('a', 128), 200, ['Content-Type' => 'audio/mpeg']);
+            }
+
+            return Http::response('unexpected', 404);
+        });
         $this->mock(EdgeTtsClient::class, function ($mock): void {
             $mock->shouldReceive('synthesize')->once()->andReturn(null);
         });
 
-        $response = $this->actingAsKid($child, $device, $token)
+        $this->actingAsKid($child, $device, $token)
             ->postJson('/api/v1/kid/tts', ['text' => 'I like apples.', 'lang' => 'en-US'])
             ->assertOk()
             ->assertJsonPath('data.available', true)
-            ->assertJsonPath('data.provider', 'gemini_tts')
-            ->assertJsonPath('data.mime', 'audio/wav');
+            ->assertJsonPath('data.provider', 'google_tts');
 
-        $wav = base64_decode((string) $response->json('data.audio_base64'), true);
-        $this->assertNotFalse($wav);
-        $this->assertStringStartsWith('RIFF', $wav);
-
-        Http::assertSent(function ($request) {
-            return str_contains($request->url(), 'gemini-2.5-flash-preview-tts:generateContent')
-                && ($request['generationConfig']['speechConfig']['voiceConfig']['prebuiltVoiceConfig']['voiceName'] ?? null) === 'Kore'
-                && ($request['contents'][0]['parts'][0]['text'] ?? null) === 'I like apples.';
-        });
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com'));
     }
 }

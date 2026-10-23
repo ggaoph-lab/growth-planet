@@ -37,16 +37,21 @@ class OpenAiClient implements HomeworkLlmClient
         $model = (string) ($config['model'] ?? config('services.openai.model', 'gpt-4o-mini'));
         $timeout = max(5, (int) ($config['timeout'] ?? config('services.openai.timeout', 30)));
 
+        $payload = [
+            'model' => $model,
+            'messages' => $messages,
+            'temperature' => 0.2,
+        ];
+        // Native OpenAI JSON mode; many Claude / relay models reject response_format.
+        if (! str_contains(strtolower($model), 'claude')) {
+            $payload['response_format'] = ['type' => 'json_object'];
+        }
+
         try {
             $response = Http::timeout($timeout)
                 ->withToken($apiKey)
                 ->acceptJson()
-                ->post($baseUrl.'/chat/completions', [
-                    'model' => $model,
-                    'messages' => $messages,
-                    'temperature' => 0.2,
-                    'response_format' => ['type' => 'json_object'],
-                ]);
+                ->post($baseUrl.'/chat/completions', $payload);
         } catch (ConnectionException $e) {
             HomeworkLlmTimeoutException::throwIfTimeout($this->name(), $e);
             LlmFailureTracker::set('unreachable');

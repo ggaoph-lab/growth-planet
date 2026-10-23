@@ -95,6 +95,9 @@ export interface AiProviderStatus {
   model: string
   model_customized: boolean
   hint: string | null
+  /** OpenAI-compatible relay root (…/v1). Present on the openai slot. */
+  base_url?: string | null
+  base_url_customized?: boolean
 }
 
 export interface AiModelChoice {

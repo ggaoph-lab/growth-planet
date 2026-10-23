@@ -37,11 +37,8 @@ class QwenTtsService
 
         $lang = $this->normalizeLang($lang);
         $cfg = $this->ai->resolve($familyId);
-        $geminiKey = trim($cfg['gemini_api_key']);
         $qwenKey = trim($cfg['qwen_api_key']);
-        $preferGemini = $geminiKey !== '' && (bool) config('services.tts.prefer_gemini', false);
-        // Always cache under Edge voice so warm + kid taps share one LAN-fast path.
-        // Gemini (when preferred) is only a fallback after Edge fails — never the first hop on NAS.
+        // Kid read-aloud + daily warm share Edge neural cache (Gemini TTS quota is exhausted / unused).
         $voiceTag = $this->edgeVoiceFor($lang);
         $cacheKey = $this->cacheKey($text, $voiceTag);
         $cached = $this->readCache($cacheKey);
@@ -72,11 +69,7 @@ class QwenTtsService
                 return $cached;
             }
 
-            // Edge first for interactive latency on Synology / LAN.
             $result = $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
-            if ($result === null && $preferGemini) {
-                $result = $this->synthesizeGemini($text, $geminiKey, $lang);
-            }
             $english = str_starts_with($lang, 'en');
 
             if ($result === null && $qwenKey !== '') {

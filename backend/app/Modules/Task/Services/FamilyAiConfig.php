@@ -72,6 +72,15 @@ class FamilyAiConfig
             $openaiModel = (string) config('services.openai.model', 'gpt-4o-mini');
         }
 
+        $openaiBaseUrl = '';
+        if ($familyId !== null) {
+            $openaiBaseUrl = trim((string) $this->settings->get('ai.openai_base_url', $familyId));
+        }
+        if ($openaiBaseUrl === '') {
+            $openaiBaseUrl = (string) config('services.openai.base_url', 'https://api.openai.com/v1');
+        }
+        $openaiBaseUrl = self::normalizeOpenAiBaseUrl($openaiBaseUrl);
+
         return [
             'provider' => $provider !== '' ? $provider : 'auto',
             'gemini_api_key' => $geminiKey,
@@ -80,7 +89,7 @@ class FamilyAiConfig
             'qwen_model' => $qwenModel,
             'openai_api_key' => $openaiKey,
             'openai_model' => $openaiModel,
-            'openai_base_url' => (string) config('services.openai.base_url', 'https://api.openai.com/v1'),
+            'openai_base_url' => $openaiBaseUrl,
             'gemini_configured' => $geminiKey !== '',
             'qwen_configured' => $qwenKey !== '',
             'openai_configured' => $openaiKey !== '',
@@ -88,6 +97,20 @@ class FamilyAiConfig
             'qwen_source' => $qwenSource,
             'openai_source' => $openaiSource,
         ];
+    }
+
+    /** Accept host or …/v1; OpenAiClient appends /chat/completions. */
+    public static function normalizeOpenAiBaseUrl(string $url): string
+    {
+        $url = rtrim(trim($url), '/');
+        if ($url === '') {
+            return (string) config('services.openai.base_url', 'https://api.openai.com/v1');
+        }
+        if (preg_match('#/v\d+$#', $url) === 1) {
+            return $url;
+        }
+
+        return $url.'/v1';
     }
 
     /**
@@ -121,6 +144,9 @@ class FamilyAiConfig
                 'model' => $cfg['openai_model'],
                 'model_customized' => $familyId !== null && $this->settings->has('ai.openai_model', $familyId),
                 'hint' => $this->maskHint($cfg['openai_api_key']),
+                'base_url' => $cfg['openai_base_url'],
+                'base_url_customized' => $familyId !== null && $this->settings->has('ai.openai_base_url', $familyId)
+                    && trim((string) $this->settings->get('ai.openai_base_url', $familyId)) !== '',
             ],
         ];
     }

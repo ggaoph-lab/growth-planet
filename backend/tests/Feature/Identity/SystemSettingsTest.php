@@ -131,6 +131,32 @@ class SystemSettingsTest extends TestCase
         $this->assertSame('sk-family-chatgpt', app(Settings::class)->get('ai.openai_api_key', $family->id));
     }
 
+    public function test_ai_settings_store_openai_compatible_relay_base_url(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        config([
+            'services.openai.api_key' => '',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+        ]);
+
+        $this->actingAsParent($parent, sudo: true)
+            ->putJson('/api/v1/parent/ai-settings', [
+                'provider' => 'openai',
+                'openai_api_key' => 'ak-relay-key',
+                'openai_model' => 'claude-sonnet-4',
+                'openai_base_url' => 'https://ai.akile.ai',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.openai.configured', true)
+            ->assertJsonPath('data.openai.base_url', 'https://ai.akile.ai/v1')
+            ->assertJsonPath('data.openai.base_url_customized', true)
+            ->assertJsonPath('data.openai.model', 'claude-sonnet-4');
+
+        $this->assertSame('https://ai.akile.ai/v1', app(Settings::class)->get('ai.openai_base_url', $family->id));
+        $cfg = app(\App\Modules\Task\Services\FamilyAiConfig::class)->resolve($family->id);
+        $this->assertSame('https://ai.akile.ai/v1', $cfg['openai_base_url']);
+    }
+
     public function test_ai_model_list_defaults_to_the_newest_chat_model(): void
     {
         ['parent' => $parent] = $this->makeFamily();
