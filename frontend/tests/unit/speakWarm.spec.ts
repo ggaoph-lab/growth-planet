@@ -46,7 +46,7 @@ it('awaits an in-flight warm instead of opening a second synthesize', async () =
   void speakPhrase('apple', 'en-US')
   await flushPromises()
   // speakPrepared may re-queue the same line via warmPhrasesNow; never open /kid/tts while warm is live.
-  expect(api.post.mock.calls.every(([path]) => path === '/kid/tts/warm')).toBe(true)
+  expect(vi.mocked(api.post).mock.calls.every((call) => call[0] === '/kid/tts/warm')).toBe(true)
   finishWarm!({ items: [{ text: 'apple', audio_base64: 'YQ==', mime: 'audio/mpeg' }] })
   await flushPromises()
   stopSpeaking()
