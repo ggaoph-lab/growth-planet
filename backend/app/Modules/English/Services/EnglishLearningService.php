@@ -458,9 +458,10 @@ class EnglishLearningService
 
     public function answer(ChildProfile $child, string $key, string $answer): array
     {
-        // Resolve the card (may call AI) before opening a DB transaction so we never hold
-        // locks across HTTP. Concurrent GET /learning was stuck behind answer()+AI.
-        $item = collect($this->plan($child)['items'])->firstWhere('key', $key);
+        // One plan read before the write. Wrong multi-choice retries reuse it; only queue-changing
+        // answers pay for a second rebuild (avoids ~2× plan cost on every tap).
+        $plan = $this->plan($child);
+        $item = collect($plan['items'])->firstWhere('key', $key);
         $isSpelling = ! empty($item['spelling']) || (($item['kind'] ?? '') === 'spelling');
         if (! $item) {
             throw ValidationException::withMessages(['answer' => '这道题已完成或不在今天的任务中，请刷新学习任务。']);
@@ -645,9 +646,13 @@ class EnglishLearningService
             $coachTip = '拼写正确，这个词算学会啦！';
         }
 
+        // Missed course/spelling cards stay on-screen — reuse the pre-answer plan.
+        // Probe/challenge taps and any correct/skip remove or replace the card.
+        $queueChanged = (bool) ($saved['correct'] ?? false) || $isSkip || $isProbe || $isChallenge;
+
         return [
             ...$saved,
-            'plan' => $this->plan($child),
+            'plan' => $queueChanged ? $this->plan($child) : $plan,
             'coach_tip' => $coachTip,
         ];
     }

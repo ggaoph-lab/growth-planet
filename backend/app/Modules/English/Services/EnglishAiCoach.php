@@ -629,18 +629,8 @@ class EnglishAiCoach
         }
 
         $fallback = $this->fallbackTip($text, $meaning);
-        // Wrong-answer taps must not block on the LLM (often ~5s+). Use prepared tips or local copy.
+        // Wrong-answer taps must not block on the LLM or extra tip writes.
         if (! $this->preparingDay) {
-            $items = is_array($tips) ? $tips : [];
-            $items[] = ['key' => $key, 'tip' => $fallback];
-            if ($record === null) {
-                $this->storeRecord($child, 'coach_tips', $date, ['on_demand' => true], $items, 'local', $this->selectedProvider($child), null);
-            } else {
-                DB::table('english_ai_records')->where('id', $record->id)->update([
-                    'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
-                ]);
-            }
-
             return $fallback;
         }
 

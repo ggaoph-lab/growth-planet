@@ -85,10 +85,7 @@ class EnglishLabCoachTest extends TestCase
         $this->assertFalse($result['correct']);
         $this->assertSame(0, $result['coins']);
         $this->assertNotSame('', $result['coach_tip']);
-        $this->assertDatabaseHas('english_ai_records', [
-            'child_id' => $child->id,
-            'purpose' => 'coach_tips',
-        ]);
+        $this->assertStringContainsString((string) $card['text'], (string) $result['coach_tip']);
     }
 
     public function test_wrong_answer_uses_local_tip_without_llm_wait(): void

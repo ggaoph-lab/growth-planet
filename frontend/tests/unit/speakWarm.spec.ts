@@ -45,10 +45,10 @@ it('awaits an in-flight warm instead of opening a second synthesize', async () =
   expect(api.post).toHaveBeenCalledWith('/kid/tts/warm', { texts: ['apple'], lang: 'en-US' })
   void speakPhrase('apple', 'en-US')
   await flushPromises()
-  expect(api.post).toHaveBeenCalledTimes(1)
+  // speakPrepared may re-queue the same line via warmPhrasesNow; never open /kid/tts while warm is live.
+  expect(api.post.mock.calls.every(([path]) => path === '/kid/tts/warm')).toBe(true)
   finishWarm!({ items: [{ text: 'apple', audio_base64: 'YQ==', mime: 'audio/mpeg' }] })
   await flushPromises()
-  // jsdom audio may not end; cancel playback once we know warm supplied the bytes.
   stopSpeaking()
   expect(api.post).not.toHaveBeenCalledWith('/kid/tts', expect.anything())
 })

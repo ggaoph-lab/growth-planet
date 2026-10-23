@@ -227,9 +227,14 @@ export function warmPhrasesNow(phrases: string[], lang = 'zh-CN'): void {
   enqueueWarm(phrases, lang, true)
 }
 
-async function awaitWarmIfPending(text: string, lang: string): Promise<void> {
+/** Wait briefly for a warm hit; never block interactive taps on a long 8-phrase batch. */
+async function awaitWarmIfPending(text: string, lang: string, maxMs = 450): Promise<void> {
   const pending = warmInFlight.get(audioKey(text, lang))
-  if (pending) await pending
+  if (!pending) return
+  await Promise.race([
+    pending,
+    new Promise<void>((resolve) => { window.setTimeout(resolve, maxMs) }),
+  ])
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
@@ -392,7 +397,8 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
   try {
     let ready = preparedAudio.get(audioKey(text, apiLang))
     if (!ready) {
-      // Reuse an in-flight warm instead of opening a second synthesize (lock wait).
+      // Prefer a just-queued single line; give up quickly and synthesize this phrase alone.
+      warmPhrasesNow([text], apiLang)
       await awaitWarmIfPending(text, apiLang)
       if (epoch !== speakEpoch) return false
       ready = preparedAudio.get(audioKey(text, apiLang))

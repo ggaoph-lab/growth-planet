@@ -27,6 +27,7 @@ type Item = {
   collected?: boolean
   blank_hint?: string
   answer?: string
+  correct_answer?: string
   prompt?: string
   question?: string
   usage?: {
@@ -940,32 +941,42 @@ async function answer(value: string) {
   if (!trimmed || wrongPicks.value.includes(trimmed)) return
   unlockSpeak()
   pendingAutoRead = false
-  busy.value = true
   error.value = ''
+  const card = current.value
+  const multiChoice = choices.value.length > 0 && !isSpellingCard(card)
+  // Paint a miss immediately so the kid can tap another option without waiting on the API.
+  const localCorrect = trimmed === (card.meaning ?? '') || trimmed === (card.text ?? '')
+    || trimmed === (card.correct_answer ?? '') || trimmed === (card.answer ?? '')
+  if (multiChoice && !localCorrect) {
+    wrongPicks.value = [...wrongPicks.value, trimmed]
+  } else {
+    busy.value = true
+  }
   try {
-    result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: current.value.key, answer: trimmed })
+    result.value = await api.postIdempotent<Result>('/kid/english/learning/answer', { key: card.key, answer: trimmed })
     plan.value = result.value.plan
-    // Keep remaining daily audio warm after the plan refreshes.
-    warmPlanAudio(plan.value?.items ?? [])
-    const multiChoice = choices.value.length > 0 && !isSpellingCard(current.value)
     if (result.value.correct) {
       phase.value = 'result'
       void session.load(true).catch(() => {})
       clearAdvanceTimer()
-      // New words pause for the companion phrase and sentence before continuing.
-      if (!isNewWord(current.value)) {
+      // Warm only the companion lines + next card — full-plan warm steals PHP workers from listen taps.
+      if (isNewWord(card) && card.usage) {
+        warmPhrasesNow([card.usage.phrase.text, card.usage.sentence.text], 'en-US')
+        warmPhrasesNow([card.usage.phrase.meaning, card.usage.sentence.meaning], 'zh-CN')
+      }
+      const upcoming = (plan.value?.items ?? []).find((item) => item.key !== card.key) ?? plan.value?.items?.[0]
+      if (upcoming) warmPlanAudio([upcoming], upcoming)
+      if (!isNewWord(card)) {
         advanceTimer = setTimeout(() => {
           advanceTimer = null
           next()
         }, CORRECT_ADVANCE_MS)
       }
     } else if (multiChoice) {
-      // Stay on the quiz: mark the miss red and let the child try another option.
-      wrongPicks.value = [...wrongPicks.value, trimmed]
+      if (!wrongPicks.value.includes(trimmed)) wrongPicks.value = [...wrongPicks.value, trimmed]
       if (result.value.probe || result.value.challenge) {
         quizLocked.value = true
       } else {
-        // Keep choices aligned with the server card if mode/options changed after the miss.
         const refreshed = (plan.value?.items ?? []).find((item) => item.key === current.value?.key)
         if (refreshed) {
           current.value = refreshed
@@ -984,6 +995,9 @@ async function answer(value: string) {
       phase.value = 'result'
     }
   } catch (e) {
+    if (multiChoice && !localCorrect) {
+      wrongPicks.value = wrongPicks.value.filter((pick) => pick !== trimmed)
+    }
     if (e instanceof ApiError) {
       error.value = Object.values(e.fieldErrors).flat()[0] || e.message
     } else {
@@ -1025,15 +1039,25 @@ function next() {
 const usageAudioPending = ref('')
 async function speakUsage(text: string, lang: 'en-US' | 'zh-CN') {
   if (!audioSupported) return
+  const phrase = text.trim()
+  if (!phrase) return
+  // Cut the previous line immediately so a second tap is never stuck behind the first fetch.
+  stopSpeaking()
+  speaking.value = false
+  loadingAudio.value = false
+  speakingLang.value = null
   unlockSpeak()
   audioMessage.value = ''
-  usageAudioPending.value = text
+  usageAudioPending.value = phrase
+  warmPhrasesNow([phrase], lang)
   try {
-    await speakPhrase(text, lang)
+    await speakPhrase(phrase, lang)
   } catch {
-    audioMessage.value = label('暂时无法朗读，请再试一次。', 'Could not play audio. Please try again.')
+    if (usageAudioPending.value === phrase) {
+      audioMessage.value = label('暂时无法朗读，请再试一次。', 'Could not play audio. Please try again.')
+    }
   } finally {
-    if (usageAudioPending.value === text) usageAudioPending.value = ''
+    if (usageAudioPending.value === phrase) usageAudioPending.value = ''
   }
 }
 function stopMicTracks() {
@@ -1672,8 +1696,8 @@ onUnmounted(() => {
             <p class="usage-pinyin" lang="zh-Latn">{{ meaningPinyin(current.usage[entry].meaning) }}</p>
             <p class="usage-meaning">{{ current.usage[entry].meaning }}</p>
             <div class="listen-row">
-              <button class="secondary" :disabled="!audioSupported || usageAudioPending === current.usage[entry].text" @click="speakUsage(current.usage[entry].text, 'en-US')">{{ usageAudioPending === current.usage[entry].text ? label('朗读中…', 'Reading…') : entry === 'phrase' ? label('听词组', 'Listen to phrase') : label('听例句', 'Listen to sentence') }}</button>
-              <button class="secondary" :disabled="!audioSupported" @click="speakUsage(current.usage[entry].meaning, 'zh-CN')">{{ label('听中文', 'Listen in Chinese') }}</button>
+              <button class="secondary" :disabled="!audioSupported" @click="speakUsage(current.usage[entry].text, 'en-US')">{{ usageAudioPending === current.usage[entry].text ? label('朗读中…', 'Reading…') : entry === 'phrase' ? label('听词组', 'Listen to phrase') : label('听例句', 'Listen to sentence') }}</button>
+              <button class="secondary" :disabled="!audioSupported" @click="speakUsage(current.usage[entry].meaning, 'zh-CN')">{{ usageAudioPending === current.usage[entry].meaning ? label('朗读中…', 'Reading…') : label('听中文', 'Listen in Chinese') }}</button>
             </div>
           </div>
         </section>
