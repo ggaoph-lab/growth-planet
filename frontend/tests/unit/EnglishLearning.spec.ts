@@ -760,4 +760,57 @@ describe('English learning', () => {
     expect(wrapper.text()).toContain('森林')
     wrapper.unmount()
   })
+
+  it('lets the listen-first button scroll to today’s fairy tale instead of staying disabled', async () => {
+    const tale = {
+      id: 'elves-shoemaker',
+      title_zh: '小精灵和鞋匠',
+      title_en: 'The Elves and the Shoemaker',
+      source: '格林童话',
+      source_en: 'Grimm',
+      zh_lines: ['从前有一个鞋匠。'],
+      en_lines: ['Once there was a shoemaker.'],
+    }
+    const scrollIntoView = vi.fn()
+    vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
+      if (selector === '.fairy-box') {
+        return { scrollIntoView } as unknown as Element
+      }
+      return null
+    })
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/kid/english/learning/speak') {
+        return { available: false, target: null, attempt: null, retention_days: 7 }
+      }
+      if (path === '/kid/english/learning/fairy-tale') {
+        return {
+          available: true,
+          reason: null,
+          new_words_completed: 10,
+          new_words_goal: 10,
+          heard: false,
+          tale,
+        }
+      }
+      return {
+        ...plan,
+        items: [],
+        completed: 10,
+        new_words_completed: 10,
+        fairy_tale_unlocked: true,
+        fairy_tale_heard_today: false,
+      }
+    })
+
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    const button = wrapper.findAll('.done-actions .primary').find(btn => btn.text().includes('先听完童话'))
+    expect(button).toBeTruthy()
+    expect(button!.attributes('disabled')).toBeUndefined()
+    await button!.trigger('click')
+    await flushPromises()
+    expect(scrollIntoView).toHaveBeenCalled()
+    wrapper.unmount()
+    vi.mocked(document.querySelector).mockRestore()
+  })
 })

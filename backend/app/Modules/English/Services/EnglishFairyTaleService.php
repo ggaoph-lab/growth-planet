@@ -233,6 +233,16 @@ class EnglishFairyTaleService
             $this->coach->discardLocalRecord($child, 'fairy_tale_day', $date);
             $record = null;
         }
+        // Replace an unheard same-day tale that already appeared on an earlier day.
+        if ($record !== null && ! $this->heardOnDate($child, $date)) {
+            $items = json_decode((string) $record->items, true);
+            $existing = is_array($items) && is_array($items[0] ?? null) ? $this->normalizeTale($items[0]) : null;
+            $seedId = is_array($existing) ? (string) ($existing['id'] ?? '') : '';
+            if ($seedId !== '' && in_array($seedId, $this->usedSeedIds($child, $date), true)) {
+                $this->coach->discardDayRecords($child, $date, ['fairy_tale_day']);
+                $record = null;
+            }
+        }
         if ($record === null) {
             $record = $this->createTale($child, $date);
         }
@@ -246,18 +256,83 @@ class EnglishFairyTaleService
         return is_array($tale) ? $this->normalizeTale($tale) : null;
     }
 
-    private function createTale(ChildProfile $child, string $date): object
+    /**
+     * Seed ids already assigned to this child on other days (most recent first).
+     *
+     * @return list<string>
+     */
+    private function usedSeedIds(ChildProfile $child, string $exceptDate): array
+    {
+        $rows = DB::table('english_ai_records')
+            ->where('child_id', $child->id)
+            ->where('purpose', 'fairy_tale_day')
+            ->where('business_date', '!=', $exceptDate)
+            ->orderByDesc('business_date')
+            ->get(['items', 'profile_snapshot']);
+
+        $ids = [];
+        foreach ($rows as $row) {
+            $snap = json_decode((string) ($row->profile_snapshot ?? ''), true);
+            $fromSnap = is_array($snap) ? trim((string) ($snap['seed_id'] ?? '')) : '';
+            if ($fromSnap !== '') {
+                $ids[] = $fromSnap;
+
+                continue;
+            }
+            $items = json_decode((string) $row->items, true);
+            $id = is_array($items) && is_array($items[0] ?? null)
+                ? trim((string) ($items[0]['id'] ?? ''))
+                : '';
+            if ($id !== '') {
+                $ids[] = $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * Prefer a seed this child has not heard yet; recycle only after the pool is exhausted.
+     *
+     * @return array<string, mixed>
+     */
+    private function pickSeed(ChildProfile $child, string $date): array
     {
         $seeds = config('english_fairy_tales.seeds', []);
-        $seed = is_array($seeds) && $seeds !== []
-            ? $seeds[((crc32($child->id.'|'.$date) % count($seeds)) + count($seeds)) % count($seeds)]
-            : [
+        if (! is_array($seeds) || $seeds === []) {
+            return [
                 'id' => 'red-riding-hood',
                 'title_zh' => '小红帽',
                 'title_en' => 'Little Red Riding Hood',
                 'source' => '格林童话',
                 'source_en' => 'Grimm',
             ];
+        }
+
+        $used = array_fill_keys($this->usedSeedIds($child, $date), true);
+        $fresh = array_values(array_filter(
+            $seeds,
+            static fn ($seed) => is_array($seed) && ! isset($used[(string) ($seed['id'] ?? '')])
+        ));
+        $pool = $fresh !== [] ? $fresh : array_values(array_filter($seeds, 'is_array'));
+        if ($pool === []) {
+            return [
+                'id' => 'red-riding-hood',
+                'title_zh' => '小红帽',
+                'title_en' => 'Little Red Riding Hood',
+                'source' => '格林童话',
+                'source_en' => 'Grimm',
+            ];
+        }
+
+        $index = ((crc32($child->id.'|'.$date) % count($pool)) + count($pool)) % count($pool);
+
+        return $pool[$index];
+    }
+
+    private function createTale(ChildProfile $child, string $date): object
+    {
+        $seed = $this->pickSeed($child, $date);
 
         $snapshot = [
             'seed_id' => $seed['id'] ?? 'red-riding-hood',

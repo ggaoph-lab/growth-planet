@@ -494,6 +494,74 @@ class EnglishLearningTest extends TestCase
         $this->assertSame(1, DB::table('english_learning_answers')->where('item_key', 'fairy-tale:heard')->count());
     }
 
+    public function test_daily_fairy_tale_avoids_repeating_an_earlier_seed(): void
+    {
+        config(['services.openai.api_key' => '', 'services.qwen.api_key' => '', 'services.gemini.api_key' => '']);
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        DB::table('english_ai_records')->insert([
+            'child_id' => $child->id,
+            'purpose' => 'fairy_tale_day',
+            'business_date' => '2026-10-14',
+            'profile_snapshot' => json_encode([
+                'seed_id' => 'elves-shoemaker',
+                'title_zh' => '小精灵和鞋匠',
+                'title_en' => 'The Elves and the Shoemaker',
+            ], JSON_UNESCAPED_UNICODE),
+            'items' => json_encode([[
+                'id' => 'elves-shoemaker',
+                'title_zh' => '小精灵和鞋匠',
+                'title_en' => 'The Elves and the Shoemaker',
+                'source' => '格林童话',
+                'source_en' => 'Grimm',
+                'zh_lines' => ['从前有一个鞋匠。'],
+                'en_lines' => ['Once there was a shoemaker.'],
+            ]], JSON_UNESCAPED_UNICODE),
+            'status' => 'local',
+            'provider' => null,
+            'model' => null,
+            'created_at' => now(),
+        ]);
+        // Collision: today's hash previously also mapped to elves-shoemaker.
+        DB::table('english_ai_records')->insert([
+            'child_id' => $child->id,
+            'purpose' => 'fairy_tale_day',
+            'business_date' => '2026-10-23',
+            'profile_snapshot' => json_encode([
+                'seed_id' => 'elves-shoemaker',
+                'title_zh' => '小精灵和鞋匠',
+                'title_en' => 'The Elves and the Shoemaker',
+            ], JSON_UNESCAPED_UNICODE),
+            'items' => json_encode([[
+                'id' => 'elves-shoemaker',
+                'title_zh' => '小精灵和鞋匠',
+                'title_en' => 'The Elves and the Shoemaker',
+                'source' => '格林童话',
+                'source_en' => 'Grimm',
+                'zh_lines' => ['鞋匠又忙了一天。'],
+                'en_lines' => ['The shoemaker worked another day.'],
+            ]], JSON_UNESCAPED_UNICODE),
+            'status' => 'local',
+            'provider' => null,
+            'model' => null,
+            'created_at' => now(),
+        ]);
+
+        $this->travelTo(CarbonImmutable::parse('2026-10-23 10:00:00', 'Asia/Shanghai'));
+        $this->seedCompletedNewWords($child, '2026-10-23', 10);
+
+        $tale = $this->actingAsKid($child, $device, $token)
+            ->getJson('/api/v1/kid/english/learning/fairy-tale')
+            ->assertOk()
+            ->assertJsonPath('data.available', true)
+            ->json('data.tale');
+
+        $this->assertNotSame('elves-shoemaker', $tale['id'] ?? null);
+        $this->assertNotSame('小精灵和鞋匠', $tale['title_zh'] ?? null);
+    }
+
     public function test_fairy_tale_word_can_be_added_and_practiced_from_today_new_words(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

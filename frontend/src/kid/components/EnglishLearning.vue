@@ -243,8 +243,25 @@ function hasHeardFairyTale(): boolean {
 function goHome() {
   void router.push({ name: 'kid-home' })
 }
+const needsFairyFirst = computed(() =>
+  !!plan.value?.fairy_tale_unlocked
+  && !(plan.value.fairy_tale_heard_today || fairyTale.value?.heard)
+  && newWordsCompleted.value >= newWordsGoal.value,
+)
+async function focusFairyTale() {
+  error.value = ''
+  if (!fairyTale.value?.available) {
+    await loadFairyTale()
+  }
+  await nextTick()
+  document.querySelector('.fairy-box')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 async function anotherRound() {
   if (busy.value) return
+  if (needsFairyFirst.value) {
+    await focusFairyTale()
+    return
+  }
   // Skip must work even if a previous upload is still pending.
   micHeld = false
   speakBusy.value = false
@@ -1914,12 +1931,13 @@ onUnmounted(() => {
         <button
           type="button"
           class="primary"
-          :disabled="busy || (!!plan?.fairy_tale_unlocked && !(plan.fairy_tale_heard_today || fairyTale?.heard) && newWordsCompleted >= newWordsGoal)"
+          :disabled="busy || (needsFairyFirst && fairyBusy)"
+          :aria-busy="busy || (needsFairyFirst && fairyBusy)"
           @click="anotherRound"
         >
-          {{ busy
+          {{ busy || (needsFairyFirst && fairyBusy)
             ? label('正在准备…', 'Preparing…')
-            : plan?.fairy_tale_unlocked && !(plan.fairy_tale_heard_today || fairyTale?.heard) && newWordsCompleted >= newWordsGoal
+            : needsFairyFirst
               ? label('先听完童话', 'Listen to the fairy tale first')
               : speakDone ? label('再学一轮', 'Another round') : label('先跳过跟读，再学一轮', 'Skip speak — another round') }} →
         </button>
@@ -2163,7 +2181,7 @@ h3 { font-size: clamp(24px, 4vw, 36px); margin: 18px 0 8px; overflow-wrap: anywh
 .stars { font-size: 22px; letter-spacing: 2px; color: #f5d76e; margin: 0 0 6px; }
 .done-actions { display: grid; gap: 10px; max-width: 320px; margin: 18px auto 0; }
 .done-home { display: block; margin: 10px auto 0; }
-button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; padding: 10px 18px; color: inherit; border: 1px solid #ffffff35; background: #ffffff0a; }button:disabled { opacity: .5; cursor: wait; }button:focus-visible { outline: 3px solid #8cdbc8; outline-offset: 3px; }
+button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; padding: 10px 18px; color: inherit; border: 1px solid #ffffff35; background: #ffffff0a; }button:disabled { opacity: .5; cursor: not-allowed; }button:disabled[aria-busy="true"] { cursor: wait; }button:focus-visible { outline: 3px solid #8cdbc8; outline-offset: 3px; }
 .listen-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 8px; }
 .primary { display: block; margin: 18px auto 0; background: #8cdbc8; color: #102c31; font-weight: 700; border: 0; }.secondary { font-size: 14px; }
 .answers { display: grid; gap: 12px; max-width: 480px; margin: 24px auto 0; }
