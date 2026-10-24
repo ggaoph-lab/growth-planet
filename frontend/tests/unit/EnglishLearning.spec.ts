@@ -246,11 +246,39 @@ describe('English learning', () => {
     vi.mocked(api.get).mockResolvedValue({ ...plan, items: [spell] })
     const wrapper = mount(EnglishLearning)
     await flushPromises()
-    expect(wrapper.text()).toContain('根据意思，把单词拼写出来')
+    expect(wrapper.text()).toContain('根据意思，点字母格子拼出单词')
     expect(wrapper.text()).toContain('我不会')
     expect(wrapper.text()).toContain('听中文')
     expect(wrapper.text()).not.toContain('听中文意思')
+    expect(wrapper.find('input.spelling-input').exists()).toBe(false)
+    expect(wrapper.findAll('.spell-slot').length).toBe(6)
+    expect(wrapper.findAll('.spell-tile').length).toBeGreaterThan(0)
     expect(speakPhrase).toHaveBeenCalledWith('garden', 'en-US', expect.any(Function))
+    wrapper.unmount()
+  })
+
+  it('fills spelling blanks from letter tiles without a keyboard', async () => {
+    const spell = {
+      key: 'spell:garden', theme: '拼写填空', kind: 'spelling', text: 'garden', meaning: '花园',
+      emoji: '✍️', options: [], review: false, stage: 0, spelling: true, blank_hint: 'g _ r _ e n', probe: true,
+    }
+    vi.mocked(api.get).mockResolvedValue({ ...plan, items: [spell] })
+    vi.mocked(api.postIdempotent).mockResolvedValue({
+      correct: true, meaning: '花园', xp: 0, coins: 0, next_review: '2026-10-13',
+      plan: { ...plan, items: [] }, spelling: true,
+    })
+    const wrapper = mount(EnglishLearning)
+    await flushPromises()
+    // blank_hint reveals g, r, e, n — need a then d from the bank.
+    const needed = ['a', 'd']
+    for (const letter of needed) {
+      const tile = wrapper.findAll('.spell-tile').find(button => !button.classes().includes('used') && button.text() === letter)
+      expect(tile).toBeTruthy()
+      await tile!.trigger('click')
+    }
+    await wrapper.findAll('button').find(button => button.text() === '提交拼写')!.trigger('click')
+    await flushPromises()
+    expect(api.postIdempotent).toHaveBeenCalledWith('/kid/english/learning/answer', { key: 'spell:garden', answer: 'garden' })
     wrapper.unmount()
   })
 

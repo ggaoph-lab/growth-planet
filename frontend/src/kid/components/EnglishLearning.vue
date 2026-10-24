@@ -157,11 +157,17 @@ const speakingOption = ref<string | null>(null)
 const choices = ref<string[]>([])
 const wrongPicks = ref<string[]>([])
 const quizLocked = ref(false)
-const spellingInput = ref('')
 const wordSaveMessage = ref('')
 const savedWords = ref<string[]>([])
 const audioSupported = canSpeak()
+type SpellSlot = { locked: boolean; char: string; tileId: number | null }
+type SpellTile = { id: number; char: string; used: boolean }
+const spellSlots = ref<SpellSlot[]>([])
+const spellTiles = ref<SpellTile[]>([])
+const spellingAssembled = computed(() => spellSlots.value.map((slot) => slot.char).join(''))
+const spellingComplete = computed(() => spellSlots.value.length > 0 && spellSlots.value.every((slot) => slot.locked || slot.char !== ''))
 const SPELL_SKIP = new Set(['a', 'an', 'the', 'is', 'am', 'are', 'was', 'were', 'be', 'to', 'of', 'and', 'or', 'in', 'on', 'at', 'my', 'your', 'i', 'you', 'we', 'he', 'she', 'it', 'they', 'this', 'that', 'do', 'does', 'did', 'can', 'will'])
+const SPELL_DISTRACTORS = 'abcdefghijklmnopqrstuvwxyz'
 const finished = computed(() => plan.value && !current.value)
 const aiConnected = computed(() => plan.value?.ai_status === 'ok')
 function aiErrorDetail(code: string | null | undefined): string {
@@ -365,6 +371,73 @@ function cardEmoji(item: Item | null) {
 }
 function isSpellingCard(item: Item | null) {
   return !!item && (!!item.spelling || item.kind === 'spelling')
+}
+/** Which letter positions are already revealed (matches backend blankHint). */
+function spellingRevealMask(word: string, hint?: string): boolean[] {
+  const chars = [...word.toLowerCase()]
+  const len = chars.length
+  if (hint) {
+    const parts = hint.split(/[\u00A0\s]+/).filter((part) => part.length > 0)
+    if (parts.length === len) return parts.map((part) => part !== '_')
+  }
+  if (len <= 2) return chars.map(() => true)
+  const keep = new Set([0, len - 1])
+  if (len >= 4) keep.add(Math.floor((len - 1) / 2))
+  return chars.map((_, index) => keep.has(index))
+}
+function shuffleLetters<T>(items: T[]): T[] {
+  const next = [...items]
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[next[i], next[j]] = [next[j]!, next[i]!]
+  }
+  return next
+}
+/** Duolingo-style board: locked hint letters + a bank of tiles for the blanks. */
+function rebuildSpellingBoard(item: Item | null) {
+  spellSlots.value = []
+  spellTiles.value = []
+  if (!item || !isSpellingCard(item)) return
+  const word = item.text.trim().toLowerCase()
+  if (!word) return
+  const chars = [...word]
+  const mask = spellingRevealMask(word, item.blank_hint)
+  spellSlots.value = chars.map((char, index) => ({
+    locked: mask[index] === true,
+    char: mask[index] ? char : '',
+    tileId: null,
+  }))
+  const needed = chars.filter((_, index) => !mask[index])
+  const inWord = new Set(chars)
+  const pool = shuffleLetters([...SPELL_DISTRACTORS].filter((letter) => !inWord.has(letter)))
+  const extra = Math.min(4, Math.max(2, Math.ceil(needed.length / 2)), pool.length)
+  const bank = shuffleLetters([...needed, ...pool.slice(0, extra)])
+  spellTiles.value = bank.map((char, id) => ({ id, char, used: false }))
+}
+function pickSpellTile(tileId: number) {
+  if (busy.value || quizLocked.value || phase.value !== 'quiz') return
+  const tile = spellTiles.value.find((entry) => entry.id === tileId)
+  if (!tile || tile.used) return
+  const slotIdx = spellSlots.value.findIndex((slot) => !slot.locked && slot.char === '')
+  if (slotIdx < 0) return
+  spellTiles.value = spellTiles.value.map((entry) => (entry.id === tileId ? { ...entry, used: true } : entry))
+  spellSlots.value = spellSlots.value.map((slot, index) => (
+    index === slotIdx ? { ...slot, char: tile.char, tileId } : slot
+  ))
+}
+function clearSpellSlot(slotIdx: number) {
+  if (busy.value || quizLocked.value || phase.value !== 'quiz') return
+  const slot = spellSlots.value[slotIdx]
+  if (!slot || slot.locked || slot.tileId == null) return
+  const tileId = slot.tileId
+  spellSlots.value = spellSlots.value.map((entry, index) => (
+    index === slotIdx ? { ...entry, char: '', tileId: null } : entry
+  ))
+  spellTiles.value = spellTiles.value.map((entry) => (entry.id === tileId ? { ...entry, used: false } : entry))
+}
+function submitSpelling() {
+  if (!spellingComplete.value) return
+  void answer(spellingAssembled.value)
 }
 function sentenceTokens(text: string) {
   return text.split(/(\s+)/).filter(part => part.length > 0)
@@ -599,7 +672,7 @@ function choose(item?: Item) {
   result.value = null
   wrongPicks.value = []
   quizLocked.value = false
-  spellingInput.value = ''
+  rebuildSpellingBoard(item ?? null)
   wordSaveMessage.value = ''
   choices.value = [...(item?.options ?? [])]
   for (let i = choices.value.length - 1; i > 0; i--) {
@@ -1642,30 +1715,46 @@ onUnmounted(() => {
       </template>
       <template v-else-if="phase === 'quiz'">
         <template v-if="isSpellingCard(current)">
-          <p>{{ label('根据意思，把单词拼写出来', 'Spell the word from the meaning') }}</p>
+          <p>{{ label('根据意思，点字母格子拼出单词', 'Spell the word by tapping letter tiles') }}</p>
           <h3>
             <span class="word-emoji" aria-hidden="true">{{ cardEmoji(current) }}</span>
             {{ current.meaning }}
           </h3>
           <p v-if="wordMeta(current)" class="meta">{{ wordMeta(current) }}</p>
-          <p class="blank-hint" lang="en" aria-label="spelling hint">{{ current.blank_hint }}</p>
-          <form class="spelling-form" @submit.prevent="answer(spellingInput)">
-            <input
-              v-model="spellingInput"
-              type="text"
-              class="spelling-input"
-              lang="en"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              :placeholder="label('在这里拼写…', 'Type the spelling…')"
-              :disabled="busy"
-            >
+          <div class="spell-board" lang="en" :aria-label="label('拼写字母格', 'Spelling letter tiles')">
+            <div class="spell-slots" role="group" :aria-label="label('单词格子', 'Word slots')">
+              <button
+                v-for="(slot, idx) in spellSlots"
+                :key="`slot-${idx}`"
+                type="button"
+                class="spell-slot"
+                :class="{ locked: slot.locked, filled: !!slot.char && !slot.locked, empty: !slot.char }"
+                :disabled="busy || slot.locked || !slot.char"
+                :aria-label="slot.locked
+                  ? label(`提示字母 ${slot.char}`, `Hint letter ${slot.char}`)
+                  : slot.char
+                    ? label(`去掉字母 ${slot.char}`, `Remove letter ${slot.char}`)
+                    : label('空格', 'Empty slot')"
+                @click="clearSpellSlot(idx)"
+              >{{ slot.char || '' }}</button>
+            </div>
+            <div class="spell-bank" role="group" :aria-label="label('可选字母', 'Letter bank')">
+              <button
+                v-for="tile in spellTiles"
+                :key="`tile-${tile.id}`"
+                type="button"
+                class="spell-tile"
+                :class="{ used: tile.used }"
+                :disabled="busy || tile.used"
+                @click="pickSpellTile(tile.id)"
+              >{{ tile.char }}</button>
+            </div>
+            <p class="hint">{{ label('先给出一部分字母；点下方字母填空，点格子可以收回。', 'Some letters are given. Tap tiles to fill blanks; tap a slot to undo.') }}</p>
             <div class="spell-actions">
-              <button class="primary" type="submit" :disabled="busy || !spellingInput.trim()">{{ label('提交拼写', 'Check spelling') }}</button>
+              <button class="primary" type="button" :disabled="busy || !spellingComplete" @click="submitSpelling">{{ label('提交拼写', 'Check spelling') }}</button>
               <button type="button" class="secondary" :disabled="busy" @click="skipSpelling">{{ label('我不会', "I don't know") }}</button>
             </div>
-          </form>
+          </div>
           <div class="listen-row">
             <button class="secondary" :disabled="!audioSupported" @click="speak">{{ listenText('听英语', 'Listen') }}</button>
             <button class="secondary" :disabled="!audioSupported" @click="speakChinese">{{ listenText('听中文', 'Listen in Chinese', 'zh') }}</button>
@@ -2237,19 +2326,68 @@ button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; 
   line-height: inherit;
 }
 .word-chip:hover:not(:disabled) { color: #9fe4d3; border-bottom-color: #9fe4d3; background: #8cdbc814; }
-.blank-hint {
-  margin: 12px auto;
-  max-width: 100%;
-  padding: 0 8px;
-  font-size: clamp(22px, 4vw, 32px);
-  letter-spacing: 0.12em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #9fe4d3;
-  white-space: nowrap;
-  overflow-x: auto;
-  line-height: 1.4;
+.spell-board { display: grid; gap: 14px; max-width: 420px; margin: 16px auto 0; }
+.spell-slots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
-.spelling-form { display: grid; gap: 12px; max-width: 360px; margin: 18px auto 0; }
+.spell-slot {
+  width: 42px;
+  min-width: 42px;
+  min-height: 48px;
+  padding: 0;
+  border-radius: 12px;
+  border: 2px solid #8cdbc866;
+  background: #ffffff12;
+  color: inherit;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: lowercase;
+  line-height: 1;
+}
+.spell-slot.locked {
+  border-color: #8cdbc8;
+  background: #8cdbc828;
+  color: #c9f3e8;
+  cursor: default;
+  opacity: 1;
+}
+.spell-slot.empty { border-style: dashed; }
+.spell-slot.filled { border-color: #9fe4d3; background: #8cdbc81f; }
+.spell-slot:disabled:not(.locked) { opacity: 0.55; }
+.spell-bank {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.spell-tile {
+  width: 44px;
+  min-width: 44px;
+  min-height: 48px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid #ffffff45;
+  background: #235779;
+  color: #e7f4ff;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  text-transform: lowercase;
+  box-shadow: 0 3px 0 #16384f;
+}
+.spell-tile:hover:not(:disabled) { border-color: #8cdbc8; background: #2d6b90; }
+.spell-tile.used,
+.spell-tile:disabled {
+  opacity: 0.28;
+  box-shadow: none;
+  transform: none;
+  cursor: default;
+}
 .spell-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2264,20 +2402,6 @@ button { font: inherit; cursor: pointer; border-radius: 12px; min-height: 46px; 
   align-items: center;
   justify-content: center;
 }
-.spelling-input {
-  width: 100%;
-  min-height: 48px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid #ffffff35;
-  background: #ffffff0f;
-  color: inherit;
-  font: inherit;
-  font-size: 22px;
-  letter-spacing: 0.06em;
-  text-align: center;
-}
-.spelling-input:focus { outline: 3px solid #8cdbc8; outline-offset: 2px; }
 .rules { margin-top: 20px; }.rules summary { cursor: pointer; }.error { color: #ffb4b4; }
 @media(max-width: 520px) { .learning { padding: 16px; }.lesson { padding: 18px 14px; }.card-top { flex-wrap: wrap; }.stats { gap: 6px; }.stat-chip { padding: 8px 10px; font-size: 12px; } }
 </style>

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import KidEncyclopediaPage from '@/kid/pages/KidEncyclopediaPage.vue'
 import { setAppLocale } from '@/i18n'
 import { api } from '@/shared/api/client'
+import { speakPhrase } from '@/shared/speak'
 
 vi.mock('@/shared/api/client', () => ({
   ApiError: class extends Error {},
@@ -21,6 +22,7 @@ vi.mock('vue-router', () => ({
 vi.mock('@/shared/sfx', () => ({ playTap: vi.fn() }))
 vi.mock('@/shared/speak', () => ({
   unlockSpeak: vi.fn().mockResolvedValue(true),
+  stopSpeaking: vi.fn(),
   speakPhrase: vi.fn().mockResolvedValue(true),
 }))
 
@@ -123,14 +125,16 @@ describe('KidEncyclopediaPage', () => {
     expect(wrapper.text()).toContain('海洋很大')
     expect(wrapper.text()).toContain('The ocean is big')
     expect(wrapper.find('iframe').attributes('src')).toContain('player.bilibili.com')
-    expect(wrapper.text()).toContain('读给我听')
-    await wrapper.find('button.speak:last-of-type').trigger('click')
+    expect(wrapper.text()).toContain('听中文')
+    expect(wrapper.text()).toContain('听英文')
+    expect(wrapper.findAll('button.word-chip').length).toBe(0)
+    await wrapper.find('button.finish-read').trigger('click')
     await flushPromises()
     expect(api.postIdempotent).toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_oAg79ju344/read', {})
     expect(wrapper.text()).toContain('读过')
   })
 
-  it('shows Chinese above English and can collect a word', async () => {
+  it('shows Chinese above English and can collect a word by tapping English text', async () => {
     setAppLocale('zh-en')
     const wrapper = mount(KidEncyclopediaPage)
     await flushPromises()
@@ -141,10 +145,24 @@ describe('KidEncyclopediaPage', () => {
 
     expect(wrapper.find('.body-zh').text()).toBe('海洋很大。')
     expect(wrapper.find('.body-en').text()).toContain('ocean')
-    await wrapper.find('button.word-chip').trigger('click')
+    expect(wrapper.findAll('button.word-chip').length).toBe(0)
+    await wrapper.findAll('button.en-word').find(btn => btn.text() === 'ocean')!.trigger('click')
     await flushPromises()
     expect(api.post).toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_oAg79ju344/words', { word: 'ocean' })
     expect(wrapper.text()).toContain('已加入生词表')
+  })
+
+  it('can read the article in English', async () => {
+    const wrapper = mount(KidEncyclopediaPage)
+    await flushPromises()
+    await wrapper.find('button.domain').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.topic')[0]!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.speak').find(btn => btn.text() === '听英文')!.trigger('click')
+    await flushPromises()
+    expect(speakPhrase).toHaveBeenCalledWith('What Is the Ocean? The ocean is big.', 'en-US')
+    wrapper.unmount()
   })
 
   it('blocks opening locked topics from the list', async () => {

@@ -12,7 +12,7 @@ import type {
   EncyclopediaVideo,
 } from '@/shared/api/types'
 import { playTap } from '@/shared/sfx'
-import { speakPhrase, unlockSpeak } from '@/shared/speak'
+import { speakPhrase, stopSpeaking, unlockSpeak } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
 
 const { t, locale } = useI18n()
@@ -25,6 +25,7 @@ const article = ref<EncyclopediaTopicDetail | null>(null)
 const loading = ref(subject.value == null)
 const error = ref('')
 const speaking = ref(false)
+const speakingLang = ref<'zh' | 'en' | null>(null)
 const savingRead = ref(false)
 const savingWord = ref('')
 const wordFlash = ref('')
@@ -192,17 +193,33 @@ function back(): void {
   router.push({ name: 'kid-home' })
 }
 
-async function readAloud(): Promise<void> {
+async function readAloud(lang: 'zh' | 'en'): Promise<void> {
   if (!article.value) return
   tap()
+  if (speaking.value && speakingLang.value === lang) {
+    stopSpeaking()
+    speaking.value = false
+    speakingLang.value = null
+    return
+  }
+  stopSpeaking()
   speaking.value = true
+  speakingLang.value = lang
   try {
     await unlockSpeak()
-    const title = article.value.name_zh || displayText(article.value.name)
-    const body = article.value.body_zh || displayText(article.value.body)
-    await speakPhrase(`${title}。${body}`)
+    if (lang === 'en') {
+      const title = (article.value.name_en || '').trim()
+      const body = (article.value.body_en || '').trim()
+      const text = [title, body].filter(Boolean).join(title.endsWith('?') || title.endsWith('.') ? ' ' : '. ')
+      if (text) await speakPhrase(text, 'en-US')
+    } else {
+      const title = article.value.name_zh || displayText(article.value.name)
+      const body = article.value.body_zh || displayText(article.value.body)
+      await speakPhrase(`${title}。${body}`, 'zh-CN')
+    }
   } finally {
     speaking.value = false
+    speakingLang.value = null
   }
 }
 
@@ -309,24 +326,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <p class="words-hint">{{ t('kid.encyclopedia.words') }}</p>
       <p v-if="wordFlash" class="word-flash">{{ wordFlash }}</p>
 
-      <div v-if="article.words.length" class="word-chips">
+      <div class="speak-row">
         <button
-          v-for="w in article.words"
-          :key="w.word"
           type="button"
-          class="chip word-chip"
-          :disabled="savingWord === w.word"
-          @click="collectWord(w.word)"
+          class="speak"
+          :disabled="speaking && speakingLang !== 'zh'"
+          @click="readAloud('zh')"
         >
-          <span>{{ w.word }}</span>
-          <span v-if="w.meaning" class="meaning">{{ w.meaning }}</span>
+          {{ speaking && speakingLang === 'zh' ? t('kid.encyclopedia.speaking') : t('kid.encyclopedia.speakZh') }}
+        </button>
+        <button
+          type="button"
+          class="speak"
+          :disabled="speaking && speakingLang !== 'en'"
+          @click="readAloud('en')"
+        >
+          {{ speaking && speakingLang === 'en' ? t('kid.encyclopedia.speaking') : t('kid.encyclopedia.speakEn') }}
         </button>
       </div>
-
-      <button type="button" class="speak" :disabled="speaking" @click="readAloud">
-        {{ speaking ? t('kid.encyclopedia.speaking') : t('kid.encyclopedia.speak') }}
-      </button>
-      <button v-if="!article.read" type="button" class="speak" :disabled="savingRead" @click="markRead">
+      <button v-if="!article.read" type="button" class="speak finish-read" :disabled="savingRead" @click="markRead">
         {{ t('kid.encyclopedia.finishReading') }}
       </button>
       <p v-else class="read-confirmed">{{ t('kid.encyclopedia.read') }}</p>
@@ -497,14 +515,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 .en-word:disabled { opacity: 0.6; }
 .words-hint, .word-flash { text-align: center; margin: 0; }
 .word-flash { color: #c8f7d4; font-weight: 700; }
-.word-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-.word-chip {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  border-radius: 14px !important;
+.speak-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
 }
-.word-chip .meaning { font-size: 12px; opacity: 0.85; }
 .video { display: flex; flex-direction: column; gap: 8px; }
 .video-label { margin: 0; text-align: center; font-weight: 700; }
 .video-frame {
@@ -530,6 +547,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   background: rgba(255, 255, 255, 0.22);
   font-weight: 700;
 }
+.finish-read { margin-top: 8px; }
 .related h3 {
   margin: 12px 0 8px;
   font-size: 16px;
