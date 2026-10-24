@@ -23,7 +23,18 @@ node scripts/import-marble-science.mjs --download
 docker compose exec app php artisan encyclopedia:prepare-zh --family=1
 ```
 
-生成结果只是草稿。每个条目须对照上游主题核对事实和年龄适宜性，必要时修订中文标题及正文，再将该条目的 `reviewed` 设为 `true`；只有已核对条目会在孩子端出现。使用 `--force` 重新生成条目会重置其审核状态。当前首批已核对 13 篇，其余条目仍是草稿。孩子端目前是文字加 emoji，未提供插图。
+生成结果写入 overlay。孩子端发布条件：**有非空中文 `name` + `body` 即可**（不再要求 `reviewed`）。`reviewed` 仅作质量标记。命令还会尝试生成：
+
+- `words`：3–6 个儿童适宜英文生词（`word` + 中文 `meaning`）
+- `video_query`：检索用关键词（**不会**自动写入外链）
+
+短视频需人工写入：
+
+```json
+"video": { "provider": "bilibili", "id": "BVxxxxxxxxxx" }
+```
+
+或 `"provider": "youtube", "id": "xxxxxxxxxxx"`。孩子端按年龄带过滤主题；已发布且同年龄可见的先修未读时主题会锁定。文章展示中文正文 + 下方英文；点英文词可加入英语星球当日生词包。
 
 ## 许可
 

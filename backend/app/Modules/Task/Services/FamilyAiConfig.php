@@ -27,7 +27,13 @@ class FamilyAiConfig
      *   openai_configured: bool,
      *   gemini_source: 'family'|'env'|'none',
      *   qwen_source: 'family'|'env'|'none',
-     *   openai_source: 'family'|'env'|'none'
+     *   openai_source: 'family'|'env'|'none',
+     *   tts_provider: string,
+     *   tts_qwen_api_key: string,
+     *   tts_qwen_configured: bool,
+     *   tts_qwen_source: 'tts'|'ai'|'env'|'none',
+     *   tts_voice: string,
+     *   tts_voice_en: string
      * }
      */
     public function resolve(?int $familyId): array
@@ -81,6 +87,26 @@ class FamilyAiConfig
         }
         $openaiBaseUrl = self::normalizeOpenAiBaseUrl($openaiBaseUrl);
 
+        [$ttsKey, $ttsSource] = $this->resolveTtsSecret($familyId, $qwenKey, $qwenSource);
+        $ttsProvider = $familyId !== null
+            ? (string) $this->settings->get('tts.provider', $familyId)
+            : 'auto';
+        if (! in_array($ttsProvider, ['auto', 'qwen', 'edge'], true)) {
+            $ttsProvider = 'auto';
+        }
+        $ttsVoice = $familyId !== null
+            ? trim((string) $this->settings->get('tts.voice', $familyId))
+            : '';
+        if ($ttsVoice === '') {
+            $ttsVoice = (string) config('services.qwen.tts_voice', 'Cherry');
+        }
+        $ttsVoiceEn = $familyId !== null
+            ? trim((string) $this->settings->get('tts.voice_en', $familyId))
+            : '';
+        if ($ttsVoiceEn === '') {
+            $ttsVoiceEn = (string) config('services.qwen.tts_voice_en', 'Jennifer');
+        }
+
         return [
             'provider' => $provider !== '' ? $provider : 'auto',
             'gemini_api_key' => $geminiKey,
@@ -96,6 +122,12 @@ class FamilyAiConfig
             'gemini_source' => $geminiSource,
             'qwen_source' => $qwenSource,
             'openai_source' => $openaiSource,
+            'tts_provider' => $ttsProvider,
+            'tts_qwen_api_key' => $ttsKey,
+            'tts_qwen_configured' => $ttsKey !== '',
+            'tts_qwen_source' => $ttsSource,
+            'tts_voice' => $ttsVoice,
+            'tts_voice_en' => $ttsVoiceEn,
         ];
     }
 
@@ -148,6 +180,19 @@ class FamilyAiConfig
                 'base_url_customized' => $familyId !== null && $this->settings->has('ai.openai_base_url', $familyId)
                     && trim((string) $this->settings->get('ai.openai_base_url', $familyId)) !== '',
             ],
+            'tts' => [
+                'provider' => $cfg['tts_provider'],
+                'configured' => $cfg['tts_qwen_configured'],
+                'source' => $cfg['tts_qwen_source'],
+                'hint' => $this->maskHint($cfg['tts_qwen_api_key']),
+                'voice' => $cfg['tts_voice'],
+                'voice_en' => $cfg['tts_voice_en'],
+                'voice_customized' => $familyId !== null && $this->settings->has('tts.voice', $familyId)
+                    && trim((string) $this->settings->get('tts.voice', $familyId)) !== '',
+                'voice_en_customized' => $familyId !== null && $this->settings->has('tts.voice_en', $familyId)
+                    && trim((string) $this->settings->get('tts.voice_en', $familyId)) !== '',
+                'voices' => app(QwenTtsVoiceCatalog::class)->all(),
+            ],
         ];
     }
 
@@ -166,6 +211,28 @@ class FamilyAiConfig
         $env = trim($envFallback);
         if ($env !== '') {
             return [$env, 'env'];
+        }
+
+        return ['', 'none'];
+    }
+
+    /**
+     * TTS key: dedicated tts.qwen_api_key → content ai.qwen_api_key → env.
+     *
+     * @param  'family'|'env'|'none'  $aiQwenSource
+     * @return array{0: string, 1: 'tts'|'ai'|'env'|'none'}
+     */
+    private function resolveTtsSecret(?int $familyId, string $aiQwenKey, string $aiQwenSource): array
+    {
+        if ($familyId !== null) {
+            $ttsKey = trim((string) $this->settings->get('tts.qwen_api_key', $familyId));
+            if ($ttsKey !== '') {
+                return [$ttsKey, 'tts'];
+            }
+        }
+
+        if ($aiQwenKey !== '') {
+            return [$aiQwenKey, $aiQwenSource === 'family' ? 'ai' : 'env'];
         }
 
         return ['', 'none'];

@@ -131,6 +131,79 @@ class SystemSettingsTest extends TestCase
         $this->assertSame('sk-family-chatgpt', app(Settings::class)->get('ai.openai_api_key', $family->id));
     }
 
+    public function test_tts_settings_are_separate_from_content_ai_qwen_key(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        config(['services.qwen.api_key' => '', 'services.qwen.tts_voice' => 'Cherry', 'services.qwen.tts_voice_en' => 'Jennifer']);
+
+        $this->actingAsParent($parent, sudo: true)
+            ->putJson('/api/v1/parent/ai-settings', [
+                'provider' => 'qwen',
+                'qwen_api_key' => 'sk-content-qwen',
+                'tts_provider' => 'qwen',
+                'tts_qwen_api_key' => 'sk-tts-only',
+                'tts_voice' => 'Serena',
+                'tts_voice_en' => 'Aiden',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.provider', 'qwen')
+            ->assertJsonPath('data.qwen.source', 'family')
+            ->assertJsonPath('data.tts.provider', 'qwen')
+            ->assertJsonPath('data.tts.source', 'tts')
+            ->assertJsonPath('data.tts.voice', 'Serena')
+            ->assertJsonPath('data.tts.voice_en', 'Aiden')
+            ->assertJsonPath('data.tts.voices.en.0.id', 'Jennifer')
+            ->assertJsonPath('data.tts.voices.zh.0.id', 'Cherry');
+        $voices = $this->actingAsParent($parent)->getJson('/api/v1/parent/ai-settings')->json('data.tts.voices');
+        $this->assertGreaterThanOrEqual(30, count($voices['zh'] ?? []));
+        $this->assertGreaterThanOrEqual(20, count($voices['en'] ?? []));
+
+        $settings = app(Settings::class);
+        $this->assertSame('sk-content-qwen', $settings->get('ai.qwen_api_key', $family->id));
+        $this->assertSame('sk-tts-only', $settings->get('tts.qwen_api_key', $family->id));
+
+        $cfg = app(\App\Modules\Task\Services\FamilyAiConfig::class)->resolve($family->id);
+        $this->assertSame('sk-content-qwen', $cfg['qwen_api_key']);
+        $this->assertSame('sk-tts-only', $cfg['tts_qwen_api_key']);
+        $this->assertSame('tts', $cfg['tts_qwen_source']);
+    }
+
+    public function test_tts_preview_uses_selected_voice_without_saving(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        config([
+            'services.qwen.api_key' => 'sk-preview',
+            'services.qwen.tts_model' => 'qwen3-tts-flash',
+            'services.qwen.tts_voice_en' => 'Jennifer',
+        ]);
+        app(Settings::class)->set('tts.voice_en', 'Jennifer', $family->id, $parent->id);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'dashscope.aliyuncs.com/*' => \Illuminate\Support\Facades\Http::response([
+                'output' => ['audio' => ['data' => base64_encode(str_repeat('p', 80))]],
+            ], 200),
+        ]);
+
+        $this->actingAsParent($parent)
+            ->postJson('/api/v1/parent/ai-settings/tts-preview', [
+                'voice' => 'Bella',
+                'lang' => 'en-US',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.available', true)
+            ->assertJsonPath('data.provider', 'qwen')
+            ->assertJsonPath('data.voice', 'Bella');
+
+        \Illuminate\Support\Facades\Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            $data = $request->data();
+
+            return ($data['input']['voice'] ?? null) === 'Bella'
+                && ($data['input']['language_type'] ?? null) === 'English';
+        });
+
+        $this->assertSame('Jennifer', app(Settings::class)->get('tts.voice_en', $family->id));
+    }
+
     public function test_ai_settings_store_openai_compatible_relay_base_url(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

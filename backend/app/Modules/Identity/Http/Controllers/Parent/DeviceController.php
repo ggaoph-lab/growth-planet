@@ -50,6 +50,28 @@ class DeviceController
             ->withCookie($tokens->cookie($token));
     }
 
+    public function update(Request $request, int $id, DeviceTokens $tokens): JsonResponse
+    {
+        $data = $request->validate(['name' => ['required', 'string', 'min:1', 'max:64']]);
+        $device = TrustedDevice::query()
+            ->where('family_id', $this->context->familyId())
+            ->whereNull('revoked_at')
+            ->findOrFail($id);
+
+        $previous = $device->name;
+        $device->fill(['name' => $data['name']])->save();
+        $this->audit->log('device.renamed', $device->family_id, $device, [
+            'from' => $previous,
+            'to' => $device->name,
+        ]);
+
+        $current = $tokens->fromRequest($request);
+
+        return response()->json([
+            'data' => $this->present($device->load('authorizer.member'), $current?->id === $device->id),
+        ]);
+    }
+
     public function destroy(int $id): JsonResponse
     {
         $device = TrustedDevice::query()

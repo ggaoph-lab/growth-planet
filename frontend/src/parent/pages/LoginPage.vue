@@ -76,6 +76,7 @@ async function submit(): Promise<void> {
           </el-form-item>
           <el-button type="primary" size="large" native-type="submit" class="submit" :loading="submitting">{{ t('auth.login') }}</el-button>
         </el-form>
+        <RouterLink :to="{ name: 'register' }" class="kid-link">{{ t('auth.toRegister') }}</RouterLink>
         <RouterLink v-if="session.deviceAuthorized" :to="{ name: 'kid-select' }" class="kid-link">👧 {{ t('auth.toKidMode') }}</RouterLink>
       </div>
     </div>

@@ -41,6 +41,13 @@ make preview         # 构建 dist + 挂到 nginx
 make family
 ```
 
+给亲戚开户：先把你的家长账号授成站点管理员，再在家长后台「家庭设置 → 邀请码」生成一次性码，对方打开 `/register` 自助注册。
+
+```bash
+docker compose exec app php artisan site-admin:grant your_username
+# 生产：make prod-artisan ARGS='site-admin:grant your_username'
+```
+
 只想快速体验时，可以写入明确标注为“测试”的演示数据（生产环境拒绝执行；家长密码和孩子 PIN 随机生成，只在终端显示一次）：
 
 ```bash

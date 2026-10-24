@@ -2,6 +2,7 @@
 
 use App\Modules\Identity\Http\Controllers\Auth\KidAuthController;
 use App\Modules\Identity\Http\Controllers\Auth\ParentAuthController;
+use App\Modules\Identity\Http\Controllers\Auth\RegisterController;
 use App\Modules\Identity\Http\Controllers\Kid\HomeController;
 use App\Modules\Identity\Http\Controllers\Parent\AuditLogController;
 use App\Modules\Identity\Http\Controllers\Parent\ChildController;
@@ -9,11 +10,13 @@ use App\Modules\Identity\Http\Controllers\Parent\DashboardController;
 use App\Modules\Identity\Http\Controllers\Parent\DeviceController;
 use App\Modules\Identity\Http\Controllers\Parent\AiSettingsController;
 use App\Modules\Identity\Http\Controllers\Parent\FamilyController;
+use App\Modules\Identity\Http\Controllers\Parent\FamilyInviteController;
 use App\Modules\Identity\Http\Controllers\Parent\ParentAccountController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/auth')->group(function () {
     Route::post('login', [ParentAuthController::class, 'login']);
+    Route::post('register', [RegisterController::class, 'store']);
     Route::get('device', [KidAuthController::class, 'device']);
     Route::get('kid/profiles', [KidAuthController::class, 'profiles']);
     Route::post('kid/login', [KidAuthController::class, 'login']);
@@ -27,6 +30,12 @@ Route::prefix('v1/auth')->group(function () {
 
 Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
     Route::get('dashboard', DashboardController::class);
+
+    Route::middleware('site_admin')->group(function () {
+        Route::get('invites', [FamilyInviteController::class, 'index']);
+        Route::post('invites', [FamilyInviteController::class, 'store'])->middleware('sudo');
+        Route::delete('invites/{id}', [FamilyInviteController::class, 'destroy'])->whereNumber('id')->middleware('sudo');
+    });
 
     Route::get('planet-settings', [\App\Modules\Identity\Http\Controllers\Parent\PlanetSettingsController::class, 'index']);
     Route::patch('planet-settings', [\App\Modules\Identity\Http\Controllers\Parent\PlanetSettingsController::class, 'update']);
@@ -42,6 +51,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 
     Route::get('ai-settings', [AiSettingsController::class, 'show']);
     Route::post('ai-models', [AiSettingsController::class, 'models']);
+    Route::post('ai-settings/tts-preview', [AiSettingsController::class, 'previewTts']);
     Route::put('ai-settings', [AiSettingsController::class, 'update'])->middleware('sudo');
 
     Route::get('children', [ChildController::class, 'index']);
@@ -53,7 +63,8 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 
     Route::get('devices', [DeviceController::class, 'index']);
     Route::post('devices', [DeviceController::class, 'store'])->middleware('sudo');
-    Route::delete('devices/{id}', [DeviceController::class, 'destroy'])->whereNumber('id')->middleware('sudo');
+    Route::patch('devices/{id}', [DeviceController::class, 'update'])->whereNumber('id');
+    Route::delete('devices/{id}', [DeviceController::class, 'destroy'])->whereNumber('id');
 
     Route::get('audit-logs', [AuditLogController::class, 'index']);
 });

@@ -12,4 +12,7 @@ Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(funct
     Route::post('encyclopedia/topics/{id}/read', [EncyclopediaController::class, 'markRead'])
         ->where('id', 'mt_[A-Za-z0-9_-]+')
         ->middleware('idempotent');
+    Route::post('encyclopedia/topics/{id}/words', [EncyclopediaController::class, 'collectWord'])
+        ->where('id', 'mt_[A-Za-z0-9_-]+')
+        ->middleware('throttle:60,1');
 });

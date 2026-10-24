@@ -16,11 +16,27 @@ export interface KidProfile {
 }
 
 export interface Me {
-  user: { id: number; role: Role; display_name: string; username: string | null }
+  user: { id: number; role: Role; display_name: string; username: string | null; is_site_admin?: boolean }
   family: { id: number; name: string; timezone: string; locale: string }
   child: KidProfile | null
   sudo_until: string | null
   server_time: string
+}
+
+export type FamilyInviteStatus = 'available' | 'used' | 'revoked' | 'expired'
+
+export interface FamilyInvite {
+  id: number
+  code_prefix: string
+  note: string | null
+  status: FamilyInviteStatus
+  expires_at: string | null
+  used_at: string | null
+  used_by_family_id: number | null
+  revoked_at: string | null
+  created_at: string | null
+  /** Present only on create response. */
+  code?: string
 }
 
 export type ChildStatus = 'active' | 'paused' | 'archived'
@@ -113,11 +129,47 @@ export interface AiModelList {
   probed?: boolean
 }
 
+export interface AiTtsVoiceOption {
+  id: string
+  name_zh: string
+  name_en: string
+  desc_zh: string
+  desc_en: string
+  tags: string[]
+}
+
+export interface AiTtsSettings {
+  provider: 'auto' | 'qwen' | 'edge' | string
+  configured: boolean
+  source: 'tts' | 'ai' | 'env' | 'none' | string
+  hint: string | null
+  voice: string
+  voice_en: string
+  voice_customized: boolean
+  voice_en_customized: boolean
+  voices?: {
+    zh: AiTtsVoiceOption[]
+    en: AiTtsVoiceOption[]
+  }
+}
+
+export interface TtsPreviewResult {
+  available: boolean
+  audio_base64: string | null
+  mime: string | null
+  provider: string | null
+  qwen_configured: boolean
+  hint?: string | null
+  voice?: string
+  lang?: string
+}
+
 export interface AiSettings {
   provider: string
   gemini: AiProviderStatus
   qwen: AiProviderStatus
   openai: AiProviderStatus
+  tts: AiTtsSettings
 }
 
 export interface KidLoginProfile {
@@ -160,14 +212,35 @@ export interface EncyclopediaSubject {
   domains: EncyclopediaDomainSummary[]
 }
 
+export interface EncyclopediaUnlockHint {
+  id: string
+  name_zh: string
+  name_en: string
+  emoji: string
+}
+
+export interface EncyclopediaWord {
+  word: string
+  meaning: string
+}
+
+export interface EncyclopediaVideo {
+  provider: 'bilibili' | 'youtube'
+  id: string
+}
+
 export interface EncyclopediaTopicListItem {
   id: string
   domain_key: string
   name: string
+  name_zh: string
+  name_en: string
   emoji: string
   age_start: number
   age_end: number
   read: boolean
+  locked: boolean
+  unlock_hint?: EncyclopediaUnlockHint | null
 }
 
 export interface EncyclopediaDomainDetail {
@@ -182,11 +255,19 @@ export interface EncyclopediaTopicDetail {
   domain_key: string
   domain: string
   name: string
+  name_zh: string
+  name_en: string
   body: string
+  body_zh: string
+  body_en: string
   emoji: string
   age_start: number
   age_end: number
   read: boolean
+  locked: boolean
+  unlock_hint?: EncyclopediaUnlockHint | null
+  words: EncyclopediaWord[]
+  video: EncyclopediaVideo | null
   prerequisites: EncyclopediaTopicListItem[]
   next_topics: EncyclopediaTopicListItem[]
   attribution: string

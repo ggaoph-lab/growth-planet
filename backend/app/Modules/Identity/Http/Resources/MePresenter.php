@@ -30,6 +30,7 @@ class MePresenter
                 'role' => $member->role->value,
                 'display_name' => $member->display_name,
                 'username' => $isChild ? null : $user->username,
+                'is_site_admin' => $isChild ? false : (bool) $user->is_site_admin,
             ],
             'family' => [
                 'id' => $family->id,

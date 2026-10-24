@@ -3,6 +3,8 @@
 namespace App\Modules\Encyclopedia\Services;
 
 use App\Modules\Core\Support\BiMsg;
+use App\Modules\Core\Support\Clock;
+use App\Modules\Identity\Models\ChildProfile;
 use RuntimeException;
 
 /**
@@ -18,7 +20,17 @@ class EncyclopediaCatalog
     /** @var list<array{topicId: string, prerequisiteId: string, strength?: string, reason?: string}>|null */
     private ?array $dependencies = null;
 
-    /** @var array<string, array{name: string, body: string, emoji?: string|null, reviewed: bool}>|null */
+    /**
+     * @var array<string, array{
+     *     name: string,
+     *     body: string,
+     *     emoji?: string|null,
+     *     reviewed: bool,
+     *     words?: list<array{word: string, meaning: string}>,
+     *     video?: array{provider: string, id: string}|null,
+     *     video_query?: string|null
+     * }>|null
+     */
     private ?array $overlay = null;
 
     /** @var array<string, string> */
@@ -44,9 +56,33 @@ class EncyclopediaCatalog
         'weather-climate' => '⛅',
     ];
 
-    public function subjectSummary(): array
+    /** @var array<string, true> */
+    private const WORD_SKIP = [
+        'a' => true, 'an' => true, 'the' => true, 'is' => true, 'am' => true, 'are' => true,
+        'was' => true, 'were' => true, 'be' => true, 'to' => true, 'of' => true, 'and' => true,
+        'or' => true, 'in' => true, 'on' => true, 'at' => true, 'my' => true, 'your' => true,
+        'i' => true, 'you' => true, 'we' => true, 'he' => true, 'she' => true, 'it' => true,
+        'they' => true, 'this' => true, 'that' => true, 'do' => true, 'does' => true, 'did' => true,
+        'can' => true, 'will' => true, 'her' => true, 'his' => true, 'him' => true, 'me' => true,
+        'us' => true, 'them' => true, 'our' => true, 'their' => true, 'its' => true, 'with' => true,
+        'for' => true, 'from' => true, 'by' => true, 'as' => true, 'into' => true, 'when' => true,
+        'what' => true, 'how' => true, 'why' => true, 'which' => true, 'who' => true, 'not' => true,
+        'but' => true, 'so' => true, 'if' => true, 'than' => true, 'then' => true, 'also' => true,
+        'very' => true, 'just' => true, 'about' => true, 'like' => true, 'have' => true, 'has' => true,
+        'had' => true, 'been' => true, 'being' => true, 'there' => true, 'here' => true, 'all' => true,
+        'some' => true, 'any' => true, 'more' => true, 'most' => true, 'other' => true, 'such' => true,
+        'no' => true, 'nor' => true, 'too' => true, 'only' => true, 'own' => true, 'same' => true,
+        'each' => true, 'few' => true, 'many' => true, 'much' => true, 'these' => true, 'those' => true,
+    ];
+
+    public function __construct(private readonly Clock $clock) {}
+
+    public function subjectSummary(?ChildProfile $child = null): array
     {
-        $published = $this->publishedTopics();
+        $age = $child !== null ? $this->childAge($child) : null;
+        $published = $age === null
+            ? $this->publishedTopics()
+            : $this->ageFilteredTopics($age);
         $byDomain = [];
         foreach ($published as $topic) {
             $slug = $this->domainSlug((string) $topic['domain']);
@@ -83,26 +119,35 @@ class EncyclopediaCatalog
     /**
      * @return list<array<string, mixed>>
      */
-    public function topicsForDomain(string $domainKey, array $readIds = []): array
+    public function topicsForDomain(string $domainKey, array $readIds = [], ?ChildProfile $child = null): array
     {
         $slug = $this->normalizeDomainKey($domainKey);
+        $age = $child !== null ? $this->childAge($child) : null;
         $out = [];
         foreach ($this->publishedTopics() as $topic) {
             if ($this->domainSlug((string) $topic['domain']) !== $slug) {
                 continue;
             }
-            $out[] = $this->listItem($topic, in_array($topic['id'], $readIds, true));
+            if ($age !== null && ! $this->fitsAge($topic, $age)) {
+                continue;
+            }
+            $out[] = $this->listItem($topic, in_array($topic['id'], $readIds, true), $readIds, $age);
         }
 
-        usort($out, fn ($a, $b) => [$a['age_start'], $a['name']] <=> [$b['age_start'], $b['name']]);
+        usort($out, fn ($a, $b) => [$a['locked'] ? 1 : 0, $a['age_start'], $a['name_zh']] <=> [$b['locked'] ? 1 : 0, $b['age_start'], $b['name_zh']]);
 
         return $out;
     }
 
-    public function topicDetail(string $topicId, array $readIds = []): ?array
+    public function topicDetail(string $topicId, array $readIds = [], ?ChildProfile $child = null): ?array
     {
         $topic = $this->publishedTopics()[$topicId] ?? null;
         if ($topic === null) {
+            return null;
+        }
+
+        $age = $child !== null ? $this->childAge($child) : null;
+        if ($age !== null && ! $this->fitsAge($topic, $age)) {
             return null;
         }
 
@@ -112,6 +157,12 @@ class EncyclopediaCatalog
         if ($bodyZh === '') {
             $bodyZh = $bodyEn;
         }
+        $nameZh = (string) ($overlay['name'] ?? $topic['name']);
+        $nameEn = (string) $topic['name'];
+        $locked = $this->isLocked($topicId, $readIds, $age);
+        $unlockHint = $locked ? $this->unlockHint($topicId, $readIds, $age) : null;
+        $words = $this->wordsForTopic($topic, $overlay, $bodyEn);
+        $video = $this->normalizeVideo(is_array($overlay) ? ($overlay['video'] ?? null) : null);
 
         return [
             'id' => $topic['id'],
@@ -120,17 +171,22 @@ class EncyclopediaCatalog
                 $this->domainTitleZh((string) $topic['domain']),
                 (string) $topic['domain'],
             ),
-            'name' => BiMsg::of(
-                (string) ($overlay['name'] ?? $topic['name']),
-                (string) $topic['name'],
-            ),
+            'name' => BiMsg::of($nameZh, $nameEn),
+            'name_zh' => $nameZh,
+            'name_en' => $nameEn,
             'body' => BiMsg::of($bodyZh, $bodyEn),
+            'body_zh' => $bodyZh,
+            'body_en' => $bodyEn,
             'emoji' => $this->emojiForTopic($topic, $overlay),
             'age_start' => (int) $topic['ageRangeStart'],
             'age_end' => (int) $topic['ageRangeEnd'],
             'read' => in_array($topicId, $readIds, true),
-            'prerequisites' => $this->related($topicId, 'prerequisites', $readIds),
-            'next_topics' => $this->related($topicId, 'next', $readIds),
+            'locked' => $locked,
+            'unlock_hint' => $unlockHint,
+            'words' => $words,
+            'video' => $video,
+            'prerequisites' => $this->related($topicId, 'prerequisites', $readIds, $age),
+            'next_topics' => $this->related($topicId, 'next', $readIds, $age),
             'attribution' => BiMsg::of(
                 'Marble Skill Taxonomy · https://withmarble.com · ODbL 1.0 / CC BY-SA 4.0',
                 'Marble Skill Taxonomy · https://withmarble.com · ODbL 1.0 / CC BY-SA 4.0',
@@ -141,6 +197,64 @@ class EncyclopediaCatalog
     public function isPublished(string $topicId): bool
     {
         return isset($this->publishedTopics()[$topicId]);
+    }
+
+    public function isVisibleToChild(string $topicId, ChildProfile $child): bool
+    {
+        $topic = $this->publishedTopics()[$topicId] ?? null;
+        if ($topic === null) {
+            return false;
+        }
+
+        return $this->fitsAge($topic, $this->childAge($child));
+    }
+
+    public function isLockedForChild(string $topicId, ChildProfile $child, array $readIds): bool
+    {
+        if (! $this->isVisibleToChild($topicId, $child)) {
+            return true;
+        }
+
+        return $this->isLocked($topicId, $readIds, $this->childAge($child));
+    }
+
+    /**
+     * Whether $word appears in this topic's English body (or curated word list).
+     */
+    public function topicContainsWord(string $topicId, string $word): bool
+    {
+        $detail = $this->topicDetail($topicId);
+        if ($detail === null) {
+            return false;
+        }
+        $normalized = $this->normalizeWord($word);
+        if ($normalized === '') {
+            return false;
+        }
+        foreach ($detail['words'] as $row) {
+            if (($row['word'] ?? '') === $normalized) {
+                return true;
+            }
+        }
+        $blob = strtolower(str_replace('’', "'", (string) $detail['body_en'].' '.(string) $detail['name_en']));
+
+        return preg_match('/(?<![a-z])'.preg_quote($normalized, '/').'(?![a-z])/', $blob) === 1;
+    }
+
+    public function meaningForWord(string $topicId, string $word): ?string
+    {
+        $detail = $this->topicDetail($topicId);
+        if ($detail === null) {
+            return null;
+        }
+        $normalized = $this->normalizeWord($word);
+        foreach ($detail['words'] as $row) {
+            if (($row['word'] ?? '') === $normalized && trim((string) ($row['meaning'] ?? '')) !== '') {
+                return (string) $row['meaning'];
+            }
+        }
+
+        return null;
     }
 
     public function domainSlug(string $domain): string
@@ -163,8 +277,7 @@ class EncyclopediaCatalog
                 continue;
             }
             $entry = $overlay[$id];
-            if (($entry['reviewed'] ?? false) !== true
-                || trim((string) ($entry['name'] ?? '')) === ''
+            if (trim((string) ($entry['name'] ?? '')) === ''
                 || trim((string) ($entry['body'] ?? '')) === '') {
                 continue;
             }
@@ -177,7 +290,7 @@ class EncyclopediaCatalog
     /**
      * @return list<string>
      */
-    public function candidateTopicIds(int $maxAgeStart = 8, int $perDomain = 3): array
+    public function candidateTopicIds(int $maxAgeStart = 8, int $perDomain = 8): array
     {
         $byDomain = [];
         foreach ($this->topicsById() as $topic) {
@@ -228,7 +341,15 @@ class EncyclopediaCatalog
     }
 
     /**
-     * @return array<string, array{name: string, body: string, emoji?: string|null, reviewed: bool}>
+     * @return array<string, array{
+     *     name: string,
+     *     body: string,
+     *     emoji?: string|null,
+     *     reviewed: bool,
+     *     words?: list<array{word: string, meaning: string}>,
+     *     video?: array{provider: string, id: string}|null,
+     *     video_query?: string|null
+     * }>
      */
     public function overlay(): array
     {
@@ -249,6 +370,9 @@ class EncyclopediaCatalog
                 'body' => (string) ($entry['body'] ?? ''),
                 'emoji' => isset($entry['emoji']) ? (string) $entry['emoji'] : null,
                 'reviewed' => ($entry['reviewed'] ?? false) === true,
+                'words' => $this->parseOverlayWords($entry['words'] ?? null),
+                'video' => $this->normalizeVideo($entry['video'] ?? null),
+                'video_query' => isset($entry['video_query']) ? trim((string) $entry['video_query']) : null,
             ];
         }
         $this->overlay = $map;
@@ -267,6 +391,95 @@ class EncyclopediaCatalog
         ];
         file_put_contents($path, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)."\n");
         $this->overlay = null;
+    }
+
+    private function childAge(ChildProfile $child): int
+    {
+        $child->loadMissing('family');
+
+        return $this->clock->ageToday((string) $child->birth_date, (string) $child->family->timezone);
+    }
+
+    /**
+     * @param  array<string, mixed>  $topic
+     */
+    private function fitsAge(array $topic, int $age): bool
+    {
+        return $age >= (int) $topic['ageRangeStart'] && $age <= (int) $topic['ageRangeEnd'];
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function ageFilteredTopics(int $age): array
+    {
+        $out = [];
+        foreach ($this->publishedTopics() as $id => $topic) {
+            if ($this->fitsAge($topic, $age)) {
+                $out[$id] = $topic;
+            }
+        }
+
+        return $out;
+    }
+
+    private function isLocked(string $topicId, array $readIds, ?int $age): bool
+    {
+        foreach ($this->blockingPrerequisiteIds($topicId, $age) as $prereqId) {
+            if (! in_array($prereqId, $readIds, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function blockingPrerequisiteIds(string $topicId, ?int $age): array
+    {
+        $published = $this->publishedTopics();
+        $ids = [];
+        foreach ($this->dependencies() as $edge) {
+            if (($edge['topicId'] ?? '') !== $topicId) {
+                continue;
+            }
+            $prereqId = (string) $edge['prerequisiteId'];
+            $prereq = $published[$prereqId] ?? null;
+            if ($prereq === null) {
+                continue;
+            }
+            if ($age !== null && ! $this->fitsAge($prereq, $age)) {
+                continue;
+            }
+            $ids[] = $prereqId;
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    private function unlockHint(string $topicId, array $readIds, ?int $age): ?array
+    {
+        foreach ($this->blockingPrerequisiteIds($topicId, $age) as $prereqId) {
+            if (in_array($prereqId, $readIds, true)) {
+                continue;
+            }
+            $topic = $this->publishedTopics()[$prereqId] ?? null;
+            if ($topic === null) {
+                continue;
+            }
+            $item = $this->listItem($topic, false, $readIds, $age);
+
+            return [
+                'id' => $item['id'],
+                'name_zh' => $item['name_zh'],
+                'name_en' => $item['name_en'],
+                'emoji' => $item['emoji'],
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -293,28 +506,32 @@ class EncyclopediaCatalog
      * @param  array{name?: string, body?: string, emoji?: string|null}|null  $overlay
      * @return array<string, mixed>
      */
-    private function listItem(array $topic, bool $read): array
+    private function listItem(array $topic, bool $read, array $readIds = [], ?int $age = null): array
     {
         $overlay = $this->overlay()[$topic['id']] ?? null;
+        $nameZh = (string) ($overlay['name'] ?? $topic['name']);
+        $nameEn = (string) $topic['name'];
+        $locked = $this->isLocked((string) $topic['id'], $readIds, $age);
 
         return [
             'id' => $topic['id'],
             'domain_key' => $this->domainSlug((string) $topic['domain']),
-            'name' => BiMsg::of(
-                (string) ($overlay['name'] ?? $topic['name']),
-                (string) $topic['name'],
-            ),
+            'name' => BiMsg::of($nameZh, $nameEn),
+            'name_zh' => $nameZh,
+            'name_en' => $nameEn,
             'emoji' => $this->emojiForTopic($topic, $overlay),
             'age_start' => (int) $topic['ageRangeStart'],
             'age_end' => (int) $topic['ageRangeEnd'],
             'read' => $read,
+            'locked' => $locked,
+            'unlock_hint' => $locked ? $this->unlockHint((string) $topic['id'], $readIds, $age) : null,
         ];
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    private function related(string $topicId, string $direction, array $readIds): array
+    private function related(string $topicId, string $direction, array $readIds, ?int $age): array
     {
         $published = $this->publishedTopics();
         $ids = [];
@@ -332,13 +549,112 @@ class EncyclopediaCatalog
             if (! isset($published[$id])) {
                 continue;
             }
-            $out[] = $this->listItem($published[$id], in_array($id, $readIds, true));
+            if ($age !== null && ! $this->fitsAge($published[$id], $age)) {
+                continue;
+            }
+            $out[] = $this->listItem($published[$id], in_array($id, $readIds, true), $readIds, $age);
             if (count($out) >= 4) {
                 break;
             }
         }
 
         return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $topic
+     * @param  array{words?: list<array{word: string, meaning: string}>|null, emoji?: string|null}|null  $overlay
+     * @return list<array{word: string, meaning: string}>
+     */
+    private function wordsForTopic(array $topic, ?array $overlay, string $bodyEn): array
+    {
+        $curated = is_array($overlay) ? ($overlay['words'] ?? []) : [];
+        if ($curated !== []) {
+            return array_slice($curated, 0, 8);
+        }
+
+        $tokens = preg_split('/[^A-Za-z]+/', $bodyEn.' '.(string) $topic['name']) ?: [];
+        $out = [];
+        $seen = [];
+        foreach ($tokens as $token) {
+            $word = $this->normalizeWord($token);
+            if ($word === '' || isset(self::WORD_SKIP[$word]) || isset($seen[$word])) {
+                continue;
+            }
+            if (preg_match('/^[a-z]{3,16}$/', $word) !== 1) {
+                continue;
+            }
+            $seen[$word] = true;
+            $out[] = ['word' => $word, 'meaning' => ''];
+            if (count($out) >= 8) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return list<array{word: string, meaning: string}>
+     */
+    private function parseOverlayWords(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $word = $this->normalizeWord((string) ($row['word'] ?? $row['text'] ?? ''));
+            if ($word === '' || preg_match('/^[a-z]{2,24}$/', $word) !== 1) {
+                continue;
+            }
+            $out[] = [
+                'word' => $word,
+                'meaning' => trim((string) ($row['meaning'] ?? '')),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array{provider: string, id: string}|null
+     */
+    private function normalizeVideo(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+        $provider = strtolower(trim((string) ($raw['provider'] ?? '')));
+        $id = trim((string) ($raw['id'] ?? ''));
+        if ($provider === 'youtube') {
+            if (preg_match('/^[A-Za-z0-9_-]{6,20}$/', $id) !== 1) {
+                return null;
+            }
+
+            return ['provider' => 'youtube', 'id' => $id];
+        }
+        if ($provider === 'bilibili') {
+            if (preg_match('/^BV[A-Za-z0-9]+$/', $id) !== 1) {
+                return null;
+            }
+
+            return ['provider' => 'bilibili', 'id' => $id];
+        }
+
+        return null;
+    }
+
+    private function normalizeWord(string $word): string
+    {
+        $word = strtolower(trim(str_replace('’', "'", $word)));
+        $word = preg_replace('/^[^a-z]+|[^a-z]+$/i', '', $word) ?? '';
+        $word = preg_replace("/'s$/", '', $word) ?? $word;
+
+        return strtolower($word);
     }
 
     /**

@@ -106,9 +106,24 @@ erDiagram
 | failed_login_count | SMALLINT UNSIGNED | |
 | locked_until | DATETIME(3) NULL | |
 | last_login_at | DATETIME(3) NULL | |
+| is_site_admin | BOOLEAN | 站点管理员（可发家庭邀请码），默认 false |
 | remember_token, timestamps | | |
 
-> 家长与孩子都是 `users`；角色由 `family_members.role` 决定。孩子没有密码，只能经授权设备 + PIN 登录。
+> 家长与孩子都是 `users`；角色由 `family_members.role` 决定。孩子没有密码，只能经授权设备 + PIN 登录。`is_site_admin` 是站点级能力，与家庭角色无关。
+
+### `family_invites`
+| 列 | 类型 | 说明 |
+|---|---|---|
+| id | PK | |
+| code_hash | CHAR(64) UNIQUE | 邀请码 SHA-256（明文不落库） |
+| code_prefix | VARCHAR(4) | 列表辨认用前缀 |
+| note | VARCHAR(64) NULL | 管理员备注 |
+| created_by | FK users | |
+| expires_at | DATETIME(3) NULL | |
+| used_at | DATETIME(3) NULL | 一次性核销时间 |
+| used_by_family_id | FK families NULL | |
+| revoked_at | DATETIME(3) NULL | |
+| timestamps | | |
 
 ### `family_members`
 | 列 | 类型 | 说明 |
@@ -487,4 +502,6 @@ FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'coin_ledger is append-o
 |---|---|---|
 | 系统设置默认值 | `SettingsRegistry`（代码） | 全部 |
 | 创建家庭与首位家长 | `php artisan family:create`（交互输入密码） | 全部 |
+| 站点管理员 | `php artisan site-admin:grant {username}`（可在家长后台发邀请码） | 全部 |
+| 邀请码自助开户 | 管理员 UI 生成一次性码 → `POST /auth/register` | 全部 |
 | 演示家庭（明确标注"测试数据"，虚构昵称） | `php artisan db:seed --class=DemoSeeder` | 仅 `local`/`testing`，生产拒绝执行 |

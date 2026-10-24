@@ -31,11 +31,11 @@ class Sudo
     public function until(Session $session): ?CarbonImmutable
     {
         $ts = $session->get(self::SESSION_KEY);
-        if (! is_int($ts)) {
+        if (! is_int($ts) && ! (is_string($ts) && ctype_digit($ts))) {
             return null;
         }
 
-        $until = CarbonImmutable::createFromTimestamp($ts, 'UTC');
+        $until = CarbonImmutable::createFromTimestamp((int) $ts, 'UTC');
 
         return $until->isAfter($this->clock->now()) ? $until : null;
     }

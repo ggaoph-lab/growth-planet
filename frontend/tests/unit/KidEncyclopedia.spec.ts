@@ -40,7 +40,31 @@ const domain = {
   title: '海洋生物 / Ocean Life',
   emoji: '🐋',
   topics: [
-    { id: 'mt_oAg79ju344', domain_key: 'ocean-life', name: '什么是海洋？ / What Is the Ocean?', emoji: '🌊', age_start: 5, age_end: 7, read: false },
+    {
+      id: 'mt_oAg79ju344',
+      domain_key: 'ocean-life',
+      name: '广阔的海洋 / What Is the Ocean?',
+      name_zh: '广阔的海洋',
+      name_en: 'What Is the Ocean?',
+      emoji: '🌊',
+      age_start: 5,
+      age_end: 7,
+      read: false,
+      locked: false,
+    },
+    {
+      id: 'mt_locked',
+      domain_key: 'ocean-life',
+      name: '锁定篇 / Locked',
+      name_zh: '锁定篇',
+      name_en: 'Locked',
+      emoji: '🔒',
+      age_start: 5,
+      age_end: 7,
+      read: false,
+      locked: true,
+      unlock_hint: { id: 'mt_oAg79ju344', name_zh: '广阔的海洋', name_en: 'What Is the Ocean?', emoji: '🌊' },
+    },
   ],
 }
 
@@ -48,12 +72,19 @@ const article = {
   id: 'mt_oAg79ju344',
   domain_key: 'ocean-life',
   domain: '海洋生物 / Ocean Life',
-  name: '什么是海洋？ / What Is the Ocean?',
+  name: '广阔的海洋 / What Is the Ocean?',
+  name_zh: '广阔的海洋',
+  name_en: 'What Is the Ocean?',
   body: '海洋很大。 / The ocean is big.',
+  body_zh: '海洋很大。',
+  body_en: 'The ocean is big.',
   emoji: '🌊',
   age_start: 5,
   age_end: 7,
   read: false,
+  locked: false,
+  words: [{ word: 'ocean', meaning: '海洋' }],
+  video: { provider: 'bilibili' as const, id: 'BV1xx411c7mD' },
   prerequisites: [],
   next_topics: [],
   attribution: 'Marble',
@@ -70,6 +101,7 @@ describe('KidEncyclopediaPage', () => {
       throw new Error(`unexpected get ${path}`)
     })
     vi.mocked(api.postIdempotent).mockResolvedValue({ ...article, read: true })
+    vi.mocked(api.post).mockResolvedValue({ word: 'ocean', added: true, already: false, meaning: '海洋' })
   })
 
   it('opens a domain then an article and marks it read', async () => {
@@ -81,13 +113,16 @@ describe('KidEncyclopediaPage', () => {
     await wrapper.findAll('button.domain')[0]!.trigger('click')
     await flushPromises()
     expect(api.get).toHaveBeenCalledWith('/kid/encyclopedia/domains/ocean-life')
-    expect(wrapper.text()).toContain('什么是海洋？')
+    expect(wrapper.text()).toContain('广阔的海洋')
+    expect(wrapper.text()).toContain('What Is the Ocean?')
 
     await wrapper.findAll('button.topic')[0]!.trigger('click')
     await flushPromises()
     expect(api.get).toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_oAg79ju344')
     expect(api.postIdempotent).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('海洋很大')
+    expect(wrapper.text()).toContain('The ocean is big')
+    expect(wrapper.find('iframe').attributes('src')).toContain('player.bilibili.com')
     expect(wrapper.text()).toContain('读给我听')
     await wrapper.find('button.speak:last-of-type').trigger('click')
     await flushPromises()
@@ -95,15 +130,31 @@ describe('KidEncyclopediaPage', () => {
     expect(wrapper.text()).toContain('读过')
   })
 
-  it('shows the reviewed Chinese article body in bilingual mode', async () => {
+  it('shows Chinese above English and can collect a word', async () => {
     setAppLocale('zh-en')
     const wrapper = mount(KidEncyclopediaPage)
     await flushPromises()
     await wrapper.find('button.domain').trigger('click')
     await flushPromises()
-    await wrapper.find('button.topic').trigger('click')
+    await wrapper.findAll('button.topic')[0]!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.body').text()).toBe('海洋很大。')
+    expect(wrapper.find('.body-zh').text()).toBe('海洋很大。')
+    expect(wrapper.find('.body-en').text()).toContain('ocean')
+    await wrapper.find('button.word-chip').trigger('click')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_oAg79ju344/words', { word: 'ocean' })
+    expect(wrapper.text()).toContain('已加入生词表')
+  })
+
+  it('blocks opening locked topics from the list', async () => {
+    const wrapper = mount(KidEncyclopediaPage)
+    await flushPromises()
+    await wrapper.find('button.domain').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.topic')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('先读完「广阔的海洋」')
+    expect(api.get).not.toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_locked')
   })
 })

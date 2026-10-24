@@ -6,8 +6,11 @@ use App\Modules\Core\Audit\AuditLogger;
 use App\Modules\Core\Exceptions\ApiException;
 use App\Modules\Core\Settings\Settings;
 use App\Modules\Identity\Support\CurrentContext;
+use App\Modules\Core\Support\BiMsg;
 use App\Modules\Task\Services\AiModelCatalog;
 use App\Modules\Task\Services\FamilyAiConfig;
+use App\Modules\Task\Services\QwenTtsService;
+use App\Modules\Task\Services\QwenTtsVoiceCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -20,6 +23,8 @@ class AiSettingsController
         private readonly CurrentContext $context,
         private readonly FamilyAiConfig $aiConfig,
         private readonly AiModelCatalog $models,
+        private readonly QwenTtsService $tts,
+        private readonly QwenTtsVoiceCatalog $ttsVoices,
         private readonly Settings $settings,
         private readonly AuditLogger $audit,
     ) {}
@@ -67,6 +72,64 @@ class AiSettingsController
         ]);
     }
 
+    public function previewTts(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'voice' => ['required', 'string', 'max:64'],
+            'lang' => ['required', 'string', 'in:zh-CN,en-US'],
+            'text' => ['sometimes', 'nullable', 'string', 'max:120'],
+        ]);
+
+        $userId = $this->context->user()->id;
+        $throttleKey = 'tts-preview:'.$userId;
+        if (RateLimiter::tooManyAttempts($throttleKey, 30)) {
+            throw ApiException::tooManyAttempts(RateLimiter::availableIn($throttleKey));
+        }
+        RateLimiter::hit($throttleKey, 60);
+
+        $voice = trim((string) $data['voice']);
+        if ($voice === '' || (! $this->ttsVoices->isKnown($voice) && ! preg_match('/^[A-Za-z][A-Za-z0-9 _-]{0,63}$/', $voice))) {
+            throw ValidationException::withMessages([
+                'voice' => BiMsg::of('请选择有效的音色', 'Please choose a valid voice'),
+            ]);
+        }
+
+        $familyId = $this->context->familyId();
+        $result = $this->tts->preview(
+            $familyId,
+            $voice,
+            (string) $data['lang'],
+            isset($data['text']) ? (string) $data['text'] : null,
+        );
+
+        if ($result === null) {
+            return response()->json([
+                'data' => [
+                    'available' => false,
+                    'audio_base64' => null,
+                    'mime' => null,
+                    'provider' => null,
+                    'qwen_configured' => $this->tts->qwenConfigured($familyId),
+                    'hint' => $this->tts->qwenConfigured($familyId)
+                        ? 'tts_upstream_failed'
+                        : 'configure_dashscope_key',
+                ],
+            ]);
+        }
+
+        return response()->json([
+            'data' => [
+                'available' => true,
+                'audio_base64' => $result['audio_base64'],
+                'mime' => $result['mime'],
+                'provider' => $result['provider'],
+                'qwen_configured' => $this->tts->qwenConfigured($familyId),
+                'voice' => $voice,
+                'lang' => $data['lang'],
+            ],
+        ]);
+    }
+
     public function update(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -82,6 +145,11 @@ class AiSettingsController
             'clear_qwen_api_key' => ['sometimes', 'boolean'],
             'clear_openai_api_key' => ['sometimes', 'boolean'],
             'clear_openai_base_url' => ['sometimes', 'boolean'],
+            'tts_provider' => ['sometimes', 'string', Rule::in(['auto', 'qwen', 'edge'])],
+            'tts_qwen_api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
+            'tts_voice' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'tts_voice_en' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'clear_tts_qwen_api_key' => ['sometimes', 'boolean'],
         ]);
 
         $familyId = $this->context->familyId();
@@ -155,6 +223,35 @@ class AiSettingsController
                 $normalized = FamilyAiConfig::normalizeOpenAiBaseUrl($base);
                 $this->settings->set('ai.openai_base_url', $normalized, $familyId, $actorId);
                 $changes['openai_base_url'] = $normalized;
+            }
+        }
+
+        if (isset($data['tts_provider'])) {
+            $this->settings->set('tts.provider', $data['tts_provider'], $familyId, $actorId);
+            $changes['tts_provider'] = $data['tts_provider'];
+        }
+
+        if (! empty($data['clear_tts_qwen_api_key'])) {
+            $this->settings->set('tts.qwen_api_key', '', $familyId, $actorId);
+            $changes['tts_qwen_api_key'] = 'cleared';
+        } elseif (array_key_exists('tts_qwen_api_key', $data) && is_string($data['tts_qwen_api_key']) && trim($data['tts_qwen_api_key']) !== '') {
+            $this->settings->set('tts.qwen_api_key', trim($data['tts_qwen_api_key']), $familyId, $actorId);
+            $changes['tts_qwen_api_key'] = 'updated';
+        }
+
+        if (array_key_exists('tts_voice', $data) && is_string($data['tts_voice'])) {
+            $voice = trim($data['tts_voice']);
+            if ($voice !== '') {
+                $this->settings->set('tts.voice', $voice, $familyId, $actorId);
+                $changes['tts_voice'] = $voice;
+            }
+        }
+
+        if (array_key_exists('tts_voice_en', $data) && is_string($data['tts_voice_en'])) {
+            $voiceEn = trim($data['tts_voice_en']);
+            if ($voiceEn !== '') {
+                $this->settings->set('tts.voice_en', $voiceEn, $familyId, $actorId);
+                $changes['tts_voice_en'] = $voiceEn;
             }
         }
 

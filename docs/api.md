@@ -39,8 +39,9 @@
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/api/v1/auth/login` | 游客 | 家长登录 `{login, password}`；限流 5 次/15 分钟/账号+IP；失败递增锁定 |
+| POST | `/api/v1/auth/register` | 游客 | 邀请码自助开户 `{invite_code, family_name, timezone, display_name, username, password}`；一次性核销；失败按 IP 限流 |
 | POST | `/api/v1/auth/logout` | 已登录 | |
-| GET | `/api/v1/auth/me` | 已登录 | 用户、角色、家庭（时区）、孩子档案（孩子会话）、`sudo_until` |
+| GET | `/api/v1/auth/me` | 已登录 | 用户、角色、`is_site_admin`、家庭（时区）、孩子档案（孩子会话）、`sudo_until` |
 | POST | `/api/v1/auth/confirm-password` | 家长 | `{password}` → `{sudo_until}`；限流 |
 | GET | `/api/v1/auth/device` | 游客 | 当前设备是否已授权 `{authorized, name}` |
 | GET | `/api/v1/auth/kid/profiles` | 已授权设备 | 可登录的孩子 `[{id, nickname, avatar, theme_color, pin_required}]` |
@@ -53,6 +54,9 @@
 | GET | `/api/v1/parent/family` | 家庭资料 |
 | PATCH | `/api/v1/parent/family` 🔐 | `{name?, timezone?}`（时区修改影响周期计算，需二次验证） |
 | GET | `/api/v1/parent/dashboard` | 家长首页：孩子概览、已授权设备数、最近审计（随阶段扩充） |
+| GET | `/api/v1/parent/invites` | 站点管理员：邀请码列表（无明文） |
+| POST | `/api/v1/parent/invites` 🔐 | 站点管理员：生成一次性邀请码 `{note?, expires_in_days?}`；响应含明文 `code`（仅此一次） |
+| DELETE | `/api/v1/parent/invites/{id}` 🔐 | 站点管理员：吊销未使用的邀请码 |
 
 ### 2.4 家长 — 孩子档案
 
@@ -71,7 +75,8 @@
 |---|---|---|
 | GET | `/api/v1/parent/devices` | 已授权设备 |
 | POST | `/api/v1/parent/devices` 🔐 | 将**当前浏览器**授权为孩子设备 `{name}`，下发 HttpOnly Cookie |
-| DELETE | `/api/v1/parent/devices/{id}` 🔐 | 撤销 |
+| PATCH | `/api/v1/parent/devices/{id}` | 重命名已授权设备 `{name}`（已撤销不可改） |
+| DELETE | `/api/v1/parent/devices/{id}` | 撤销（无需二次密码；授权仍需 🔐） |
 | GET | `/api/v1/parent/audit-logs` | 分页、按动作筛选 |
 
 ### 2.6 孩子
@@ -87,7 +92,7 @@
 
 | 资源 | 家长 | 孩子 |
 |---|---|---|
-| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`（ISO 1–7，weekly 必填）、`due_time`、`end_date`、`with_parent`；更新可带 `edit_scope=this_day|weekday_forward` + `scope_date`：`this_day` 只改当天 pending 快照不改模板，`weekday_forward` 改模板并只刷新 `scope_date` 起同一周几的 pending；无 `edit_scope` 时仍刷新全部 pending）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`；孩子提交后立即完成并发放奖励，不进入审核中心）、`/parent/task-instances?date=` | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：Edge 神经音 → 通义 Key → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，同一条 Edge 连接）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit|withdraw` 🔁 |
+| 任务 | `GET/POST/PUT/DELETE /parent/tasks`（创建/更新支持 `schedules.frequency=weekly|once`、`weekdays`（ISO 1–7，weekly 必填）、`due_time`、`end_date`、`with_parent`；更新可带 `edit_scope=this_day|weekday_forward` + `scope_date`：`this_day` 只改当天 pending 快照不改模板，`weekday_forward` 改模板并只刷新 `scope_date` 起同一周几的 pending；无 `edit_scope` 时仍刷新全部 pending）、`POST /parent/homework/parse`、`POST /parent/homework/confirm`（生成 stepped 任务+当日实例，支持 `with_parent`；孩子提交后立即完成并发放奖励，不进入审核中心）、`/parent/task-instances?date=`；`GET/PUT /parent/ai-settings`（含 `tts.voices` 音色目录）、`POST /parent/ai-settings/tts-preview`（家长试听选定音色，不落库） | `GET /kid/tasks?date=`、`POST /kid/tts`（朗读：通义 Qwen/CosyVoice → Edge → Google 等兜底 → 前端浏览器语音）、`POST /kid/tts/warm`（打开任务页时预生成，与朗读同一优先级）、`POST /kid/task-instances/{id}/ready|first-step|steps/{sid}/check|self-check|submit|withdraw` 🔁 |
 | 习惯 | `GET/POST/PUT /parent/habits` | `GET /kid/habits`、`POST /kid/habits/{id}/records` 🔁 |
 | 账本 | `GET /parent/children/{id}/ledger?asset=xp|point|coin`、`POST /parent/ledger/{ulid}/reverse` 🔁🔐、`POST /parent/children/{id}/bonus`（`xp`/`coin`/`point`）🔁🔐 | `GET /kid/wallet`（`xp` 含 `level`/`to_next`/`progress`，另有 `points` 与 `coin`） |
 | 奖励策略 | `GET/PUT /parent/reward-policies` 🔐 | — |

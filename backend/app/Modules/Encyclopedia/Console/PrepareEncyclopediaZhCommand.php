@@ -83,6 +83,11 @@ class PrepareEncyclopediaZhCommand extends Command
             }
 
             foreach ($entries as $id => $entry) {
+                $prev = is_array($merged[$id] ?? null) ? $merged[$id] : [];
+                // Keep curated video embeds; --force still resets reviewed.
+                if (isset($prev['video']) && is_array($prev['video']) && ! isset($entry['video'])) {
+                    $entry['video'] = $prev['video'];
+                }
                 $merged[$id] = $entry;
             }
             $catalog->writeOverlay($this->normalizeEntries($merged));
@@ -97,7 +102,7 @@ class PrepareEncyclopediaZhCommand extends Command
 
     /**
      * @param  list<array<string, mixed>>  $topics
-     * @return array<string, array{name: string, body: string, emoji: string}>|null
+     * @return array<string, array<string, mixed>>|null
      */
     private function generateBatch(HomeworkLlmRouter $llm, int $familyId, array $topics): ?array
     {
@@ -115,12 +120,14 @@ class PrepareEncyclopediaZhCommand extends Command
                 'content' => <<<'PROMPT'
 You write Chinese pictorial-encyclopedia cards for grade-1 children (about ages 5–8).
 Return ONLY a JSON object:
-{"entries":[{"id":"mt_...","name":"中文标题","body":"2到4句儿童中文短文","emoji":"一个emoji"}]}
+{"entries":[{"id":"mt_...","name":"中文标题","body":"2到4句儿童中文短文","emoji":"一个emoji","words":[{"word":"ocean","meaning":"海洋"}],"video_query":"儿童 海洋 科普 短视频"}]}
 Rules:
 - Keep science accurate but warm and concrete; no scary medical detail.
 - Do not invent facts that contradict the English source.
 - Chinese names should be short (≤16 chars preferred).
 - body: simplified Chinese, spoken style a parent can read aloud.
+- words: 3–6 English words from the topic that a child can learn; each has word (lowercase English) and meaning (简体中文). Prefer concrete nouns/verbs from the English source.
+- video_query: short Chinese/English search keywords for a kid-safe Bilibili or YouTube intro clip (do NOT invent video URLs or ids).
 - Exactly one entry per input id; preserve ids.
 PROMPT,
             ],
@@ -178,12 +185,21 @@ PROMPT,
             if ($name === '' || $body === '') {
                 continue;
             }
-            $out[$id] = [
+            $entry = [
                 'name' => $name,
                 'body' => $body,
                 'emoji' => $emoji !== '' ? $emoji : '📘',
                 'reviewed' => false,
+                'words' => $this->parseWords($row['words'] ?? null),
+                'video_query' => trim((string) ($row['video_query'] ?? '')),
             ];
+            if ($entry['video_query'] === '') {
+                unset($entry['video_query']);
+            }
+            if ($entry['words'] === []) {
+                unset($entry['words']);
+            }
+            $out[$id] = $entry;
         }
 
         if (count($out) < count($wanted)) {
@@ -195,8 +211,36 @@ PROMPT,
     }
 
     /**
-     * @param  array<string, array{name?: string, body?: string, emoji?: string|null, reviewed?: bool}>  $merged
-     * @return array<string, array{name: string, body: string, emoji: string, reviewed: bool}>
+     * @return list<array{word: string, meaning: string}>
+     */
+    private function parseWords(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $word = strtolower(trim((string) ($row['word'] ?? $row['text'] ?? '')));
+            $word = preg_replace('/[^a-z]/', '', $word) ?? '';
+            $meaning = trim((string) ($row['meaning'] ?? ''));
+            if ($word === '' || preg_match('/^[a-z]{2,24}$/', $word) !== 1) {
+                continue;
+            }
+            $out[] = ['word' => $word, 'meaning' => $meaning];
+            if (count($out) >= 6) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $merged
+     * @return array<string, array<string, mixed>>
      */
     private function normalizeEntries(array $merged): array
     {
@@ -211,12 +255,32 @@ PROMPT,
             if ($name === '' || $body === '') {
                 continue;
             }
-            $out[(string) $id] = [
+            $row = [
                 'name' => $name,
                 'body' => $body,
                 'emoji' => trim((string) ($entry['emoji'] ?? '')) ?: '📘',
                 'reviewed' => ($entry['reviewed'] ?? false) === true,
             ];
+            $words = $this->parseWords($entry['words'] ?? null);
+            if ($words !== []) {
+                $row['words'] = $words;
+            }
+            $videoQuery = trim((string) ($entry['video_query'] ?? ''));
+            if ($videoQuery !== '') {
+                $row['video_query'] = $videoQuery;
+            }
+            $video = $entry['video'] ?? null;
+            if (is_array($video)) {
+                $provider = strtolower(trim((string) ($video['provider'] ?? '')));
+                $vid = trim((string) ($video['id'] ?? ''));
+                if ($provider === 'youtube' && preg_match('/^[A-Za-z0-9_-]{6,20}$/', $vid) === 1) {
+                    $row['video'] = ['provider' => 'youtube', 'id' => $vid];
+                }
+                if ($provider === 'bilibili' && preg_match('/^BV[A-Za-z0-9]+$/', $vid) === 1) {
+                    $row['video'] = ['provider' => 'bilibili', 'id' => $vid];
+                }
+            }
+            $out[(string) $id] = $row;
         }
 
         return $out;

@@ -132,6 +132,44 @@ class KidLoginTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_parent_can_rename_active_device(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        [$device] = $this->makeDevice($family, $parent, '旧名称');
+
+        $this->actingAsParent($parent)
+            ->patchJson("/api/v1/parent/devices/{$device->id}", ['name' => '客厅平板'])
+            ->assertOk()
+            ->assertJsonPath('data.name', '客厅平板');
+
+        $this->assertSame('客厅平板', $device->refresh()->name);
+    }
+
+    public function test_parent_cannot_rename_revoked_device(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        [$device] = $this->makeDevice($family, $parent);
+        $device->forceFill(['revoked_at' => now()])->save();
+
+        $this->actingAsParent($parent)
+            ->patchJson("/api/v1/parent/devices/{$device->id}", ['name' => '新名字'])
+            ->assertNotFound();
+    }
+
+    public function test_parent_can_revoke_multiple_devices_without_sudo(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        [$first] = $this->makeDevice($family, $parent, '设备 A');
+        [$second] = $this->makeDevice($family, $parent, '设备 B');
+
+        $this->actingAsParent($parent);
+        $this->deleteJson("/api/v1/parent/devices/{$first->id}")->assertOk();
+        $this->deleteJson("/api/v1/parent/devices/{$second->id}")->assertOk();
+
+        $this->assertNotNull($first->refresh()->revoked_at);
+        $this->assertNotNull($second->refresh()->revoked_at);
+    }
+
     public function test_revoking_device_ends_kid_session_immediately(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

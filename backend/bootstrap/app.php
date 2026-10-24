@@ -9,9 +9,11 @@ use App\Modules\English\Console\DiagnoseEnglishAiCommand;
 use App\Modules\English\Console\PrepareEnglishDayCommand;
 use App\Modules\English\Console\PruneEnglishSpeakAttemptsCommand;
 use App\Modules\Identity\Console\CreateFamilyCommand;
-use App\Modules\Ledger\Console\GrantDailyPointsCommand;
+use App\Modules\Identity\Console\GrantSiteAdminCommand;
 use App\Modules\Identity\Http\Middleware\EnsureRole;
+use App\Modules\Identity\Http\Middleware\EnsureSiteAdmin;
 use App\Modules\Identity\Http\Middleware\RequireSudo;
+use App\Modules\Ledger\Console\GrantDailyPointsCommand;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -30,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(AssignRequestId::class);
         $middleware->alias([
             'role' => EnsureRole::class,
+            'site_admin' => EnsureSiteAdmin::class,
             'sudo' => RequireSudo::class,
             'idempotent' => RequireIdempotencyKey::class,
         ]);
@@ -37,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withCommands([
         CreateFamilyCommand::class,
+        GrantSiteAdminCommand::class,
         PreflightCommand::class,
         PruneEnglishSpeakAttemptsCommand::class,
         DiagnoseEnglishAiCommand::class,

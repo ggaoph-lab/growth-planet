@@ -42,6 +42,17 @@ class SettingsRegistry
                 'label' => 'OpenAI 兼容接口地址（中转站）',
             ],
 
+            // Kid read-aloud TTS (separate from content AI / word picks).
+            'tts.provider' => [
+                'type' => 'string',
+                'default' => 'auto',
+                'enum' => ['auto', 'qwen', 'edge'],
+                'label' => '朗读语音引擎',
+            ],
+            'tts.qwen_api_key' => ['type' => 'secret', 'default' => '', 'label' => '朗读专用通义 API Key'],
+            'tts.voice' => ['type' => 'string', 'default' => 'Cherry', 'label' => '中文朗读音色'],
+            'tts.voice_en' => ['type' => 'string', 'default' => 'Jennifer', 'label' => '英语朗读音色（美音）'],
+
             'points.daily_allowance' => ['type' => 'int', 'default' => 10, 'min' => 0, 'max' => 100, 'label' => '每日积分津贴'],
             'xp.max_level' => ['type' => 'int', 'default' => 300, 'min' => 1, 'max' => 300, 'label' => '最高等级'],
         ];

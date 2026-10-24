@@ -406,6 +406,31 @@ class EnglishVocabularyService
             ]);
         }
 
+        return $this->appendValidatedCollectedWord($child, $date, $word);
+    }
+
+    /**
+     * Append one encyclopedia English word onto today's new-word pack.
+     *
+     * @return array{word: string, added: bool, already: bool, learned: bool, key: string, meaning: string, pack_words: list<string>}
+     */
+    public function appendCollectedEncyclopediaWord(ChildProfile $child, string $date, string $word, ?string $meaningHint = null): array
+    {
+        $word = $this->normalizeTaleWord($word);
+        if ($word === '' || isset($this->taleWordSkip()[$word]) || preg_match('/^[a-z]{2,24}$/', $word) !== 1) {
+            throw ValidationException::withMessages([
+                'word' => '请点一个想学的英文单词。',
+            ]);
+        }
+
+        return $this->appendValidatedCollectedWord($child, $date, $word, $meaningHint);
+    }
+
+    /**
+     * @return array{word: string, added: bool, already: bool, learned: bool, key: string, meaning: string, pack_words: list<string>}
+     */
+    private function appendValidatedCollectedWord(ChildProfile $child, string $date, string $word, ?string $meaningHint = null): array
+    {
         $this->dailyWordPack($child, $date);
         $record = $this->coach->findRecord($child, 'daily_word_pack', $date);
         if ($record === null) {
@@ -437,6 +462,13 @@ class EnglishVocabularyService
         }
 
         $raw = $this->rawForCollectedWord($child, $word);
+        $hint = is_string($meaningHint) ? trim($meaningHint) : '';
+        if ($hint !== '') {
+            $raw['meaning'] = $hint;
+            if (! is_array($raw['options'] ?? null) || $raw['options'] === []) {
+                $raw['options'] = [$hint, '旧词', '短语'];
+            }
+        }
         $raw['collected'] = true;
         $card = $this->asDailyWordCard($raw);
         if ($card === null) {
@@ -455,7 +487,7 @@ class EnglishVocabularyService
             'status' => 'mixed',
             'profile_snapshot' => json_encode(array_merge(
                 json_decode((string) ($record->profile_snapshot ?? '{}'), true) ?: [],
-                ['pack_size' => count($merged), 'collected_word' => $word],
+                ['pack_size' => count($merged), 'collected_word' => $word, 'source' => 'encyclopedia'],
             ), JSON_UNESCAPED_UNICODE),
         ]);
 

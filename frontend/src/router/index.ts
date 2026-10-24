@@ -14,6 +14,7 @@ declare module 'vue-router' {
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'root', component: { render: () => null } },
   { path: '/login', name: 'login', component: () => import('@/parent/pages/LoginPage.vue'), meta: { role: 'guest', title: 'auth.parentLogin' } },
+  { path: '/register', name: 'register', component: () => import('@/parent/pages/RegisterPage.vue'), meta: { role: 'guest', title: 'auth.registerTitle' } },
   { path: '/kid/select', name: 'kid-select', component: () => import('@/kid/pages/KidSelectPage.vue'), meta: { role: 'guest', title: 'auth.whoAreYou' } },
   {
     path: '/kid',

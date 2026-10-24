@@ -11,11 +11,11 @@ use Illuminate\Support\Facades\Log;
  * Kid read-aloud TTS.
  *
  * Priority:
- * 1) Gemini 2.5 Flash Preview TTS when a Gemini key is configured (free tier)
- * 2) Microsoft Edge neural (free, low latency)
- * 3) Qwen-TTS / CosyVoice when a DashScope key is configured
- * 4) Google / Youdao / Baidu public proxies
+ * 1) Qwen-TTS / CosyVoice when a DashScope key is configured (stable neural)
+ * 2) Microsoft Edge neural (free; often blocked — keep as opportunistic fallback)
+ * 3) Google / Youdao / Baidu public proxies
  *
+ * Warm and interactive speak share the same cache keys and provider order.
  * Always returns base64 audio so the kid browser never depends on third-party CORS/URL expiry.
  */
 class QwenTtsService
@@ -37,9 +37,10 @@ class QwenTtsService
 
         $lang = $this->normalizeLang($lang);
         $cfg = $this->ai->resolve($familyId);
-        $qwenKey = trim($cfg['qwen_api_key']);
-        // Kid read-aloud + daily warm share Edge neural cache (Gemini TTS quota is exhausted / unused).
-        $voiceTag = $this->edgeVoiceFor($lang);
+        $qwenKey = trim($cfg['tts_qwen_api_key']);
+        $ttsProvider = (string) ($cfg['tts_provider'] ?? 'auto');
+        // Cache slot follows the preferred Qwen voice so EN/ZH voice changes invalidate stale audio.
+        $voiceTag = $this->cacheVoiceTag($lang, $cfg);
         $cacheKey = $this->cacheKey($text, $voiceTag);
         $cached = $this->readCache($cacheKey);
         if ($cached !== null) {
@@ -69,22 +70,7 @@ class QwenTtsService
                 return $cached;
             }
 
-            $result = $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
-            $english = str_starts_with($lang, 'en');
-
-            if ($result === null && $qwenKey !== '') {
-                $result = $this->synthesizeQwenTts($text, $qwenKey, $lang);
-                if ($result === null && ! $english) {
-                    $result = $this->synthesizeCosyVoice($text, $qwenKey);
-                }
-            }
-
-            $result ??= $this->synthesizeGoogleTranslate($text, $lang);
-            if ($result === null && ! $english) {
-                $result = $this->synthesizeYoudao($text)
-                    ?? $this->synthesizeBaiduTranslate($text);
-            }
-
+            $result = $this->synthesizeWithProviders($text, $lang, $qwenKey, $ttsProvider, $cfg);
             if ($result === null) {
                 return null;
             }
@@ -99,7 +85,7 @@ class QwenTtsService
     }
 
     /**
-     * Fill the read-aloud cache for the tasks on screen.
+     * Fill the read-aloud cache for the tasks on screen (same providers as synthesize).
      *
      * @param  list<string>  $texts
      * @return list<array{text: string, audio_base64: string|null, mime: string|null, provider: string|null}>
@@ -107,10 +93,7 @@ class QwenTtsService
     public function warm(array $texts, string $lang = 'zh-CN', ?int $familyId = null): array
     {
         $lang = $this->normalizeLang($lang);
-        $cfg = $this->ai->resolve($familyId);
-        // Warm must fill the same Edge cache interactive speak() reads — Gemini-first left NAS kids waiting.
-        $voiceTag = $this->edgeVoiceFor($lang);
-        $edgeVoice = $this->edgeVoiceFor($lang);
+        $familyId = (int) ($familyId ?? 0);
         $ordered = [];
         $aliases = [];
         foreach ($texts as $raw) {
@@ -134,63 +117,10 @@ class QwenTtsService
             }
         }
 
-        $pending = [];
-        $locks = [];
-        foreach (array_keys($ordered) as $text) {
-            $cacheKey = $this->cacheKey($text, $voiceTag);
-            $cached = $this->readCache($cacheKey);
-            if ($cached !== null) {
-                $ordered[$text] = array_merge($ordered[$text], $cached);
-
-                continue;
-            }
-
-            $lock = Cache::lock($cacheKey.':lock', 25);
-            try {
-                $lock->block(8);
-            } catch (LockTimeoutException) {
-                $cached = $this->readCache($cacheKey);
-                if ($cached !== null) {
-                    $ordered[$text] = array_merge($ordered[$text], $cached);
-                }
-
-                continue;
-            }
-
-            $cached = $this->readCache($cacheKey);
-            if ($cached !== null) {
-                $lock->release();
-                $ordered[$text] = array_merge($ordered[$text], $cached);
-
-                continue;
-            }
-
-            $pending[] = $text;
-            $locks[$text] = $lock;
-        }
-
-        if ($pending !== []) {
-            try {
-                $this->edge->synthesizeMany($pending, $edgeVoice, function (int $index, ?array $audio) use (&$ordered, $pending, &$locks, $voiceTag): void {
-                    $text = $pending[$index];
-                    if ($audio !== null) {
-                        $this->storeCache($this->cacheKey($text, $voiceTag), $audio);
-                        $ordered[$text] = array_merge($ordered[$text], $audio);
-                        Log::info('tts.ready', ['provider' => $audio['provider']]);
-                    }
-                    if (isset($locks[$text])) {
-                        $locks[$text]->release();
-                        unset($locks[$text]);
-                    }
-                });
-            } finally {
-                foreach ($locks as $lock) {
-                    $lock->release();
-                }
-            }
-        } else {
-            foreach ($locks as $lock) {
-                $lock->release();
+        foreach ($ordered as $text => $row) {
+            $audio = $this->synthesize($row['text'], $familyId, $lang);
+            if ($audio !== null) {
+                $ordered[$text] = array_merge($row, $audio);
             }
         }
 
@@ -204,14 +134,70 @@ class QwenTtsService
         return $out;
     }
 
+    /**
+     * @param  array<string, mixed>  $cfg
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    private function synthesizeWithProviders(string $text, string $lang, string $qwenKey, string $ttsProvider, array $cfg): ?array
+    {
+        $english = str_starts_with($lang, 'en');
+        $allowQwen = in_array($ttsProvider, ['auto', 'qwen'], true);
+        $allowEdge = in_array($ttsProvider, ['auto', 'edge'], true);
+
+        if ($allowQwen && $qwenKey !== '') {
+            $result = $this->synthesizeQwenTts($text, $qwenKey, $lang, $cfg);
+            if ($result === null && ! $english) {
+                $result = $this->synthesizeCosyVoice($text, $qwenKey);
+            }
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        if ($allowEdge) {
+            $result = $this->synthesizeEdge($text, $this->edgeVoiceFor($lang));
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        $result = $this->synthesizeGoogleTranslate($text, $lang);
+        if ($result === null && ! $english) {
+            $result = $this->synthesizeYoudao($text)
+                ?? $this->synthesizeBaiduTranslate($text);
+        }
+
+        return $result;
+    }
+
     private function cacheKey(string $text, string $voice): string
     {
-        return 'tts:v8:'.$voice.':'.hash('sha256', $text);
+        return 'tts:v9:'.$voice.':'.hash('sha256', $text);
+    }
+
+    /** @param  array<string, mixed>|null  $cfg */
+    private function cacheVoiceTag(string $lang, ?array $cfg = null): string
+    {
+        return 'qwen:'.$this->qwenVoiceFor($lang, $cfg);
     }
 
     private function normalizeLang(string $lang): string
     {
         return str_starts_with(strtolower(str_replace('_', '-', trim($lang))), 'en') ? 'en-US' : 'zh-CN';
+    }
+
+    /** @param  array<string, mixed>|null  $cfg */
+    private function qwenVoiceFor(string $lang, ?array $cfg = null): string
+    {
+        if (str_starts_with($lang, 'en')) {
+            $voice = trim((string) ($cfg['tts_voice_en'] ?? ''));
+
+            return $voice !== '' ? $voice : (string) config('services.qwen.tts_voice_en', 'Jennifer');
+        }
+
+        $voice = trim((string) ($cfg['tts_voice'] ?? ''));
+
+        return $voice !== '' ? $voice : (string) config('services.qwen.tts_voice', 'Cherry');
     }
 
     private function edgeVoiceFor(string $lang): string
@@ -265,7 +251,48 @@ class QwenTtsService
 
     public function qwenConfigured(int $familyId): bool
     {
-        return trim($this->ai->resolve($familyId)['qwen_api_key']) !== '';
+        return trim($this->ai->resolve($familyId)['tts_qwen_api_key']) !== '';
+    }
+
+    /**
+     * Parent settings preview: synthesize with an explicit Qwen voice (does not persist settings).
+     *
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    public function preview(int $familyId, string $voice, string $lang = 'zh-CN', ?string $text = null): ?array
+    {
+        $voice = trim($voice);
+        if ($voice === '') {
+            return null;
+        }
+
+        $lang = $this->normalizeLang($lang);
+        $sample = $this->normalizeText($text ?? $this->previewSample($lang));
+        if ($sample === '') {
+            return null;
+        }
+
+        $cfg = $this->ai->resolve($familyId);
+        if (str_starts_with($lang, 'en')) {
+            $cfg['tts_voice_en'] = $voice;
+        } else {
+            $cfg['tts_voice'] = $voice;
+        }
+
+        // Preview must hit Qwen so the selected voice is what parents hear (not Edge fallback).
+        $qwenKey = trim((string) ($cfg['tts_qwen_api_key'] ?? ''));
+        if ($qwenKey === '') {
+            return null;
+        }
+
+        return $this->synthesizeQwenTts($sample, $qwenKey, $lang, $cfg);
+    }
+
+    private function previewSample(string $lang): string
+    {
+        return str_starts_with($lang, 'en')
+            ? 'Hello! Let\'s practice English together.'
+            : '你好，今天也要加油完成任务哦。';
     }
 
     public function geminiConfigured(int $familyId): bool
@@ -621,9 +648,13 @@ class QwenTtsService
     /**
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
-    private function synthesizeQwenTts(string $text, string $apiKey, string $lang = 'zh-CN'): ?array
+    /**
+     * @param  array<string, mixed>|null  $cfg
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    private function synthesizeQwenTts(string $text, string $apiKey, string $lang = 'zh-CN', ?array $cfg = null): ?array
     {
-        $voice = (string) config('services.qwen.tts_voice', 'Cherry');
+        $voice = $this->qwenVoiceFor($lang, $cfg);
         $model = (string) config('services.qwen.tts_model', 'qwen3-tts-flash');
         $primary = rtrim((string) config('services.qwen.tts_base_url', 'https://dashscope.aliyuncs.com/api/v1'), '/');
         $timeout = max(8, (int) config('services.qwen.tts_timeout', 25));

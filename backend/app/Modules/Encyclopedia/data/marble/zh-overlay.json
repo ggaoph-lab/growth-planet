@@ -84,7 +84,15 @@
             "name": "认识八大行星",
             "body": "太阳系里有八个行星，它们排着队绕着太阳跑。从近到远分别是水星、金星、地球、火星、木星、土星、天王星和海王星。",
             "emoji": "🪐",
-            "reviewed": true
+            "reviewed": true,
+            "words": [
+                {"word": "planet", "meaning": "行星"},
+                {"word": "sun", "meaning": "太阳"},
+                {"word": "earth", "meaning": "地球"},
+                {"word": "orbit", "meaning": "绕转"}
+            ],
+            "video_query": "儿童 八大行星 科普",
+            "video": {"provider": "bilibili", "id": "BV1GJ411x7h7"}
         },
         "mt_EygMHKs8Ed": {
             "name": "食物链",
@@ -105,7 +113,15 @@
             "name": "为什么会有四季",
             "body": "一年中，白天的长短会变化。夏天白天通常比较长，冬天白天通常比较短。观察每天日出和日落的时间，就能发现季节变化的线索。",
             "emoji": "🌍",
-            "reviewed": true
+            "reviewed": true,
+            "words": [
+                {"word": "season", "meaning": "季节"},
+                {"word": "summer", "meaning": "夏天"},
+                {"word": "winter", "meaning": "冬天"},
+                {"word": "daylight", "meaning": "日光"}
+            ],
+            "video_query": "儿童 四季变化 科普",
+            "video": {"provider": "youtube", "id": "bGvFdt2XXQY"}
         },
         "mt_KsKLVW_ssY": {
             "name": "大地与水的形状",
@@ -242,7 +258,15 @@
             "name": "广阔的海洋",
             "body": "地球上大部分地方都是蓝蓝的海洋，那是咸咸的水世界。海洋里住着成千上万种小动物，是一个超级大的家！",
             "emoji": "🌊",
-            "reviewed": true
+            "reviewed": true,
+            "words": [
+                {"word": "ocean", "meaning": "海洋"},
+                {"word": "salt", "meaning": "盐"},
+                {"word": "animal", "meaning": "动物"},
+                {"word": "water", "meaning": "水"}
+            ],
+            "video_query": "儿童 海洋 科普 短视频",
+            "video": {"provider": "bilibili", "id": "BV1xx411c7mD"}
         },
         "mt_oLHXfLujmh": {
             "name": "动物的家",

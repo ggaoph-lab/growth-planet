@@ -78,13 +78,15 @@ return [
         // Natural kid read-aloud. Same DashScope key as homework LLM.
         'tts_base_url' => env('DASHSCOPE_TTS_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1'),
         'tts_model' => env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
+        // Cherry = natural Mandarin kid voice; Jennifer = US English female (DashScope voice list).
         'tts_voice' => env('QWEN_TTS_VOICE', 'Cherry'),
+        'tts_voice_en' => env('QWEN_TTS_VOICE_EN', 'Jennifer'),
         'tts_cosy_model' => env('QWEN_TTS_COSY_MODEL', 'cosyvoice-v2'),
         'tts_cosy_voice' => env('QWEN_TTS_COSY_VOICE', 'longxiaochun_v2'),
         'tts_timeout' => (int) env('QWEN_TTS_TIMEOUT', 25),
     ],
 
-    // Kid read-aloud: Edge neural (warmed daily) → Qwen/CosyVoice → public fallbacks. Gemini TTS unused.
+    // Kid read-aloud: Qwen/CosyVoice → Edge neural (opportunistic) → public fallbacks. Gemini TTS unused.
     'tts' => [
         'prefer_gemini' => false,
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),

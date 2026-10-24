@@ -22,6 +22,7 @@ use Laravel\Sanctum\HasApiTokens;
  * @property int $failed_login_count
  * @property CarbonImmutable|null $locked_until
  * @property CarbonImmutable|null $last_login_at
+ * @property bool $is_site_admin
  * @property-read FamilyMember|null $member
  */
 class User extends Authenticatable
@@ -38,6 +39,7 @@ class User extends Authenticatable
         'locked_until' => null,
         'last_login_at' => null,
         'remember_token' => null,
+        'is_site_admin' => false,
     ];
 
     protected $hidden = ['password', 'pin_hash', 'remember_token'];
@@ -53,6 +55,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'locked_until' => 'immutable_datetime',
             'last_login_at' => 'immutable_datetime',
+            'is_site_admin' => 'boolean',
         ];
     }
 
