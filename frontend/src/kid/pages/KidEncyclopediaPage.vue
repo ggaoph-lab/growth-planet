@@ -26,9 +26,14 @@ const loading = ref(subject.value == null)
 const error = ref('')
 const speaking = ref(false)
 const speakingLang = ref<'zh' | 'en' | null>(null)
+const heardZh = ref(false)
+const heardEn = ref(false)
 const savingRead = ref(false)
 const savingWord = ref('')
 const wordFlash = ref('')
+const rewardFlash = ref('')
+
+const canFinishReading = computed(() => Boolean(article.value && !article.value.read && heardZh.value && heardEn.value))
 
 const view = computed(() => {
   if (article.value) return 'article' as const
@@ -119,6 +124,9 @@ async function openTopic(id: string, row?: EncyclopediaTopicListItem): Promise<v
   loading.value = true
   error.value = ''
   wordFlash.value = ''
+  rewardFlash.value = ''
+  heardZh.value = false
+  heardEn.value = false
   try {
     const detail = await api.get<EncyclopediaTopicDetail>(`/kid/encyclopedia/topics/${encodeURIComponent(id)}`)
     article.value = detail
@@ -130,10 +138,11 @@ async function openTopic(id: string, row?: EncyclopediaTopicListItem): Promise<v
 }
 
 async function markRead(): Promise<void> {
-  if (!article.value || article.value.read || savingRead.value) return
+  if (!article.value || article.value.read || savingRead.value || !canFinishReading.value) return
   tap()
   savingRead.value = true
   error.value = ''
+  rewardFlash.value = ''
   try {
     const id = article.value.id
     const detail = await api.postIdempotent<EncyclopediaTopicDetail>(
@@ -141,6 +150,12 @@ async function markRead(): Promise<void> {
       {},
     )
     if (article.value?.id === id) article.value = detail
+    const reward = detail.reward
+    if (reward) {
+      rewardFlash.value = reward.capped || (reward.xp === 0 && reward.points === 0)
+        ? t('kid.encyclopedia.rewardCapped')
+        : t('kid.encyclopedia.rewardClaimed', { xp: reward.xp, points: reward.points })
+    }
     if (domain.value) {
       // Refresh so prerequisite unlocks update locked flags for siblings.
       domain.value = await api.get<EncyclopediaDomainDetail>(
@@ -182,8 +197,11 @@ async function collectWord(raw: string): Promise<void> {
 function back(): void {
   tap()
   wordFlash.value = ''
+  rewardFlash.value = ''
   if (view.value === 'article') {
     article.value = null
+    heardZh.value = false
+    heardEn.value = false
     return
   }
   if (view.value === 'domain') {
@@ -205,6 +223,7 @@ async function readAloud(lang: 'zh' | 'en'): Promise<void> {
   stopSpeaking()
   speaking.value = true
   speakingLang.value = lang
+  let finished = false
   try {
     await unlockSpeak()
     if (lang === 'en') {
@@ -212,12 +231,18 @@ async function readAloud(lang: 'zh' | 'en'): Promise<void> {
       const body = (article.value.body_en || '').trim()
       const text = [title, body].filter(Boolean).join(title.endsWith('?') || title.endsWith('.') ? ' ' : '. ')
       if (text) await speakPhrase(text, 'en-US')
+      finished = true
     } else {
       const title = article.value.name_zh || displayText(article.value.name)
       const body = article.value.body_zh || displayText(article.value.body)
       await speakPhrase(`${title}。${body}`, 'zh-CN')
+      finished = true
     }
   } finally {
+    if (finished) {
+      if (lang === 'zh') heardZh.value = true
+      else heardEn.value = true
+    }
     speaking.value = false
     speakingLang.value = null
   }
@@ -330,6 +355,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <button
           type="button"
           class="speak"
+          :class="{ heard: heardZh }"
           :disabled="speaking && speakingLang !== 'zh'"
           @click="readAloud('zh')"
         >
@@ -338,16 +364,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <button
           type="button"
           class="speak"
+          :class="{ heard: heardEn }"
           :disabled="speaking && speakingLang !== 'en'"
           @click="readAloud('en')"
         >
           {{ speaking && speakingLang === 'en' ? t('kid.encyclopedia.speaking') : t('kid.encyclopedia.speakEn') }}
         </button>
       </div>
-      <button v-if="!article.read" type="button" class="speak finish-read" :disabled="savingRead" @click="markRead">
+      <button
+        v-if="!article.read"
+        type="button"
+        class="speak finish-read"
+        :disabled="savingRead || !canFinishReading"
+        @click="markRead"
+      >
         {{ t('kid.encyclopedia.finishReading') }}
       </button>
-      <p v-else class="read-confirmed">{{ t('kid.encyclopedia.read') }}</p>
+      <p v-else-if="!rewardFlash" class="read-confirmed">{{ t('kid.encyclopedia.read') }}</p>
+      <p v-if="!article.read && !canFinishReading" class="finish-hint">{{ t('kid.encyclopedia.finishReadingHint') }}</p>
+      <p v-if="rewardFlash" class="reward-flash">{{ rewardFlash }}</p>
 
       <section v-if="article.prerequisites.length" class="related">
         <h3>{{ t('kid.encyclopedia.prerequisites') }}</h3>
@@ -547,7 +582,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   background: rgba(255, 255, 255, 0.22);
   font-weight: 700;
 }
+.speak.heard {
+  background: rgba(120, 220, 160, 0.35);
+}
+.speak:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .finish-read { margin-top: 8px; }
+.finish-hint, .reward-flash, .read-confirmed {
+  text-align: center;
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+.reward-flash { color: #c8f7d4; font-weight: 700; }
 .related h3 {
   margin: 12px 0 8px;
   font-size: 16px;

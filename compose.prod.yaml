@@ -135,6 +135,9 @@ services:
     restart: unless-stopped
 
 volumes:
+  # Kept as project-default name `growth-planet_mysql-data` for NAS continuity.
+  # Local `compose.yaml` uses a different project + volume so Mac preview and
+  # `make up` no longer fight over MYSQL_PASSWORD.
   mysql-data:
   app-storage:
   app-logs:

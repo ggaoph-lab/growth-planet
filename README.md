@@ -13,15 +13,17 @@ Vue 3 + TypeScript + Vite + Pinia + Vue Router + Element Plus（家长端）｜L
 前置：Docker（含 Compose v2）、Node.js 20+、make。
 
 ```bash
-make init              # 生成 .env 与 backend/.env（随机数据库密码，不入库）
+make init              # 生成 .env 与 backend/.env（随机数据库密码，不入库；已有 .env 则保留）
 make build             # 构建 PHP 镜像
-make up                # 启动 mysql / app / nginx
+make up                # 启动 mysql / app / nginx（项目名 growth-planet-dev，独立数据卷）
 make composer ARGS=install
 make key               # 生成 APP_KEY（仅首次）
 make migrate
 make frontend-install
 make frontend-build    # 构建到 frontend/dist，由 nginx 提供
 ```
+
+若出现 `Access denied` / 测试库连不上：本地开发栈与 `make preview`（prod compose）曾共用过 MySQL 卷导致密码错位。先 `make db-password-sync` 把运行中 MySQL 改回与根目录 `.env` 一致（不丢数据）；日常不要手改 `.env` 里的 `MYSQL_*_PASSWORD` 除非再跑一次 sync。
 
 **预览地址固定为** <http://localhost:8088>（不要用 5173）。
 

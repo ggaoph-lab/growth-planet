@@ -198,27 +198,27 @@ class RewardGrantService
         [$weekStart] = $this->clock->weekRange($family->timezone);
 
         if ($policy->max_per_day !== null) {
-            $dayCoin = RewardGrant::query()
+            $dayEnd = $this->clock->today($family->timezone)->addDay()->toDateString();
+            $dayGrants = fn () => RewardGrant::query()
                 ->where('child_id', $intent->childId)
                 ->where('policy_code', $intent->policyCode)
                 ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
                 ->whereDate('occurred_at', '>=', $today)
-                ->whereDate('occurred_at', '<', $this->clock->today($family->timezone)->addDay()->toDateString())
-                ->sum('coin_amount');
-            $remaining = max(0, $policy->max_per_day - (int) $dayCoin);
-            if ($coin > $remaining) {
-                $detail['daily_coin_cap'] = ['requested' => $coin, 'granted' => $remaining];
-                $coin = $remaining;
+                ->whereDate('occurred_at', '<', $dayEnd);
+
+            $xpRemaining = max(0, $policy->max_per_day - (int) $dayGrants()->sum('xp_amount'));
+            if ($xp > $xpRemaining) {
+                $detail['daily_xp_cap'] = ['requested' => $xp, 'granted' => $xpRemaining];
+                $xp = $xpRemaining;
             }
 
-            $dayPoint = RewardGrant::query()
-                ->where('child_id', $intent->childId)
-                ->where('policy_code', $intent->policyCode)
-                ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
-                ->whereDate('occurred_at', '>=', $today)
-                ->whereDate('occurred_at', '<', $this->clock->today($family->timezone)->addDay()->toDateString())
-                ->sum('point_amount');
-            $pointRemaining = max(0, $policy->max_per_day - (int) $dayPoint);
+            $coinRemaining = max(0, $policy->max_per_day - (int) $dayGrants()->sum('coin_amount'));
+            if ($coin > $coinRemaining) {
+                $detail['daily_coin_cap'] = ['requested' => $coin, 'granted' => $coinRemaining];
+                $coin = $coinRemaining;
+            }
+
+            $pointRemaining = max(0, $policy->max_per_day - (int) $dayGrants()->sum('point_amount'));
             if ($point > $pointRemaining) {
                 $detail['daily_point_cap'] = ['requested' => $point, 'granted' => $pointRemaining];
                 $point = $pointRemaining;
@@ -226,25 +226,25 @@ class RewardGrantService
         }
 
         if ($policy->max_per_week !== null) {
-            $weekCoin = RewardGrant::query()
+            $weekGrants = fn () => RewardGrant::query()
                 ->where('child_id', $intent->childId)
                 ->where('policy_code', $intent->policyCode)
                 ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
-                ->where('occurred_at', '>=', $weekStart)
-                ->sum('coin_amount');
-            $remaining = max(0, $policy->max_per_week - (int) $weekCoin);
-            if ($coin > $remaining) {
-                $detail['weekly_coin_cap'] = ['requested' => $coin, 'granted' => $remaining];
-                $coin = $remaining;
+                ->where('occurred_at', '>=', $weekStart);
+
+            $xpRemaining = max(0, $policy->max_per_week - (int) $weekGrants()->sum('xp_amount'));
+            if ($xp > $xpRemaining) {
+                $detail['weekly_xp_cap'] = ['requested' => $xp, 'granted' => $xpRemaining];
+                $xp = $xpRemaining;
             }
 
-            $weekPoint = RewardGrant::query()
-                ->where('child_id', $intent->childId)
-                ->where('policy_code', $intent->policyCode)
-                ->whereIn('status', [RewardGrantStatus::Granted, RewardGrantStatus::Capped])
-                ->where('occurred_at', '>=', $weekStart)
-                ->sum('point_amount');
-            $pointRemaining = max(0, $policy->max_per_week - (int) $weekPoint);
+            $coinRemaining = max(0, $policy->max_per_week - (int) $weekGrants()->sum('coin_amount'));
+            if ($coin > $coinRemaining) {
+                $detail['weekly_coin_cap'] = ['requested' => $coin, 'granted' => $coinRemaining];
+                $coin = $coinRemaining;
+            }
+
+            $pointRemaining = max(0, $policy->max_per_week - (int) $weekGrants()->sum('point_amount'));
             if ($point > $pointRemaining) {
                 $detail['weekly_point_cap'] = ['requested' => $point, 'granted' => $pointRemaining];
                 $point = $pointRemaining;

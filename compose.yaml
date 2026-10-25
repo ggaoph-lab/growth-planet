@@ -1,4 +1,6 @@
-name: growth-planet
+# Local dev stack. Separate project name + volume from compose.prod.yaml so
+# `make preview` / prod env passwords cannot overwrite this MySQL data dir.
+name: growth-planet-dev
 
 x-app-env: &app-env
   DB_CONNECTION: mysql
@@ -27,7 +29,8 @@ services:
     ports:
       - "127.0.0.1:${MYSQL_HOST_PORT:-33061}:3306"
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      # mysqladmin ping succeeds even with a wrong password; SELECT verifies auth.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent && mysql -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1' --silent"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -59,4 +62,7 @@ services:
       - app
 
 volumes:
+  # Explicit name so a one-time migrate from the old shared volume is easy, and
+  # so this never collides with compose.prod.yaml's growth-planet_mysql-data.
   mysql-data:
+    name: growth-planet_dev_mysql_data

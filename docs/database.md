@@ -215,7 +215,7 @@ UNIQUE(`family_id`, `key`)（应用层处理 NULL）。键名、类型、默认�
 | family_id, account_id, child_id | |
 | amount | 有符号，≠ 0 |
 | balance_before / balance_after | |
-| entry_type | `reward`、`redemption`、`refund`、`reversal`、`parent_bonus`、`level_up`、`daily_allowance`… |
+| entry_type | `reward`、`redemption`、`refund`、`reversal`、`parent_bonus`、`level_up`、`level_down`、`daily_allowance`… |
 | source_module | `task`、`habit`、`shop`、`movie`、`english`、`exploration`、`parent`、`item`、`game`、`system` |
 | source_type / source_id | 来源业务对象 |
 | idempotency_key | UNIQUE |

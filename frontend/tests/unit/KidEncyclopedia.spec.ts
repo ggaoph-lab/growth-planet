@@ -128,10 +128,24 @@ describe('KidEncyclopediaPage', () => {
     expect(wrapper.text()).toContain('听中文')
     expect(wrapper.text()).toContain('听英文')
     expect(wrapper.findAll('button.word-chip').length).toBe(0)
+    expect(wrapper.find('button.finish-read').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('先听完中文和英文')
+
+    await wrapper.findAll('button.speak').find(btn => btn.text() === '听中文')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.speak').find(btn => btn.text() === '听英文')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button.finish-read').attributes('disabled')).toBeUndefined()
+
+    vi.mocked(api.postIdempotent).mockResolvedValueOnce({
+      ...article,
+      read: true,
+      reward: { xp: 1, points: 1, capped: false },
+    })
     await wrapper.find('button.finish-read').trigger('click')
     await flushPromises()
     expect(api.postIdempotent).toHaveBeenCalledWith('/kid/encyclopedia/topics/mt_oAg79ju344/read', {})
-    expect(wrapper.text()).toContain('读过')
+    expect(wrapper.text()).toContain('+1 经验 · +1 积分')
   })
 
   it('shows Chinese above English and can collect a word by tapping English text', async () => {

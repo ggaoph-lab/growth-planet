@@ -250,6 +250,12 @@ export interface EncyclopediaDomainDetail {
   topics: EncyclopediaTopicListItem[]
 }
 
+export interface EncyclopediaReadReward {
+  xp: number
+  points: number
+  capped: boolean
+}
+
 export interface EncyclopediaTopicDetail {
   id: string
   domain_key: string
@@ -271,6 +277,7 @@ export interface EncyclopediaTopicDetail {
   prerequisites: EncyclopediaTopicListItem[]
   next_topics: EncyclopediaTopicListItem[]
   attribution: string
+  reward?: EncyclopediaReadReward | null
 }
 
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'RETURNED' | 'CANCELLED'

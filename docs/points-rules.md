@@ -7,7 +7,7 @@
 | | 经验 XP | 积分 Points | 成长币 Coins |
 |---|---|---|---|
 | 用途 | 等级进度条、称号 | 兑换虚拟奖励（游戏/电视时间、家庭活动、虚拟装饰） | 兑换实体礼物（冰激凌、玩具等） |
-| 主要来源 | 任务、习惯、清单等 `xp_amount` | **每日固定津贴**；游戏（舒尔特/镜像/数独） | 任务、习惯、清单等 `coin_amount` |
+| 主要来源 | 任务、习惯、清单等 `xp_amount`；科学百科读完（`encyclopedia.read`） | **每日固定津贴**；游戏（舒尔特/镜像/数独）；科学百科读完 | 任务、习惯、清单等 `coin_amount` |
 | 减少 | **升级时扣除本级阈值**（溢出结转）；家长冲正 | 兑换预留/扣款；家长调整 | 兑换预留/扣款；审核扣分；冲正 |
 | 负余额 | 禁止 | 禁止 | 禁止 |
 
@@ -23,8 +23,9 @@ toNextLevel(lvl) =
 ```
 
 - `xp_accounts.balance` = **当前等级内经验**
-- `xp_accounts.lifetime_earned` = 终身累计入账（升级不扣减）
+- `xp_accounts.lifetime_earned` = 终身累计入账（升级/降级不改；降级恢复不计为新入账）
 - 发 XP 后循环：`while (balance >= toNextLevel(level) && level < max) { balance -= need; level++ }`，并记 `entry_type=level_up` 流水
+- 冲正/回退 XP 时若当前等级内余额不足：先降级并恢复该级阈值（`entry_type=level_down`），必要时再恢复满级封顶扣减，再扣款；避免「升级后撤回已完成任务」因余额不足失败
 - 默认最高等级 300（设置 `xp.max_level`）；满级后经验条封顶不再继续涨
 
 ## 3. 每日积分津贴
@@ -45,9 +46,15 @@ toNextLevel(lvl) =
 | `parent_bonus` | 三者 | 家长手动奖励 |
 | `daily_allowance` | Points | 每日津贴（也可记为 reward + policy） |
 | `level_up` | XP | 升级扣除阈值 / 满级封顶 |
+| `level_down` | XP | 冲正前降级恢复阈值 / 恢复满级封顶 |
 | `redemption` | Points / Coins | 兑换扣款 |
 | `reversal` | 对应资产 | 冲正 |
 
-## 6. 一致性
+## 6. 科学百科读完奖励
 
-沿用既有账本算法：事务 + 行锁 + 幂等键 + `CHECK (balance >= 0)`；金币/积分另有 `held` 与 `CHECK (held <= balance)`。
+- 政策码：`encyclopedia.read`（每篇 1 XP + 1 积分，`max_per_day=10`）
+- 孩子听完中文与英文后点「我读完了」入账；同一篇只发一次；达每日上限后仍可标记已读，奖励为 0
+
+## 7. 一致性
+
+沿用既有账本算法：事务 + 行锁 + 幂等键 + `CHECK (balance >= 0)`；金币/积分另有 `held` 与 `CHECK (held <= balance)`。`max_per_day` / `max_per_week` 分别限制 XP、积分、成长币当日/当周累计入账。

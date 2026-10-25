@@ -141,6 +141,8 @@ make frontend-install && make frontend-build
 
 访问 <http://localhost:8088>。
 
+本地栈项目名为 `growth-planet-dev`，MySQL 卷为 `growth-planet_dev_mysql_data`，与 `compose.prod.yaml`（`make preview` / NAS）隔离，避免两套 `.env` 密码抢同一数据目录。`make init` 不会覆盖已有密码，只会把根目录 `.env` 的 `MYSQL_PASSWORD` 同步到 `backend/.env`。若仍出现 Access denied：`make db-password-sync`。
+
 ## 5. 运维命令（本机 / 通用 Compose）
 
 | 命令 | 作用 |

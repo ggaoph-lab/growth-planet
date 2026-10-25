@@ -68,7 +68,7 @@ class XpLedgerService
 
         return $this->post(
             $account,
-            -abs($original->amount),
+            -abs((int) $original->amount),
             LedgerEntryType::Reversal,
             $original->source_module,
             $original->source_type,
@@ -163,6 +163,83 @@ class XpLedgerService
         }
     }
 
+    /**
+     * Drop levels (and restore burned max-level caps) until balance can cover a debit.
+     * Mirrors applyLevelUps so clawing back a reward after an upgrade does not fail.
+     */
+    private function applyLevelDownsForDebit(XpAccount $account, int $debit, string $businessDate): XpAccount
+    {
+        $account = XpAccount::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
+        $step = 0;
+
+        while ($account->balance < $debit && (int) $account->level > 1) {
+            $step++;
+            $fromLevel = (int) $account->level;
+            $toLevel = $fromLevel - 1;
+            // Same threshold applyLevelUps deducted when leaving $toLevel.
+            $restore = $this->levels->toNextLevel($toLevel);
+
+            $account->level = $toLevel;
+            $account->lock_version++;
+            $account->updated_at = $this->clock->now();
+            $account->save();
+
+            $this->post(
+                $account,
+                $restore,
+                LedgerEntryType::LevelDown,
+                SourceModule::System,
+                'xp_level_down',
+                $account->child_id,
+                'level_down:'.$account->child_id.':'.$fromLevel.':to:'.$toLevel.':'.$businessDate.':'.$step.':'.$account->lifetime_earned.':need:'.$debit,
+                $businessDate,
+                null,
+                null,
+                '降级至 '.$toLevel.' 级',
+            );
+
+            $account = XpAccount::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
+        }
+
+        // Max-level overflow was burned as xp_level_cap; restore newest caps if still short.
+        if ($account->balance < $debit) {
+            $caps = XpLedgerEntry::query()
+                ->where('account_id', $account->id)
+                ->where('source_type', 'xp_level_cap')
+                ->where('amount', '<', 0)
+                ->orderByDesc('id')
+                ->get();
+
+            foreach ($caps as $cap) {
+                if ($account->balance >= $debit) {
+                    break;
+                }
+
+                $restoreKey = 'level_cap_restore:'.$cap->id;
+                if (XpLedgerEntry::query()->where('idempotency_key', $restoreKey)->exists()) {
+                    continue;
+                }
+
+                $this->post(
+                    $account,
+                    abs((int) $cap->amount),
+                    LedgerEntryType::LevelDown,
+                    SourceModule::System,
+                    'xp_level_cap_restore',
+                    $account->child_id,
+                    $restoreKey,
+                    $businessDate,
+                    null,
+                    null,
+                    '恢复满级封顶经验',
+                );
+                $account = XpAccount::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
+            }
+        }
+
+        return $account;
+    }
+
     private function maxLevel(int $familyId): int
     {
         return (int) $this->settings->get('xp.max_level', $familyId);
@@ -188,6 +265,13 @@ class XpLedgerService
         }
 
         $account = XpAccount::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
+
+        // Level-ups spend current-level XP. When clawing back a reward that caused an
+        // upgrade, restore prior levels first so the debit can succeed.
+        if ($amount < 0 && $entryType !== LedgerEntryType::LevelUp) {
+            $account = $this->applyLevelDownsForDebit($account, abs($amount), $businessDate);
+        }
+
         $before = $account->balance;
         $after = $before + $amount;
         if ($after < 0) {
@@ -223,7 +307,8 @@ class XpLedgerService
         }
 
         $account->balance = $after;
-        if ($amount > 0) {
+        // Level-down restores are not new earnings — they undo a prior level_up / cap spend.
+        if ($amount > 0 && $entryType !== LedgerEntryType::LevelDown) {
             $account->lifetime_earned += $amount;
         }
         $account->lock_version++;

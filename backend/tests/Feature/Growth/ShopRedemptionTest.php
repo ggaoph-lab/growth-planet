@@ -7,8 +7,11 @@ use App\Modules\Approval\Models\ApprovalRequest;
 use App\Modules\Ledger\Enums\LedgerEntryType;
 use App\Modules\Ledger\Enums\SourceModule;
 use App\Modules\Ledger\Models\CoinAccount;
+use App\Modules\Ledger\Models\PointAccount;
 use App\Modules\Ledger\Services\CoinLedgerService;
+use App\Modules\Ledger\Services\PointLedgerService;
 use App\Modules\Shop\Enums\RedemptionStatus;
+use App\Modules\Shop\Enums\RewardKind;
 use App\Modules\Shop\Services\RedemptionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -91,6 +94,90 @@ class ShopRedemptionTest extends TestCase
         $coin = $coin->fresh();
         $this->assertSame(30, $coin->balance);
         $this->assertSame(0, $coin->held);
+        $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
+    }
+
+    public function test_parent_approve_captures_hold_when_balance_exactly_matches_price(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $coin = CoinAccount::query()->where('child_id', $child->id)->firstOrFail();
+        app(CoinLedgerService::class)->credit(
+            $coin,
+            20,
+            LedgerEntryType::Reward,
+            SourceModule::Parent,
+            'seed',
+            1,
+            'seed:coins:exact',
+            '2026-10-11',
+        );
+
+        $reward = $this->seedReward($family, ['coin_price' => 20]);
+        $redemption = app(RedemptionService::class)->request(
+            $reward,
+            $child,
+            $family,
+            'test:redemption:exact',
+        );
+
+        $this->assertSame(20, $coin->fresh()->held);
+        $this->assertSame(0, $coin->fresh()->available());
+
+        $approval = ApprovalRequest::query()->whereKey($redemption->approval_request_id)->firstOrFail();
+
+        $this->actingAsParent($parent)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/parent/approvals/{$approval->id}/approve", ['lock_version' => $approval->lock_version])
+            ->assertOk();
+
+        $coin = $coin->fresh();
+        $this->assertSame(0, $coin->balance);
+        $this->assertSame(0, $coin->held);
+        $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
+    }
+
+    public function test_parent_approve_captures_point_hold_when_balance_exactly_matches_price(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        $points = PointAccount::query()->where('child_id', $child->id)->firstOrFail();
+        app(PointLedgerService::class)->credit(
+            $points,
+            15,
+            LedgerEntryType::Reward,
+            SourceModule::Parent,
+            'seed',
+            1,
+            'seed:points:exact',
+            '2026-10-11',
+        );
+
+        $reward = $this->seedReward($family, [
+            'kind' => RewardKind::ScreenTime,
+            'coin_price' => 0,
+            'point_price' => 15,
+        ]);
+        $redemption = app(RedemptionService::class)->request(
+            $reward,
+            $child,
+            $family,
+            'test:redemption:points:exact',
+        );
+
+        $this->assertSame(15, $points->fresh()->held);
+        $this->assertSame(0, $points->fresh()->available());
+
+        $approval = ApprovalRequest::query()->whereKey($redemption->approval_request_id)->firstOrFail();
+
+        $this->actingAsParent($parent)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/parent/approvals/{$approval->id}/approve", ['lock_version' => $approval->lock_version])
+            ->assertOk();
+
+        $points = $points->fresh();
+        $this->assertSame(0, $points->balance);
+        $this->assertSame(0, $points->held);
         $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
     }
 

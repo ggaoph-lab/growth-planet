@@ -10,5 +10,6 @@ enum LedgerEntryType: string
     case Reversal = 'reversal';
     case ParentBonus = 'parent_bonus';
     case LevelUp = 'level_up';
+    case LevelDown = 'level_down';
     case DailyAllowance = 'daily_allowance';
 }

@@ -6,6 +6,8 @@ use App\Modules\Core\Settings\Settings;
 use App\Modules\Encyclopedia\Services\EncyclopediaCatalog;
 use App\Modules\Encyclopedia\Services\EncyclopediaProgress;
 use App\Modules\English\Services\EnglishVocabularyService;
+use App\Modules\Ledger\Models\PointAccount;
+use App\Modules\Ledger\Models\XpAccount;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -64,16 +66,85 @@ class EncyclopediaTest extends TestCase
             ->withHeader('Idempotency-Key', (string) Str::uuid())
             ->postJson('/api/v1/kid/encyclopedia/topics/'.$topicId.'/read')
             ->assertOk()
-            ->assertJsonPath('data.read', true);
+            ->assertJsonPath('data.read', true)
+            ->assertJsonPath('data.reward.xp', 1)
+            ->assertJsonPath('data.reward.points', 1)
+            ->assertJsonPath('data.reward.capped', false);
 
         $this->assertDatabaseHas('encyclopedia_reads', [
             'child_id' => $child->id,
             'topic_id' => $topicId,
         ]);
+        $this->assertSame(1, (int) XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(1, (int) PointAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(1, DB::table('reward_grants')->where('policy_code', 'encyclopedia.read')->where('child_id', $child->id)->count());
 
         $this->getJson('/api/v1/kid/encyclopedia/topics/'.$topicId)
             ->assertOk()
             ->assertJsonPath('data.read', true);
+
+        // Re-marking the same topic does not pay again.
+        $this->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/encyclopedia/topics/'.$topicId.'/read')
+            ->assertOk()
+            ->assertJsonPath('data.read', true)
+            ->assertJsonMissingPath('data.reward');
+        $this->assertSame(1, (int) XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(1, DB::table('reward_grants')->where('policy_code', 'encyclopedia.read')->where('child_id', $child->id)->count());
+    }
+
+    public function test_encyclopedia_read_rewards_respect_daily_cap(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family, ['birth_date' => '2019-09-01']);
+        [$device, $token] = $this->makeDevice($family, $parent);
+        $this->travelTo(CarbonImmutable::parse('2026-10-24 12:00:00', 'Asia/Shanghai'));
+
+        $catalog = app(EncyclopediaCatalog::class);
+        $needed = EncyclopediaProgress::REWARD_DAILY_LIMIT + 1;
+        $topicIds = [];
+        for ($guard = 0; $guard < 50 && count($topicIds) < $needed; $guard++) {
+            $added = false;
+            foreach ($catalog->subjectSummary($child)['domains'] as $domain) {
+                foreach ($catalog->topicsForDomain($domain['key'], $topicIds, $child) as $row) {
+                    if (($row['locked'] ?? false) === true || in_array($row['id'], $topicIds, true)) {
+                        continue;
+                    }
+                    $topicIds[] = $row['id'];
+                    $added = true;
+                    if (count($topicIds) >= $needed) {
+                        break 3;
+                    }
+                }
+            }
+            if (! $added) {
+                break;
+            }
+        }
+        $this->assertGreaterThanOrEqual($needed, count($topicIds));
+
+        $this->actingAsKid($child, $device, $token)->withoutMiddleware(ValidateCsrfToken::class);
+        foreach (array_slice($topicIds, 0, EncyclopediaProgress::REWARD_DAILY_LIMIT) as $topicId) {
+            $this->withHeader('Idempotency-Key', (string) Str::uuid())
+                ->postJson('/api/v1/kid/encyclopedia/topics/'.$topicId.'/read')
+                ->assertOk()
+                ->assertJsonPath('data.reward.xp', 1)
+                ->assertJsonPath('data.reward.points', 1);
+        }
+
+        $this->assertSame(10, (int) XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(10, (int) PointAccount::query()->where('child_id', $child->id)->value('balance'));
+
+        $this->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/encyclopedia/topics/'.$topicIds[EncyclopediaProgress::REWARD_DAILY_LIMIT].'/read')
+            ->assertOk()
+            ->assertJsonPath('data.read', true)
+            ->assertJsonPath('data.reward.xp', 0)
+            ->assertJsonPath('data.reward.points', 0)
+            ->assertJsonPath('data.reward.capped', true);
+
+        $this->assertSame(10, (int) XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(10, (int) PointAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
     public function test_draft_overlays_are_published_without_reviewed_flag(): void

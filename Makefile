@@ -9,14 +9,16 @@ PROD_APP     := $(COMPOSE_PROD) exec app
 
 .PHONY: help init up down build ps logs shell composer artisan key migrate fresh seed-demo \
         test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev preview family \
+        db-password-sync \
         prod-init prod-check prod-pull prod-build prod-build-host-frontend prod-up prod-down prod-ps prod-logs \
         prod-migrate prod-artisan prod-preflight prod-family prod-backup
 
 help:
 	@echo "Development"
-	@echo "  make init            生成本地 .env（随机数据库密码）"
+	@echo "  make init            生成本地 .env（已有则保留密码；同步 backend/.env DB_PASSWORD）"
 	@echo "  make build           构建 PHP 开发镜像"
 	@echo "  make up / down       启动 / 停止开发容器"
+	@echo "  make db-password-sync 把运行中 MySQL 用户密码改成与 .env 一致（不丢数据）"
 	@echo "  make migrate         执行数据库迁移"
 	@echo "  make family          交互式创建家庭与首位家长"
 	@echo "  make test            运行后端与前端全部测试"
@@ -37,6 +39,9 @@ help:
 
 init:
 	bash deploy/scripts/init-dev.sh
+
+db-password-sync:
+	bash deploy/scripts/sync-dev-mysql-password.sh
 
 build:
 	$(COMPOSE) build app

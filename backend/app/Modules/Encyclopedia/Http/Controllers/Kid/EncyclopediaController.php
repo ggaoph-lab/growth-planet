@@ -108,8 +108,11 @@ class EncyclopediaController
             );
         }
 
-        $this->progress->markRead($child, $id);
+        $result = $this->progress->markRead($child, $id);
         $detail = $this->catalog->topicDetail($id, $this->progress->readTopicIds($child), $child);
+        if ($detail !== null && $result['reward'] !== null) {
+            $detail['reward'] = $result['reward'];
+        }
 
         return response()->json(['data' => $detail]);
     }

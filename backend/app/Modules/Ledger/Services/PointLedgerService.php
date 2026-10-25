@@ -116,6 +116,14 @@ class PointLedgerService
         }
 
         $account = PointAccount::query()->whereKey($hold->account_id)->lockForUpdate()->firstOrFail();
+        // Drop this hold from `held` before debiting. Otherwise post()'s
+        // held <= balance_after check still counts the reserved amount and
+        // falsely rejects captures when available < hold (e.g. exact balance).
+        $account->held -= $hold->amount;
+        $account->lock_version++;
+        $account->updated_at = $this->clock->now();
+        $account->save();
+
         $entry = $this->post(
             $account,
             -$hold->amount,
@@ -129,11 +137,6 @@ class PointLedgerService
             null,
             '兑换扣款',
         );
-
-        $account->held -= $hold->amount;
-        $account->lock_version++;
-        $account->updated_at = $this->clock->now();
-        $account->save();
 
         $hold->status = PointHoldStatus::Captured;
         $hold->captured_ledger_id = $entry->id;

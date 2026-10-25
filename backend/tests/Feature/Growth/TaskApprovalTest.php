@@ -214,6 +214,43 @@ class TaskApprovalTest extends TestCase
         $this->assertSame(0, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
+    public function test_kid_can_withdraw_a_completion_that_caused_a_level_up(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+        // Level 1 needs 25 XP; 30 XP → level 2 with 5 remaining. Withdraw used to fail here.
+        $this->seedTask($family, $parent, [
+            'xp_reward' => 30,
+            'coin_reward' => 8,
+        ]);
+
+        $this->loginKid($child->fresh(['member.user']), $device, $token);
+        $instanceId = $this->getJson('/api/v1/kid/tasks?date=2026-10-11')
+            ->assertOk()
+            ->json('data.0.id');
+
+        $this->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/kid/task-instances/{$instanceId}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed');
+
+        $xp = XpAccount::query()->where('child_id', $child->id)->firstOrFail();
+        $this->assertSame(2, $xp->level);
+        $this->assertSame(5, $xp->balance);
+
+        $this->loginKid($child->fresh(['member.user']), $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/v1/kid/task-instances/{$instanceId}/withdraw")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending');
+
+        $xp = $xp->fresh();
+        $this->assertSame(1, $xp->level);
+        $this->assertSame(0, $xp->balance);
+        $this->assertSame(0, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+    }
+
     public function test_kid_cannot_withdraw_a_completion_the_parent_already_approved(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

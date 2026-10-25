@@ -35,10 +35,17 @@ class TripleCurrencyTest extends TestCase
         $ledger = app(XpLedgerService::class);
 
         // 25 + 50 + 10 overflow → level 3 with 10 XP remaining
-        $ledger->credit($xp, 85, LedgerEntryType::Reward, SourceModule::Parent, 'test', 1, 'xp:level', '2026-10-22');
+        $entry = $ledger->credit($xp, 85, LedgerEntryType::Reward, SourceModule::Parent, 'test', 1, 'xp:level', '2026-10-22');
         $xp = $xp->fresh();
         $this->assertSame(3, $xp->level);
         $this->assertSame(10, $xp->balance);
+        $this->assertSame(85, $xp->lifetime_earned);
+
+        // Reversing after level-ups must level down instead of failing with insufficient XP.
+        $ledger->reverse($entry, 'xp:level:rev');
+        $xp = $xp->fresh();
+        $this->assertSame(1, $xp->level);
+        $this->assertSame(0, $xp->balance);
         $this->assertSame(85, $xp->lifetime_earned);
     }
 

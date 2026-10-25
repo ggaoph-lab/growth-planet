@@ -11,6 +11,7 @@ enum SourceModule: string
     case Movie = 'movie';
     case English = 'english';
     case Exploration = 'exploration';
+    case Encyclopedia = 'encyclopedia';
     case Item = 'item';
     case Game = 'game';
     case System = 'system';
