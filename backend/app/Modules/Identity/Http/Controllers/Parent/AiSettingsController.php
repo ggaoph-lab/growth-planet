@@ -145,11 +145,13 @@ class AiSettingsController
             'clear_qwen_api_key' => ['sometimes', 'boolean'],
             'clear_openai_api_key' => ['sometimes', 'boolean'],
             'clear_openai_base_url' => ['sometimes', 'boolean'],
-            'tts_provider' => ['sometimes', 'string', Rule::in(['auto', 'qwen', 'edge'])],
+            'tts_provider' => ['sometimes', 'string', Rule::in(['auto', 'qwen', 'edge', 'elevenlabs'])],
             'tts_qwen_api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
+            'tts_elevenlabs_api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
             'tts_voice' => ['sometimes', 'nullable', 'string', 'max:64'],
             'tts_voice_en' => ['sometimes', 'nullable', 'string', 'max:64'],
             'clear_tts_qwen_api_key' => ['sometimes', 'boolean'],
+            'clear_tts_elevenlabs_api_key' => ['sometimes', 'boolean'],
         ]);
 
         $familyId = $this->context->familyId();
@@ -237,6 +239,14 @@ class AiSettingsController
         } elseif (array_key_exists('tts_qwen_api_key', $data) && is_string($data['tts_qwen_api_key']) && trim($data['tts_qwen_api_key']) !== '') {
             $this->settings->set('tts.qwen_api_key', trim($data['tts_qwen_api_key']), $familyId, $actorId);
             $changes['tts_qwen_api_key'] = 'updated';
+        }
+
+        if (! empty($data['clear_tts_elevenlabs_api_key'])) {
+            $this->settings->set('tts.elevenlabs_api_key', '', $familyId, $actorId);
+            $changes['tts_elevenlabs_api_key'] = 'cleared';
+        } elseif (array_key_exists('tts_elevenlabs_api_key', $data) && is_string($data['tts_elevenlabs_api_key']) && trim($data['tts_elevenlabs_api_key']) !== '') {
+            $this->settings->set('tts.elevenlabs_api_key', trim($data['tts_elevenlabs_api_key']), $familyId, $actorId);
+            $changes['tts_elevenlabs_api_key'] = 'updated';
         }
 
         if (array_key_exists('tts_voice', $data) && is_string($data['tts_voice'])) {

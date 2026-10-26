@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { UploadFile } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type { Reward, RewardCurrency, RewardKind, RewardRedemption, RewardStatus, Wish, WishStatus } from '@/shared/api/types'
 import { useIsPhone } from '@/shared/useMediaQuery'
@@ -410,7 +411,7 @@ onMounted(load)
               :auto-upload="false"
               :show-file-list="false"
               accept="image/jpeg,image/png,image/webp,image/gif"
-              :on-change="(file) => onImageChange(file.raw ?? null)"
+              :on-change="(file: UploadFile) => onImageChange(file.raw ?? null)"
             >
               <el-button>{{ t('common.rewardImagePick') }}</el-button>
             </el-upload>

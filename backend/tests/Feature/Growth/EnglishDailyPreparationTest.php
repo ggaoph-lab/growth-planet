@@ -26,7 +26,7 @@ class EnglishDailyPreparationTest extends TestCase
         Http::preventStrayRequests();
     }
 
-    public function test_preparing_content_does_not_complete_learning_or_unlock_the_tale(): void
+    public function test_preparing_content_does_not_mark_heard_or_complete_learning(): void
     {
         ['family' => $family] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -38,12 +38,14 @@ class EnglishDailyPreparationTest extends TestCase
         $service = app(EnglishDailyPreparation::class);
         $result = $service->prepare($child);
         $this->assertTrue($result['ready']);
-        $this->assertSame(10, $result['words']);
+        $this->assertSame(0, $result['words']);
         $this->assertNull($service->prepare($child));
         $this->assertDatabaseHas('english_ai_records', ['child_id' => $child->id, 'purpose' => 'fairy_tale_day', 'business_date' => '2026-10-21']);
         $this->assertSame(0, DB::table('english_learning_answers')->count());
         $this->assertSame(0, DB::table('english_learning_progress')->count());
-        $this->assertFalse(app(EnglishFairyTaleService::class)->forChild($child)['available']);
+        $payload = app(EnglishFairyTaleService::class)->forChild($child);
+        $this->assertTrue($payload['available']);
+        $this->assertFalse($payload['heard']);
         $plan = app(EnglishLearningService::class)->plan($child);
         $this->assertSame(0, $plan['new_words_completed']);
         $this->assertFalse($plan['review_unlocked']);

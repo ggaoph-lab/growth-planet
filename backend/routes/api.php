@@ -32,6 +32,8 @@ require base_path('app/Modules/Exploration/routes.php');
 require base_path('app/Modules/Food/routes.php');
 require base_path('app/Modules/Movie/routes.php');
 require base_path('app/Modules/English/routes.php');
+require base_path('app/Modules/EnglishBeta/routes.php');
 require base_path('app/Modules/Encyclopedia/routes.php');
 require base_path('app/Modules/Game/routes.php');
+require base_path('app/Modules/Ielts/routes.php');
 require base_path('app/Modules/Report/routes.php');

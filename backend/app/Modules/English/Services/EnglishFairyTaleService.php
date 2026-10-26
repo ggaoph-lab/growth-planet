@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Daily bilingual fairy-tale reward after 10 new words.
+ * Daily bilingual fairy tale for the fairy-tale planet.
  */
 class EnglishFairyTaleService
 {
@@ -24,30 +24,14 @@ class EnglishFairyTaleService
     public function forChild(ChildProfile $child): array
     {
         $today = $this->clock->today($child->family->timezone)->toDateString();
-        $completed = $this->vocabulary->newWordsCompletedToday($child, $today);
-        $goal = $this->vocabulary->dailyWordGoal($child, $today);
-        $unlocked = $completed >= $goal;
-
-        if (! $unlocked) {
-            return [
-                'available' => false,
-                'reason' => 'need_new_words',
-                'new_words_completed' => $completed,
-                'new_words_goal' => $goal,
-                'heard' => false,
-                'tale' => null,
-                'pack_words' => [],
-            ];
-        }
-
         $tale = $this->ensureTale($child, $today);
         $heard = $this->heardToday($child, $today);
 
         return [
             'available' => $tale !== null,
             'reason' => $tale === null ? 'unavailable' : null,
-            'new_words_completed' => $completed,
-            'new_words_goal' => $goal,
+            'new_words_completed' => $this->vocabulary->newWordsCompletedToday($child, $today),
+            'new_words_goal' => $this->vocabulary->dailyWordGoal($child, $today),
             'heard' => $heard,
             'tale' => $tale,
             'pack_words' => $tale !== null ? $this->vocabulary->packWordTexts($child, $today) : [],
@@ -86,8 +70,7 @@ class EnglishFairyTaleService
     public function markHeard(ChildProfile $child): array
     {
         $today = $this->clock->today($child->family->timezone)->toDateString();
-        $completed = $this->vocabulary->newWordsCompletedToday($child, $today);
-        if ($completed < $this->vocabulary->dailyWordGoal($child, $today)) {
+        if ($this->ensureTale($child, $today) === null) {
             return $this->forChild($child);
         }
 

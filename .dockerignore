@@ -6,6 +6,8 @@ backups
 frontend/coverage
 frontend/test-results
 frontend/playwright-report
+# Rebuild Word Atlas inside the image; keep frontend/dist for FRONTEND_DIST=host.
+apps/word-atlas/dist
 backend/vendor
 backend/storage/logs
 backend/storage/framework/cache

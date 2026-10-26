@@ -64,3 +64,66 @@ it('does not revive a cancelled word when an in-flight unlock finishes', async (
   expect(await speech).toBe(false)
   expect(api.post).not.toHaveBeenCalled()
 })
+
+it('applies playbackRate after src so slow/fast controls take effect', async () => {
+  // Force HTML-element path: Web Audio decode fails on the tiny fixture blob.
+  class FakeAudioContext {
+    state = 'running'
+    resume = vi.fn(async () => {})
+    decodeAudioData = vi.fn(async () => { throw new Error('bad audio') })
+    createBufferSource = vi.fn()
+  }
+  vi.stubGlobal('AudioContext', FakeAudioContext)
+  vi.stubGlobal('webkitAudioContext', FakeAudioContext)
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+    // Mimic browsers that reset playbackRate when src changes.
+    if (this.src.includes('blob:')) this.playbackRate = 1
+    return Promise.resolve()
+  })
+  const { unlockSpeak, speakPhrase } = await import('@/shared/speak')
+  await unlockSpeak()
+  const speech = speakPhrase('apple', 'en-US', undefined, 0.65)
+  await flushPromises()
+  const audio = document.querySelector('audio')!
+  expect(audio.src).toBe('blob:test-audio')
+  expect(audio.playbackRate).toBe(0.65)
+  expect(audio.defaultPlaybackRate).toBe(0.65)
+  audio.dispatchEvent(new Event('playing'))
+  expect(audio.playbackRate).toBe(0.65)
+  audio.dispatchEvent(new Event('ended'))
+  expect(await speech).toBe(true)
+})
+
+it('plays neural audio through Web Audio so rate changes are audible', async () => {
+  const start = vi.fn()
+  const connect = vi.fn()
+  const source = {
+    buffer: null as AudioBuffer | null,
+    playbackRate: { value: 1 },
+    onended: null as null | (() => void),
+    connect,
+    start,
+    stop: vi.fn(),
+    disconnect: vi.fn(),
+  }
+  const buffer = { duration: 0.2 } as AudioBuffer
+  class FakeAudioContext {
+    state = 'running'
+    resume = vi.fn(async () => {})
+    decodeAudioData = vi.fn(async () => buffer)
+    createBufferSource = vi.fn(() => source)
+  }
+  vi.stubGlobal('AudioContext', FakeAudioContext)
+  vi.stubGlobal('webkitAudioContext', FakeAudioContext)
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+
+  const { unlockSpeak, speakPhrase } = await import('@/shared/speak')
+  await unlockSpeak()
+  const speech = speakPhrase('apple', 'en-US', undefined, 1.4)
+  await flushPromises()
+  expect(source.playbackRate.value).toBe(1.4)
+  expect(start).toHaveBeenCalledOnce()
+  expect(connect).toHaveBeenCalledOnce()
+  source.onended?.()
+  expect(await speech).toBe(true)
+})

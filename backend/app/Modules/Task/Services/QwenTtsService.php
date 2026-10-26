@@ -20,9 +20,13 @@ use Illuminate\Support\Facades\Log;
  */
 class QwenTtsService
 {
+    /** When set, interactive speak should not cascade into multi-second free proxies. */
+    private ?string $qwenHardFailure = null;
+
     public function __construct(
         private readonly FamilyAiConfig $ai,
         private readonly EdgeTtsClient $edge,
+        private readonly QwenRealtimeTtsClient $qwenRealtime,
     ) {}
 
     /**
@@ -141,16 +145,41 @@ class QwenTtsService
     private function synthesizeWithProviders(string $text, string $lang, string $qwenKey, string $ttsProvider, array $cfg): ?array
     {
         $english = str_starts_with($lang, 'en');
+        $elevenKey = trim((string) ($cfg['tts_elevenlabs_api_key'] ?? ''));
+        $allowEleven = in_array($ttsProvider, ['auto', 'elevenlabs'], true);
         $allowQwen = in_array($ttsProvider, ['auto', 'qwen'], true);
-        $allowEdge = in_array($ttsProvider, ['auto', 'edge'], true);
+        $allowEdge = in_array($ttsProvider, ['auto', 'edge', 'elevenlabs'], true);
+        $this->qwenHardFailure = null;
+
+        // Opt-in ElevenLabs (雅思星球同款 Alice/Sarah). In auto mode only when a key is set
+        // and provider was not forced to qwen/edge — parents pick "elevenlabs" to prefer it.
+        if ($ttsProvider === 'elevenlabs' && $elevenKey !== '') {
+            $result = $this->synthesizeElevenLabs($text, $elevenKey, $lang);
+            if ($result !== null) {
+                return $result;
+            }
+        } elseif ($allowEleven && $ttsProvider === 'auto' && $elevenKey !== '' && $english) {
+            // Soft prefer ElevenLabs for English when key is configured (Word Atlas quality).
+            $result = $this->synthesizeElevenLabs($text, $elevenKey, $lang);
+            if ($result !== null) {
+                return $result;
+            }
+        }
 
         if ($allowQwen && $qwenKey !== '') {
             $result = $this->synthesizeQwenTts($text, $qwenKey, $lang, $cfg);
-            if ($result === null && ! $english) {
+            if ($result === null && ! $english && $this->qwenHardFailure === null) {
                 $result = $this->synthesizeCosyVoice($text, $qwenKey);
             }
             if ($result !== null) {
                 return $result;
+            }
+            // Free-tier / billing / auth failures: skip Edge (~7s) and Google (~5s+) so the
+            // kid client can fall back to browser speech instead of sitting in silence.
+            if ($this->qwenHardFailure !== null) {
+                Log::warning('tts.qwen_hard_fail_skip_fallbacks', ['reason' => $this->qwenHardFailure]);
+
+                return null;
             }
         }
 
@@ -178,6 +207,18 @@ class QwenTtsService
     /** @param  array<string, mixed>|null  $cfg */
     private function cacheVoiceTag(string $lang, ?array $cfg = null): string
     {
+        $provider = (string) ($cfg['tts_provider'] ?? 'auto');
+        $elevenKey = trim((string) ($cfg['tts_elevenlabs_api_key'] ?? ''));
+        $useEleven = $provider === 'elevenlabs'
+            || ($provider === 'auto' && $elevenKey !== '' && str_starts_with($lang, 'en'));
+        if ($useEleven) {
+            $voice = str_starts_with($lang, 'en')
+                ? (string) config('services.elevenlabs.voice_en', 'EXAVITQu4vr4xnSDxMaL')
+                : (string) config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2');
+
+            return 'eleven:'.$voice;
+        }
+
         return 'qwen:'.$this->qwenVoiceFor($lang, $cfg);
     }
 
@@ -219,6 +260,59 @@ class QwenTtsService
     }
 
     /**
+     * ElevenLabs TTS — same Alice (zh) / Sarah (en) voices as Word Atlas.
+     *
+     * @return array{audio_base64: string, mime: string, provider: string}|null
+     */
+    private function synthesizeElevenLabs(string $text, string $apiKey, string $lang): ?array
+    {
+        $english = str_starts_with($lang, 'en');
+        $voice = $english
+            ? (string) config('services.elevenlabs.voice_en', 'EXAVITQu4vr4xnSDxMaL')
+            : (string) config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2');
+        $model = (string) config('services.elevenlabs.model', 'eleven_flash_v2_5');
+        $timeout = max(8, (int) config('services.elevenlabs.timeout', 30));
+        $url = 'https://api.elevenlabs.io/v1/text-to-speech/'.$voice.'?output_format=mp3_44100_64';
+
+        try {
+            $response = Http::withHeaders([
+                'xi-api-key' => $apiKey,
+                'Accept' => 'audio/mpeg',
+            ])->timeout($timeout)->post($url, [
+                'text' => $text,
+                'model_id' => $model,
+                'language_code' => $english ? 'en' : 'zh',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('tts.elevenlabs_http', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (! $response->successful()) {
+            Log::warning('tts.elevenlabs_status', [
+                'status' => $response->status(),
+                'body' => mb_substr($response->body(), 0, 200),
+            ]);
+
+            return null;
+        }
+
+        $binary = $response->body();
+        if (strlen($binary) < 2000) {
+            Log::warning('tts.elevenlabs_too_small', ['bytes' => strlen($binary)]);
+
+            return null;
+        }
+
+        return [
+            'audio_base64' => base64_encode($binary),
+            'mime' => 'audio/mpeg',
+            'provider' => 'elevenlabs',
+        ];
+    }
+
+    /**
      * @return array{audio_base64: string, mime: string, provider: string}|null
      */
     private function readCache(string $cacheKey): ?array
@@ -241,7 +335,7 @@ class QwenTtsService
      */
     private function storeCache(string $cacheKey, array $result): void
     {
-        if (! in_array($result['provider'], ['gemini_tts', 'edge_tts', 'qwen', 'cosyvoice'], true)) {
+        if (! in_array($result['provider'], ['gemini_tts', 'edge_tts', 'qwen', 'cosyvoice', 'elevenlabs'], true)) {
             return;
         }
 
@@ -609,7 +703,7 @@ class QwenTtsService
         $parts = [];
         foreach ($chunks as $chunk) {
             try {
-                $response = Http::timeout(12)
+                $response = Http::timeout(5)
                     ->withHeaders([
                         'User-Agent' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                     ])
@@ -655,7 +749,17 @@ class QwenTtsService
     private function synthesizeQwenTts(string $text, string $apiKey, string $lang = 'zh-CN', ?array $cfg = null): ?array
     {
         $voice = $this->qwenVoiceFor($lang, $cfg);
-        $model = (string) config('services.qwen.tts_model', 'qwen3-tts-flash');
+        $model = (string) config('services.qwen.tts_model', 'qwen3-tts-flash-realtime');
+        // Realtime models only accept WebSocket (HTTP returns "does not support http call").
+        if (str_contains($model, 'realtime')) {
+            $result = $this->qwenRealtime->synthesize($text, $apiKey, $model, $voice, $lang);
+            if ($result === null) {
+                $this->qwenHardFailure = 'realtime_failed';
+            }
+
+            return $result;
+        }
+
         $primary = rtrim((string) config('services.qwen.tts_base_url', 'https://dashscope.aliyuncs.com/api/v1'), '/');
         $timeout = max(8, (int) config('services.qwen.tts_timeout', 25));
 
@@ -665,6 +769,9 @@ class QwenTtsService
             'https://dashscope.aliyuncs.com/api/v1',
             'https://dashscope-intl.aliyuncs.com/api/v1',
         ]));
+
+        // Interactive taps should not wait on a long primary timeout when the free tier is already empty.
+        $timeout = min($timeout, 8);
 
         foreach ($bases as $base) {
             try {
@@ -690,11 +797,17 @@ class QwenTtsService
             }
 
             if (! $response->successful()) {
+                $code = (string) $response->json('code', '');
                 Log::warning('tts.qwen_failed', [
                     'base' => $base,
                     'status' => $response->status(),
                     'body' => mb_substr($response->body(), 0, 400),
                 ]);
+                if ($this->isQwenHardFailure($response->status(), $code)) {
+                    $this->qwenHardFailure = $code !== '' ? $code : 'http_'.$response->status();
+
+                    return null;
+                }
 
                 continue;
             }
@@ -722,6 +835,18 @@ class QwenTtsService
         }
 
         return null;
+    }
+
+    private function isQwenHardFailure(int $status, string $code): bool
+    {
+        if ($status === 401 || $status === 403) {
+            return true;
+        }
+
+        return $code !== '' && (bool) preg_match(
+            '/AllocationQuota|FreeTier|InvalidApiKey|Arrearage|AccessDenied|Unauthorized/i',
+            $code,
+        );
     }
 
     /**

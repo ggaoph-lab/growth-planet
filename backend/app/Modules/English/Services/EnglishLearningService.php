@@ -136,10 +136,10 @@ class EnglishLearningService
             $usedKeys[$key] = true;
         }
 
-        $newWordsDone = $newWordsCompleted >= $wordGoal;
-        $fairyUnlocked = $newWordsDone;
+        $fairyUnlocked = true;
         $fairyHeardToday = $this->fairyTales->heardOnDate($child, $today);
-        $reviewUnlocked = $fairyUnlocked && $fairyHeardToday;
+        // Legacy word/review queue still waits for the daily new-word goal + fairy heard.
+        $reviewUnlocked = $newWordsCompleted >= $wordGoal && $fairyHeardToday;
         $reviewPool = $this->dailyReviewPool($child, $due, $today);
 
         $practiceBand = $this->vocabulary->practiceBand($child);

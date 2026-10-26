@@ -11,6 +11,7 @@ import type {
   AiTtsVoiceOption,
   Family,
   FamilyInvite,
+  IeltsRewardSettings,
   ParentAccount,
   RewardPolicy,
   TaskCategory,
@@ -27,7 +28,7 @@ const { t } = useI18n()
 const isPhone = useIsPhone()
 const route = useRoute()
 const session = useSessionStore()
-const tab = ref<'family' | 'accounts' | 'invites' | 'ai' | 'categories' | 'bag-rewards' | 'planets'>('family')
+const tab = ref<'family' | 'accounts' | 'invites' | 'ai' | 'categories' | 'bag-rewards' | 'ielts-rewards' | 'planets'>('family')
 const isSiteAdmin = computed(() => session.me?.user.is_site_admin === true)
 const invites = ref<FamilyInvite[]>([])
 const loadingInvites = ref(false)
@@ -69,6 +70,36 @@ const categoryName = ref('')
 
 const BAG_REWARD_CODES = ['item.checklist.before_school', 'item.checklist.after_school'] as const
 
+// 雅思星球 (Word Atlas) reward caps; see backend IeltsRewardService.
+const ieltsForm = reactive<IeltsRewardSettings>({
+  rewards_enabled: true,
+  points_daily_cap: 20,
+  coins_daily_cap: 10,
+  mastered_points: 2,
+  mastered_daily_cap: 20,
+})
+const savingIelts = ref(false)
+async function loadIelts(): Promise<void> {
+  Object.assign(ieltsForm, await api.get<IeltsRewardSettings>('/parent/ielts/settings'))
+}
+async function saveIelts(): Promise<void> {
+  savingIelts.value = true
+  try {
+    Object.assign(ieltsForm, await api.put<IeltsRewardSettings>('/parent/ielts/settings', {
+      rewards_enabled: ieltsForm.rewards_enabled,
+      points_daily_cap: Number(ieltsForm.points_daily_cap) || 0,
+      coins_daily_cap: Number(ieltsForm.coins_daily_cap) || 0,
+      mastered_points: Number(ieltsForm.mastered_points) || 0,
+      mastered_daily_cap: Number(ieltsForm.mastered_daily_cap) || 0,
+    }))
+    ElMessage.success(t('parent.settings.ieltsRewardSaved'))
+  } catch (e) {
+    reportError(e)
+  } finally {
+    savingIelts.value = false
+  }
+}
+
 const timezones = Intl.supportedValuesOf('timeZone')
 const localeOptions = computed(() => [
   { value: 'zh-en' as AppLocale, label: t('lang.bilingual') },
@@ -100,11 +131,12 @@ const aiForm = reactive({
   openai_api_key: '',
   tts_provider: 'auto',
   tts_qwen_api_key: '',
+  tts_elevenlabs_api_key: '',
   tts_voice: 'Cherry',
   tts_voice_en: 'Jennifer',
 })
 
-type AiClearKind = 'gemini' | 'qwen' | 'openai' | 'openai_base_url' | 'tts'
+type AiClearKind = 'gemini' | 'qwen' | 'openai' | 'openai_base_url' | 'tts' | 'tts_eleven'
 
 const defaultTtsVoicesZh: AiTtsVoiceOption[] = [
   { id: 'Cherry', name_zh: '芊悦', name_en: 'Cherry', desc_zh: '阳光积极、亲切自然', desc_en: 'Bright and friendly', tags: ['female', 'kids'] },
@@ -242,6 +274,7 @@ async function loadAi(): Promise<void> {
   aiForm.openai_api_key = ''
   aiForm.tts_provider = data.tts?.provider || 'auto'
   aiForm.tts_qwen_api_key = ''
+  aiForm.tts_elevenlabs_api_key = ''
   aiForm.tts_voice = data.tts?.voice || 'Cherry'
   aiForm.tts_voice_en = data.tts?.voice_en || 'Jennifer'
   aiCollapse.value = defaultAiCollapse(data.provider, data)
@@ -338,6 +371,10 @@ function canClearTtsKey(): boolean {
   return ai.value?.tts?.source === 'tts'
 }
 
+function canClearElevenKey(): boolean {
+  return ai.value?.tts?.elevenlabs?.source === 'family'
+}
+
 function canClearOpenAiBaseUrl(): boolean {
   return ai.value?.openai.base_url_customized === true
 }
@@ -348,9 +385,14 @@ async function clearAiSecret(kind: AiClearKind): Promise<void> {
     ? t('parent.settings.clearOpenAiBaseUrlConfirm')
     : kind === 'tts'
       ? t('parent.settings.aiTtsClearKeyConfirm')
-      : t('parent.settings.clearThisKeyConfirm')
+      : kind === 'tts_eleven'
+        ? t('parent.settings.aiTtsClearElevenKeyConfirm')
+        : t('parent.settings.clearThisKeyConfirm')
+  const confirmTitle = kind === 'tts_eleven'
+    ? t('parent.settings.aiTtsClearElevenKey')
+    : t('parent.settings.clearThisKey')
   try {
-    await ElMessageBox.confirm(confirmMsg, t('parent.settings.clearThisKey'), { type: 'warning' })
+    await ElMessageBox.confirm(confirmMsg, confirmTitle, { type: 'warning' })
   } catch {
     return
   }
@@ -361,6 +403,7 @@ async function clearAiSecret(kind: AiClearKind): Promise<void> {
     else if (kind === 'qwen') payload.clear_qwen_api_key = true
     else if (kind === 'openai') payload.clear_openai_api_key = true
     else if (kind === 'openai_base_url') payload.clear_openai_base_url = true
+    else if (kind === 'tts_eleven') payload.clear_tts_elevenlabs_api_key = true
     else payload.clear_tts_qwen_api_key = true
 
     ai.value = await api.put<AiSettings>('/parent/ai-settings', payload)
@@ -369,6 +412,8 @@ async function clearAiSecret(kind: AiClearKind): Promise<void> {
     else if (kind === 'openai') aiForm.openai_api_key = ''
     else if (kind === 'openai_base_url') {
       aiForm.openai_base_url = ai.value.openai.base_url || 'https://api.openai.com/v1'
+    } else if (kind === 'tts_eleven') {
+      aiForm.tts_elevenlabs_api_key = ''
     } else {
       aiForm.tts_qwen_api_key = ''
     }
@@ -460,6 +505,7 @@ async function saveBagReward(policy: RewardPolicy): Promise<void> {
 function syncTabFromRoute(): void {
   if (route.query.tab === 'categories') tab.value = 'categories'
   if (route.query.tab === 'bag-rewards') tab.value = 'bag-rewards'
+  if (route.query.tab === 'ielts-rewards') tab.value = 'ielts-rewards'
   if (route.query.tab === 'invites' && isSiteAdmin.value) tab.value = 'invites'
 }
 
@@ -538,7 +584,7 @@ async function load(): Promise<void> {
   try {
     syncTabFromRoute()
     if (route.query.tab === 'planets') tab.value = 'planets'
-    await Promise.all([loadPlanets(), loadFamily(), loadParents(), loadAi(), loadCategories(), loadBagRewards(), loadInvites()])
+    await Promise.all([loadPlanets(), loadFamily(), loadParents(), loadAi(), loadCategories(), loadBagRewards(), loadIelts(), loadInvites()])
   } catch (e) {
     reportError(e)
   } finally {
@@ -724,12 +770,14 @@ async function saveAi(): Promise<void> {
     if (aiForm.openai_api_key.trim()) payload.openai_api_key = aiForm.openai_api_key.trim()
     if (aiForm.openai_base_url.trim()) payload.openai_base_url = aiForm.openai_base_url.trim()
     if (aiForm.tts_qwen_api_key.trim()) payload.tts_qwen_api_key = aiForm.tts_qwen_api_key.trim()
+    if (aiForm.tts_elevenlabs_api_key.trim()) payload.tts_elevenlabs_api_key = aiForm.tts_elevenlabs_api_key.trim()
 
     ai.value = await api.put<AiSettings>('/parent/ai-settings', payload)
     aiForm.gemini_api_key = ''
     aiForm.qwen_api_key = ''
     aiForm.openai_api_key = ''
     aiForm.tts_qwen_api_key = ''
+    aiForm.tts_elevenlabs_api_key = ''
     aiForm.provider = ai.value.provider
     aiForm.gemini_model = ai.value.gemini.model
     aiForm.qwen_model = ai.value.qwen.model
@@ -1044,6 +1092,29 @@ onUnmounted(stopPreviewAudio)
         </div>
       </el-tab-pane>
 
+      <el-tab-pane :label="t('parent.settings.tabIeltsRewards')" name="ielts-rewards">
+        <p class="hint top">{{ t('parent.settings.ieltsRewardsHint') }}</p>
+        <el-form label-position="top" class="ielts-reward-form" @submit.prevent="saveIelts">
+          <el-form-item :label="t('parent.settings.ieltsRewardsEnabled')">
+            <el-switch v-model="ieltsForm.rewards_enabled" />
+          </el-form-item>
+          <el-form-item :label="t('parent.settings.ieltsPointsDailyCap')">
+            <el-input-number v-model="ieltsForm.points_daily_cap" :min="0" :max="200" controls-position="right" />
+          </el-form-item>
+          <el-form-item :label="t('parent.settings.ieltsCoinsDailyCap')">
+            <el-input-number v-model="ieltsForm.coins_daily_cap" :min="0" :max="200" controls-position="right" />
+          </el-form-item>
+          <el-form-item :label="t('parent.settings.ieltsMasteredPoints')">
+            <el-input-number v-model="ieltsForm.mastered_points" :min="0" :max="20" controls-position="right" />
+          </el-form-item>
+          <el-form-item :label="t('parent.settings.ieltsMasteredDailyCap')">
+            <el-input-number v-model="ieltsForm.mastered_daily_cap" :min="0" :max="200" controls-position="right" />
+          </el-form-item>
+          <p class="hint">{{ t('parent.settings.ieltsRewardsRule') }}</p>
+          <el-button type="primary" :loading="savingIelts" native-type="submit">{{ t('common.save') }}</el-button>
+        </el-form>
+      </el-tab-pane>
+
       <el-tab-pane :label="t('parent.settings.tabAi')" name="ai">
         <el-tabs v-model="aiSubTab" class="ai-subtabs">
           <el-tab-pane :label="t('parent.settings.aiSubTabContent')" name="content">
@@ -1254,6 +1325,7 @@ onUnmounted(stopPreviewAudio)
                 <el-select v-model="aiForm.tts_provider" style="width: 100%">
                   <el-option :label="t('parent.settings.aiTtsProviderAuto')" value="auto" />
                   <el-option :label="t('parent.settings.aiTtsProviderQwen')" value="qwen" />
+                  <el-option :label="t('parent.settings.aiTtsProviderEleven')" value="elevenlabs" />
                   <el-option :label="t('parent.settings.aiTtsProviderEdge')" value="edge" />
                 </el-select>
               </el-form-item>
@@ -1277,6 +1349,31 @@ onUnmounted(stopPreviewAudio)
                   </el-button>
                 </div>
                 <div class="hint">{{ t('parent.settings.aiTtsKeyHint') }}</div>
+              </el-form-item>
+              <el-form-item :label="t('parent.settings.aiTtsElevenKey')">
+                <div v-if="ai?.tts?.elevenlabs" class="ai-status">
+                  {{ sourceLabel(ai.tts.elevenlabs.source) }}
+                  <span v-if="ai.tts.elevenlabs.hint"> · {{ ai.tts.elevenlabs.hint }}</span>
+                </div>
+                <div class="api-key-row">
+                  <el-input
+                    v-model="aiForm.tts_elevenlabs_api_key"
+                    type="password"
+                    show-password
+                    :placeholder="t('parent.settings.apiKeyPlaceholder')"
+                  />
+                  <el-button
+                    v-if="canClearElevenKey()"
+                    link
+                    type="danger"
+                    :loading="clearingAiSecret === 'tts_eleven'"
+                    :disabled="clearingAiSecret !== null && clearingAiSecret !== 'tts_eleven'"
+                    @click="clearAiSecret('tts_eleven')"
+                  >
+                    {{ t('parent.settings.aiTtsClearElevenKey') }}
+                  </el-button>
+                </div>
+                <div class="hint">{{ t('parent.settings.aiTtsElevenKeyHint') }}</div>
               </el-form-item>
               <el-form-item :label="t('parent.settings.aiTtsVoice')">
                 <div class="tts-voice-row">
@@ -1554,6 +1651,9 @@ onUnmounted(stopPreviewAudio)
 }
 .bag-reward-form {
   width: 100%;
+}
+.ielts-reward-form {
+  max-width: 420px;
 }
 @media (max-width: 767px) {
   .settings {

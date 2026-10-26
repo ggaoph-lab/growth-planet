@@ -58,6 +58,8 @@ services:
     volumes:
       - ./deploy/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./frontend/dist:/var/www/frontend/dist:ro
+      # Nested mount so Vue vite rebuilds cannot wipe Word Atlas (雅思星球).
+      - ./apps/word-atlas/dist:/var/www/frontend/dist/ielts:ro
     depends_on:
       - app
 

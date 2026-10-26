@@ -17,7 +17,7 @@ class PlanetSettingsTest extends TestCase
         ['family' => $other] = $this->makeFamily('other-parent');
         $child = $this->makeChild($family);
         [$device, $token] = $this->makeDevice($family, $parent);
-        $this->actingAs($parent)->getJson('/api/v1/parent/planet-settings')->assertOk()->assertJsonCount(12, 'data');
+        $this->actingAs($parent)->getJson('/api/v1/parent/planet-settings')->assertOk()->assertJsonCount(14, 'data');
         $this->patchJson('/api/v1/parent/planet-settings', ['key' => 'game_planet', 'enabled' => false])->assertOk();
         $this->assertTrue(KidPlanets::enabled('game_planet', $other->id));
         $this->assertFalse(KidPlanets::enabled('game_planet', $family->id));
@@ -30,13 +30,13 @@ class PlanetSettingsTest extends TestCase
         [$device, $token] = $this->makeDevice($family, $parent);
         $settings = app(Settings::class);
         $settings->set('planets.game_planet', false, $family->id);
-        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/home')->assertOk()->assertJsonCount(11, 'data.planets');
+        $this->actingAsKid($child, $device, $token)->getJson('/api/v1/kid/home')->assertOk()->assertJsonCount(13, 'data.planets');
         $this->getJson('/api/v1/kid/games/schulte')->assertForbidden()->assertJsonPath('error.code', 'PLANET_DISABLED');
         $this->postJson('/api/v1/kid/games/schulte', [])->assertForbidden()->assertJsonPath('error.code', 'PLANET_DISABLED');
         $this->patchJson('/api/v1/parent/planet-settings', ['key' => 'game_planet', 'enabled' => true])->assertForbidden();
         $settings->set('planets.game_planet', true, $family->id);
         $this->getJson('/api/v1/kid/games/schulte')->assertOk();
-        $this->getJson('/api/v1/kid/home')->assertOk()->assertJsonCount(12, 'data.planets');
+        $this->getJson('/api/v1/kid/home')->assertOk()->assertJsonCount(14, 'data.planets');
     }
 
     public function test_unknown_keys_and_non_boolean_values_are_rejected(): void

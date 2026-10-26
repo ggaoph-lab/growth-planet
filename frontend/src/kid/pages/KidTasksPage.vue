@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
 import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import type { TaskInstance } from '@/shared/api/types'
+import KidTaskGroupCard from '@/kid/components/KidTaskGroupCard.vue'
 import { playTap } from '@/shared/sfx'
 import { canSpeak, speakTask, stopSpeaking, taskPhrase, warmPhrases } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
@@ -25,6 +26,13 @@ type StepLine = {
   title: string
   checked: boolean
   isRequired: boolean
+}
+
+interface TaskGroup {
+  key: string
+  title: string
+  isGroup: boolean
+  items: TaskInstance[]
 }
 
 function statusLabel(status: string): string {
@@ -148,13 +156,6 @@ function isDoneStatus(status: string): boolean {
   return status === 'submitted' || status === 'completed'
 }
 
-interface TaskGroup {
-  key: string
-  title: string
-  isGroup: boolean
-  items: TaskInstance[]
-}
-
 const groups = computed<TaskGroup[]>(() => {
   const out: TaskGroup[] = []
   const index = new Map<string, TaskGroup>()
@@ -185,6 +186,15 @@ const groups = computed<TaskGroup[]>(() => {
   }
   return out
 })
+
+/** Whole card is settled when every instance is submitted/completed. */
+function isGroupDone(group: TaskGroup): boolean {
+  return group.items.length > 0 && group.items.every((inst) => isDoneStatus(inst.status))
+}
+
+const activeGroups = computed(() => groups.value.filter((g) => !isGroupDone(g)))
+const doneGroups = computed(() => groups.value.filter((g) => isGroupDone(g)))
+const doneItemCount = computed(() => doneGroups.value.reduce((n, g) => n + g.items.length, 0))
 
 async function load(force = false): Promise<void> {
   if (force || peekWarmGet('/kid/tasks') == null) loading.value = true
@@ -455,137 +465,75 @@ onUnmounted(stopSpeaking)
 
     <el-empty v-if="!loading && instances.length === 0" :description="t('kid.tasksEmpty')" />
 
-    <article v-for="group in groups" :key="group.key" class="card">
-      <!-- Grouped subtasks: one card, each row clickable -->
-      <template v-if="group.isGroup">
-        <header class="group-head">
-          <h2>{{ group.title }}</h2>
-          <p class="status">{{ t('common.subtaskCount', { n: group.items.length }) }}</p>
+    <div v-if="instances.length" class="task-board">
+      <TransitionGroup name="task-fly" tag="div" class="active-stack">
+        <KidTaskGroupCard
+          v-for="group in activeGroups"
+          :key="group.key"
+          :group="group"
+          :busy="busy"
+          :speaking-key="speakingKey"
+          :speech-supported="speechSupported"
+          :title-of="titleOf"
+          :description-of="descriptionOf"
+          :due-of="dueOf"
+          :reward-of="rewardOf"
+          :steps-of="stepsOf"
+          :status-label="statusLabel"
+          :subtask-action-label="subtaskActionLabel"
+          :is-done-status="isDoneStatus"
+          :can-act-on="canActOn"
+          :can-withdraw="canWithdraw"
+          :all-required-steps-checked="allRequiredStepsChecked"
+          @subtask-click="onSubtaskClick"
+          @read-aloud="readAloud"
+          @toggle-step="toggleStep"
+          @start-card="startCard"
+          @submit-card="submitCard"
+          @withdraw="withdrawSubtask"
+        />
+      </TransitionGroup>
+
+      <section
+        class="done-dock"
+        :class="{ 'is-empty': doneGroups.length === 0 }"
+        :aria-label="t('kid.tasksDone')"
+      >
+        <header class="done-dock-head">
+          <h2>{{ t('kid.tasksDone') }}</h2>
+          <span v-if="doneItemCount" class="done-count">{{ t('kid.tasksDoneCount', { n: doneItemCount }) }}</span>
         </header>
-        <ul class="checklist">
-          <li v-for="inst in group.items" :key="inst.id" class="check-item">
-            <button
-              type="button"
-              class="check-row"
-              :class="{
-                done: isDoneStatus(inst.status),
-                active: inst.status === 'in_progress' || inst.status === 'returned',
-                locked: !canActOn(inst) && !canWithdraw(inst),
-              }"
-              :disabled="busy === `i-${inst.id}` || (!canActOn(inst) && !canWithdraw(inst))"
-              :aria-label="`${titleOf(inst)} — ${subtaskActionLabel(inst)}`"
-              @click="onSubtaskClick(inst)"
-            >
-              <span class="mark" aria-hidden="true">{{ isDoneStatus(inst.status) ? '✓' : inst.status === 'in_progress' ? '●' : '○' }}</span>
-              <span class="check-body">
-                <span class="check-title">
-                  <template v-if="dueOf(inst)">{{ dueOf(inst) }} </template>{{ titleOf(inst) }}
-                </span>
-                <span v-if="descriptionOf(inst)" class="check-desc">{{ descriptionOf(inst) }}</span>
-                <span class="check-meta">
-                  <template v-if="inst.snapshot?.with_parent">{{ t('common.withParentTag') }} · </template>
-                  {{ subtaskActionLabel(inst) }}
-                  <template v-if="rewardOf(inst)"> · {{ rewardOf(inst) }}</template>
-                </span>
-              </span>
-            </button>
-            <button
-              v-if="speechSupported"
-              type="button"
-              class="speak-btn"
-              :class="{ speaking: speakingKey === `i-${inst.id}` }"
-              :aria-label="speakingKey === `i-${inst.id}` ? t('kid.taskActions.stopAloud') : t('kid.taskActions.readAloud')"
-              @click.stop="readAloud(`i-${inst.id}`, titleOf(inst), descriptionOf(inst))"
-            >
-              {{ speakingKey === `i-${inst.id}` ? '⏹' : '🔊' }}
-            </button>
-          </li>
-        </ul>
-      </template>
-
-      <!-- Single task card -->
-      <template v-else>
-        <div v-for="inst in group.items" :key="inst.id" class="sub">
-          <div class="card-title-row">
-            <h2>{{ titleOf(inst) }}</h2>
-            <button
-              v-if="speechSupported"
-              type="button"
-              class="speak-btn"
-              :class="{ speaking: speakingKey === `card-${inst.id}` }"
-              :aria-label="speakingKey === `card-${inst.id}` ? t('kid.taskActions.stopAloud') : t('kid.taskActions.readAloud')"
-              @click.stop="readAloud(`card-${inst.id}`, titleOf(inst), descriptionOf(inst))"
-            >
-              {{ speakingKey === `card-${inst.id}` ? '⏹' : '🔊' }}
-            </button>
-          </div>
-          <p v-if="descriptionOf(inst)" class="card-desc">{{ descriptionOf(inst) }}</p>
-          <p class="status">{{ statusLabel(inst.status) }}</p>
-          <p v-if="dueOf(inst)" class="status">{{ dueOf(inst) }}</p>
-          <p v-if="inst.snapshot?.with_parent" class="with-parent">{{ t('common.withParentTag') }}</p>
-          <p v-if="rewardOf(inst)" class="reward">{{ rewardOf(inst) }}</p>
-
-          <ul v-if="stepsOf(inst).length" class="checklist">
-            <li v-for="step in stepsOf(inst)" :key="step.key" class="check-item">
-              <button
-                type="button"
-                class="check-row"
-                :class="{ done: step.checked, locked: !canActOn(inst) || !step.id }"
-                :disabled="!step.id || busy === `s-${step.id}` || !canActOn(inst)"
-                :aria-label="step.title"
-                @click="toggleStep(inst, step)"
-              >
-                <span class="mark" aria-hidden="true">{{ step.checked ? '✓' : '○' }}</span>
-                <span class="check-body">
-                  <span class="check-title">{{ step.title }}</span>
-                  <span v-if="step.checked && canActOn(inst)" class="check-meta">{{ t('kid.taskActions.tapToUndo') }}</span>
-                </span>
-              </button>
-              <button
-                v-if="speechSupported"
-                type="button"
-                class="speak-btn"
-                :class="{ speaking: speakingKey === step.key }"
-                :aria-label="speakingKey === step.key ? t('kid.taskActions.stopAloud') : t('kid.taskActions.readAloud')"
-                @click.stop="readAloud(step.key, step.title)"
-              >
-                {{ speakingKey === step.key ? '⏹' : '🔊' }}
-              </button>
-            </li>
-          </ul>
-
-          <div class="actions">
-            <button
-              v-if="inst.status === 'pending' || inst.status === 'returned'"
-              type="button"
-              class="big primary"
-              :disabled="busy === `i-${inst.id}`"
-              @click="startCard(inst)"
-            >
-              {{ inst.status === 'returned' ? t('kid.taskActions.restart') : t('kid.taskActions.start') }}
-            </button>
-            <button
-              v-if="inst.status === 'in_progress'"
-              type="button"
-              class="big sun"
-              :disabled="busy === `i-${inst.id}` || !allRequiredStepsChecked(inst)"
-              @click="submitCard(inst)"
-            >
-              {{ t('kid.taskActions.done') }}
-            </button>
-            <button
-              v-if="canWithdraw(inst)"
-              type="button"
-              class="big ghost"
-              :disabled="busy === `i-${inst.id}`"
-              @click="withdrawSubtask(inst)"
-            >
-              {{ t('kid.taskActions.tapToUndo') }}
-            </button>
-          </div>
-        </div>
-      </template>
-    </article>
+        <p v-if="doneGroups.length === 0" class="done-hint">{{ t('kid.tasksDoneHint') }}</p>
+        <TransitionGroup name="shrink-in" tag="div" class="done-stack">
+          <KidTaskGroupCard
+            v-for="group in doneGroups"
+            :key="group.key"
+            compact
+            :group="group"
+            :busy="busy"
+            :speaking-key="speakingKey"
+            :speech-supported="speechSupported"
+            :title-of="titleOf"
+            :description-of="descriptionOf"
+            :due-of="dueOf"
+            :reward-of="rewardOf"
+            :steps-of="stepsOf"
+            :status-label="statusLabel"
+            :subtask-action-label="subtaskActionLabel"
+            :is-done-status="isDoneStatus"
+            :can-act-on="canActOn"
+            :can-withdraw="canWithdraw"
+            :all-required-steps-checked="allRequiredStepsChecked"
+            @subtask-click="onSubtaskClick"
+            @read-aloud="readAloud"
+            @toggle-step="toggleStep"
+            @start-card="startCard"
+            @submit-card="submitCard"
+            @withdraw="withdrawSubtask"
+          />
+        </TransitionGroup>
+      </section>
+    </div>
   </main>
 </template>
 
@@ -629,193 +577,100 @@ onUnmounted(stopSpeaking)
   cursor: pointer;
   min-height: 44px;
 }
-.card {
-  background: rgba(255, 255, 255, 0.1);
+.task-board {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.active-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+/* Exit faster than enter; transform + opacity only (ui-ux skill). */
+.task-fly-move {
+  transition: transform 0.25s ease;
+}
+.task-fly-leave-active {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
+  transition: transform 0.2s ease-in, opacity 0.2s ease-in;
+  transform-origin: center bottom;
+}
+.task-fly-leave-to {
+  transform: scale(0.42) translateY(28px);
+  opacity: 0;
+}
+.done-dock {
+  padding: 14px;
   border-radius: 20px;
-  padding: 20px;
-  margin-bottom: 14px;
+  border: 2px dashed rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.16);
+  min-height: 88px;
+  transition: border-color 0.25s ease, background 0.25s ease;
 }
-.card h2 {
-  margin: 0 0 8px;
-  font-size: 20px;
+.done-dock:not(.is-empty) {
+  border-style: solid;
+  border-color: rgba(120, 200, 140, 0.4);
+  background: rgba(120, 200, 140, 0.1);
 }
-.group-head {
-  margin-bottom: 12px;
-}
-.group-head h2 {
-  margin-bottom: 4px;
-}
-.group-head .status {
-  margin-bottom: 0;
-}
-.sub {
+.done-dock-head {
   display: flex;
-  flex-direction: column;
-}
-.checklist {
-  list-style: none;
-  margin: 0 0 14px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  margin-bottom: 10px;
 }
-.group-head + .checklist {
-  margin-bottom: 0;
-}
-.check-item {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-.card-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.card-title-row h2 {
-  flex: 1;
+.done-dock-head h2 {
   margin: 0;
-}
-.card-desc {
-  margin: 0 0 10px;
   font-size: 15px;
-  line-height: 1.45;
-  opacity: 0.9;
-}
-.check-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 14px 14px;
-  border: none;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  min-height: 52px;
-  transition: background 0.15s ease, transform 0.1s ease;
-}
-.speak-btn {
-  flex-shrink: 0;
-  width: 48px;
-  min-height: 52px;
-  border: none;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-size: 22px;
-  cursor: pointer;
-  line-height: 1;
-}
-.speak-btn.speaking {
-  background: rgba(255, 196, 86, 0.35);
-  animation: pulse-speak 1s ease-in-out infinite;
-}
-@keyframes pulse-speak {
-  50% { transform: scale(1.06); }
-}
-.check-row:not(:disabled):active {
-  transform: scale(0.98);
-}
-.check-row.active {
-  background: rgba(255, 196, 86, 0.18);
-}
-.check-row.done {
-  background: rgba(120, 200, 140, 0.18);
-  opacity: 0.9;
-}
-.check-row.locked:disabled {
-  cursor: default;
-  opacity: 0.75;
-}
-.check-row:disabled:not(.locked):not(.done) {
-  opacity: 0.5;
-}
-.check-row.done:disabled {
-  cursor: wait;
-  opacity: 0.9;
-}
-.mark {
-  flex-shrink: 0;
-  width: 1.4em;
-  font-size: 20px;
-  line-height: 1.3;
   font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.92;
 }
-.check-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-.check-title {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-.check-desc {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  opacity: 0.88;
-}
-.check-meta {
-  font-size: 13px;
-  opacity: 0.8;
-  line-height: 1.3;
-}
-.status {
-  margin: 0 0 8px;
-  opacity: 0.85;
-}
-.with-parent {
-  display: inline-block;
-  margin: 0 0 10px;
+.done-count {
+  flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(255, 196, 86, 0.25);
-  color: #ffe7a8;
+  background: rgba(120, 200, 140, 0.28);
+  color: #d8ffe4;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
+  white-space: nowrap;
 }
-.reward {
-  margin: 0 0 16px;
-  font-size: 15px;
+.done-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 14px;
+  opacity: 0.65;
+  padding: 12px 8px 6px;
 }
-.actions {
+.done-stack {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.big {
-  min-height: 56px;
-  border: none;
-  border-radius: 16px;
-  font-size: 18px;
-  font-weight: 700;
-  cursor: pointer;
+.shrink-in-enter-active {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease-out;
+  transform-origin: center top;
 }
-.big.primary {
-  background: #5b8def;
-  color: #fff;
+.shrink-in-enter-from {
+  transform: scale(0.55);
+  opacity: 0;
 }
-.big.sun {
-  background: var(--gp-sun);
-  color: var(--gp-space-dark);
+.shrink-in-leave-active {
+  transition: transform 0.18s ease-in, opacity 0.18s ease-in;
+  transform-origin: center top;
 }
-.big.ghost {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+.shrink-in-leave-to {
+  transform: scale(0.7);
+  opacity: 0;
 }
-.big:disabled {
-  opacity: 0.5;
+.shrink-in-move {
+  transition: transform 0.25s ease;
 }
 .err {
   color: #ffb4b4;

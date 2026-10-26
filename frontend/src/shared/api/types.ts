@@ -139,10 +139,15 @@ export interface AiTtsVoiceOption {
 }
 
 export interface AiTtsSettings {
-  provider: 'auto' | 'qwen' | 'edge' | string
+  provider: 'auto' | 'qwen' | 'edge' | 'elevenlabs' | string
   configured: boolean
   source: 'tts' | 'ai' | 'env' | 'none' | string
   hint: string | null
+  elevenlabs?: {
+    configured: boolean
+    source: 'family' | 'env' | 'none' | string
+    hint: string | null
+  }
   voice: string
   voice_en: string
   voice_customized: boolean
@@ -563,6 +568,15 @@ export interface RewardPolicy {
   max_per_week: number | null
   max_per_subject: number | null
   is_active: boolean
+}
+
+/** 雅思星球 (Word Atlas) reward caps, editable per family. */
+export interface IeltsRewardSettings {
+  rewards_enabled: boolean
+  points_daily_cap: number
+  coins_daily_cap: number
+  mastered_points: number
+  mastered_daily_cap: number
 }
 
 export interface KidBag {

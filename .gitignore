@@ -33,6 +33,13 @@ frontend/coverage/
 frontend/test-results/
 frontend/playwright-report/
 
+# Word Atlas · 雅思星球 (vendored app; ~700MB media synced separately)
+apps/word-atlas/node_modules/
+apps/word-atlas/dist/
+apps/word-atlas/public/atlas/img/
+apps/word-atlas/public/atlas/audio/
+apps/word-atlas/public/atlas/thumb/
+
 # Backups
 backups/
 *.sql.gz

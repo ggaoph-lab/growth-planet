@@ -17,7 +17,7 @@ mkdir -p "$ROOT/.cursor"
 is_frontend_path() {
   local p="${1:-}"
   case "$p" in
-    *"/frontend/"*|frontend/*|./frontend/*) return 0 ;;
+    *"/frontend/"*|frontend/*|./frontend/*|*"/apps/word-atlas/"*|apps/word-atlas/*|./apps/word-atlas/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -84,8 +84,25 @@ build_dist() {
   echo "[$(date '+%H:%M:%S')] building frontend" >>"$LOG"
   (
     cd "$ROOT/frontend"
+    # Keep dist/ielts (docker nested mount of word-atlas); vite emptyOutDir is off for the same reason.
+    mkdir -p dist
     npx vite build >>"$LOG" 2>&1
   )
+  if [[ -f "$ROOT/apps/word-atlas/package.json" ]]; then
+    echo "[$(date '+%H:%M:%S')] building word-atlas (/ielts/)" >>"$LOG"
+    if [[ ! -d "$ROOT/apps/word-atlas/public/atlas/img" ]]; then
+      echo "[$(date '+%H:%M:%S')] word-atlas media missing; run make word-atlas-assets" >>"$LOG"
+    else
+      (
+        cd "$ROOT/apps/word-atlas"
+        # Keep the dist directory inode (nested docker bind-mount); only clear contents.
+        mkdir -p dist
+        find dist -mindepth 1 -delete
+        ATLAS_BASE=/ielts/ npx vite build >>"$LOG" 2>&1
+      )
+      # Served via nested bind-mount apps/word-atlas/dist → /ielts/ (compose.yaml).
+    fi
+  fi
   rm -f "$DIRTY"
   echo "[$(date '+%H:%M:%S')] build done → http://localhost:8088" >>"$LOG"
 }

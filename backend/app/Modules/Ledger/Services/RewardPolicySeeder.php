@@ -23,6 +23,7 @@ class RewardPolicySeeder
             ['code' => 'english.practice', 'xp_amount' => 2, 'coin_amount' => 1, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.log', 'xp_amount' => 5, 'coin_amount' => 5, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'english.active_choice', 'xp_amount' => 0, 'coin_amount' => 3, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 6],
+            ['code' => 'english_beta.session', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false, 'max_per_subject' => 1],
             // Science encyclopedia: 1 XP + 1 point per article after CN+EN listen; daily section cap 10.
             ['code' => 'encyclopedia.read', 'xp_amount' => 1, 'coin_amount' => 0, 'point_amount' => 1, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'item.checklist.before_school', 'xp_amount' => 5, 'coin_amount' => 2, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 10],
@@ -31,6 +32,9 @@ class RewardPolicySeeder
             ['code' => 'game.schulte', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
             ['code' => 'game.mirror', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
             ['code' => 'game.sudoku', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false, 'max_per_event' => 3, 'max_per_day' => 6],
+            // 雅思星球 (Word Atlas): amounts and daily caps come from the ielts.* family settings, not from these rows.
+            ['code' => 'ielts.session', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false],
+            ['code' => 'ielts.mastered', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false],
             ['code' => 'points.daily_allowance', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 10, 'requires_approval' => false, 'max_per_event' => 100, 'max_per_day' => 100],
         ];
     }

@@ -77,7 +77,8 @@ return [
         'timeout' => (int) env('QWEN_TIMEOUT', 30),
         // Natural kid read-aloud. Same DashScope key as homework LLM.
         'tts_base_url' => env('DASHSCOPE_TTS_BASE_URL', 'https://dashscope.aliyuncs.com/api/v1'),
-        'tts_model' => env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
+        // Prefer realtime WebSocket model (has free quota for many accounts); HTTP offline flash is separate.
+        'tts_model' => env('QWEN_TTS_MODEL', 'qwen3-tts-flash-realtime'),
         // Cherry = natural Mandarin kid voice; Jennifer = US English female (DashScope voice list).
         'tts_voice' => env('QWEN_TTS_VOICE', 'Cherry'),
         'tts_voice_en' => env('QWEN_TTS_VOICE_EN', 'Jennifer'),
@@ -91,6 +92,16 @@ return [
         'prefer_gemini' => false,
         'edge_voice' => env('TTS_EDGE_VOICE', 'zh-CN-XiaoxiaoNeural'),
         'edge_voice_en' => env('TTS_EDGE_VOICE_EN', 'en-US-JennyNeural'),
+    ],
+
+    // Word Atlas / 雅思星球 house voices (Alice UK, Sarah US). Used when tts.provider=elevenlabs.
+    'elevenlabs' => [
+        'api_key' => env('ELEVENLABS_API_KEY', ''),
+        // The synchronous /v1/text-to-speech endpoint supports Flash; v4 Turbo uses Text to Dialogue WebSocket.
+        'model' => env('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'),
+        'voice_en' => env('ELEVENLABS_VOICE_EN', 'EXAVITQu4vr4xnSDxMaL'), // Sarah
+        'voice_zh' => env('ELEVENLABS_VOICE_ZH', 'Xb7hH8MSUJpSbSDYk0k2'), // Alice
+        'timeout' => (int) env('ELEVENLABS_TTS_TIMEOUT', 30),
     ],
 
 ];

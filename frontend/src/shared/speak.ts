@@ -4,14 +4,44 @@ import { api } from '@/shared/api/client'
 
 let currentAudio: HTMLAudioElement | null = null
 let currentObjectUrl: string | null = null
+let currentBufferSource: AudioBufferSourceNode | null = null
+let rateWatch: ReturnType<typeof setInterval> | null = null
 let speakEpoch = 0
 /**
  * Shared element unlocked during a user gesture so async TTS can play on
  * mobile Chrome and iPad/iOS Safari (WebKit autoplay is stricter).
  */
 let sharedAudio: HTMLAudioElement | null = null
+let audioCtx: AudioContext | null = null
 let audioUnlocked = false
 let unlockInFlight: Promise<boolean> | null = null
+
+function clampPlaybackRate(rate: number): number {
+  if (!Number.isFinite(rate) || rate <= 0) return 1
+  return Math.min(2, Math.max(0.5, rate))
+}
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctx) return null
+  if (!audioCtx || audioCtx.state === 'closed') {
+    audioCtx = new Ctx()
+  }
+  return audioCtx
+}
+
+async function resumeAudioContext(): Promise<void> {
+  const ctx = getAudioContext()
+  if (!ctx) return
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume()
+    } catch {
+      /* ignore */
+    }
+  }
+}
 /** Short unmuted-policy-checked lead-in wakes the output before a brief first word. */
 function silentLeadIn(): string {
   const samples = 4410 // 200ms at 22.05kHz, mono PCM16
@@ -97,6 +127,7 @@ export function unlockSpeak(): Promise<boolean> {
         /* ignore */
       }
       audio.muted = false
+      await resumeAudioContext()
       audioUnlocked = true
       return true
     } catch {
@@ -116,9 +147,31 @@ function revokeObjectUrl(): void {
   }
 }
 
+function clearRateWatch(): void {
+  if (rateWatch) {
+    clearInterval(rateWatch)
+    rateWatch = null
+  }
+}
+
 function haltPlayback(): void {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
+  }
+  clearRateWatch()
+  if (currentBufferSource) {
+    try {
+      currentBufferSource.onended = null
+      currentBufferSource.stop()
+    } catch {
+      /* ignore */
+    }
+    try {
+      currentBufferSource.disconnect()
+    } catch {
+      /* ignore */
+    }
+    currentBufferSource = null
   }
   if (currentAudio) {
     try {
@@ -150,20 +203,64 @@ export function taskPhrase(title: string, description?: string | null): string {
 }
 
 const preparedAudio = new Map<string, { base64: string; mime: string }>()
+/** Keep one speak engine per language so partner lines don't switch "people" mid-session. */
+const engineLock = new Map<string, 'neural' | 'browser'>()
+const stickyBrowserVoice = new Map<string, SpeechSynthesisVoice>()
 
 function rememberAudio(text: string, base64: string, mime: string): void {
   if (!text || !base64) return
   preparedAudio.set(text, { base64, mime })
 }
 
+function forgetPreparedForLang(lang: string): void {
+  const prefix = `${lang}\0`
+  for (const key of [...preparedAudio.keys()]) {
+    if (key.startsWith(prefix)) preparedAudio.delete(key)
+  }
+}
+
+function lockBrowserEngine(lang: string): void {
+  if (engineLock.get(lang) === 'browser') return
+  engineLock.set(lang, 'browser')
+  // Drop neural clips so a cached greeting doesn't keep a different voice.
+  forgetPreparedForLang(lang)
+}
+
 /** Drop in-memory TTS blobs (settings “clear cache”). Playback unlock is kept. */
 export function clearSpeakCache(): void {
   stopSpeaking()
   preparedAudio.clear()
+  engineLock.clear()
+  stickyBrowserVoice.clear()
   pendingWarm.clear()
   warmInFlight.clear()
   warmQueue.length = 0
   warming = 0
+}
+
+/**
+ * Decide neural vs browser once for a language before the child hears mixed voices.
+ * Call with a short sample (e.g. scene greeting) when a kid page opens.
+ */
+export async function probeSpeakEngine(sampleText: string, lang = 'en-US'): Promise<'neural' | 'browser'> {
+  const text = sampleText.trim()
+  const locked = engineLock.get(lang)
+  if (locked) return locked
+  if (!text) {
+    lockBrowserEngine(lang)
+    return 'browser'
+  }
+  try {
+    const audio = await fetchNeuralAudio(text, lang)
+    if (audio) {
+      engineLock.set(lang, 'neural')
+      return 'neural'
+    }
+  } catch {
+    /* fall through */
+  }
+  lockBrowserEngine(lang)
+  return 'browser'
 }
 
 function audioKey(text: string, lang: string): string {
@@ -257,17 +354,21 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
   if (!voices.length) return null
 
   const langBase = lang.slice(0, 2).toLowerCase()
+  const sticky = stickyBrowserVoice.get(langBase)
+  if (sticky && voices.some(v => v.voiceURI === sticky.voiceURI)) return sticky
+
   const pool = voices.filter(
     (v) => v.lang.toLowerCase().startsWith(langBase) || v.lang.toLowerCase().startsWith(lang.toLowerCase()),
   )
   if (!pool.length) return null
-  const candidates = pool
+  const exact = pool.filter(v => v.lang.toLowerCase().replace('_', '-') === lang.toLowerCase())
+  const candidates = lang.toLowerCase() === 'en-us' && exact.length ? exact : pool
 
   const score = (v: SpeechSynthesisVoice): number => {
     const n = `${v.name} ${v.voiceURI}`.toLowerCase()
     let s = 0
     if (/neural|natural|online|premium|enhanced|wavenet|studio|google|microsoft/.test(n)) s += 50
-    if (/xiaoxiao|xiaoyi|yunxi|yunyang|yunjian|yunxia|xiaochen|xiaomo|huihui|tingting|meijia|sinji|hanhan|cherry|serena/.test(n)) {
+    if (/xiaoxiao|xiaoyi|yunxi|yunyang|yunjian|yunxia|xiaochen|xiaomo|huihui|tingting|meijia|sinji|hanhan|cherry|serena|samantha|karen|moira|tessa|veena|fiona/.test(n)) {
       s += 40
     }
     if (v.localService === false) s += 20
@@ -277,10 +378,12 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
     return s
   }
 
-  return [...candidates].sort((a, b) => score(b) - score(a))[0] ?? null
+  const picked = [...candidates].sort((a, b) => score(b) - score(a))[0] ?? null
+  if (picked) stickyBrowserVoice.set(langBase, picked)
+  return picked
 }
 
-function speakBrowser(text: string, lang: string, epoch: number, onStarted?: () => void): Promise<boolean> {
+function speakBrowser(text: string, lang: string, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
   return new Promise((resolve) => {
     if (!window.speechSynthesis || epoch !== speakEpoch) {
       resolve(false)
@@ -289,7 +392,9 @@ function speakBrowser(text: string, lang: string, epoch: number, onStarted?: () 
     haltPlayback()
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = lang
-    utter.rate = 0.88
+    // Keep a gentle base so “正常” stays kid-friendly; slow/fast scale from the control.
+    const clamped = clampPlaybackRate(rate)
+    utter.rate = clampPlaybackRate(0.88 * clamped)
     utter.pitch = 1.0
     const voice = pickVoice(lang)
     if (voice) {
@@ -329,10 +434,67 @@ function base64ToBlob(base64: string, mime: string): Blob {
 
 class AutoplayBlockedError extends Error {}
 
-async function playBlob(blob: Blob, epoch: number, onStarted?: () => void): Promise<boolean> {
+/** Prefer Web Audio — HTMLAudioElement.playbackRate is unreliable on the shared unlock element. */
+async function playBlobViaWebAudio(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean | null> {
+  const ctx = getAudioContext()
+  if (!ctx) return null
+  await resumeAudioContext()
   if (epoch !== speakEpoch) return false
-  haltPlayback()
+  let audioBuffer: AudioBuffer
+  try {
+    const bytes = await blob.arrayBuffer()
+    if (epoch !== speakEpoch) return false
+    audioBuffer = await ctx.decodeAudioData(bytes.slice(0))
+  } catch {
+    return null
+  }
+  if (epoch !== speakEpoch) return false
 
+  const clampedRate = clampPlaybackRate(rate)
+  const source = ctx.createBufferSource()
+  currentBufferSource = source
+  source.buffer = audioBuffer
+  source.playbackRate.value = clampedRate
+  source.connect(ctx.destination)
+
+  let endedClean = false
+  const finished = new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      endedClean = ok
+      window.clearInterval(watch)
+      if (currentBufferSource === source) currentBufferSource = null
+      resolve()
+    }
+    const watch = window.setInterval(() => {
+      if (epoch !== speakEpoch) {
+        try {
+          source.stop()
+        } catch {
+          /* ignore */
+        }
+        finish(false)
+      }
+    }, 120)
+    source.onended = () => finish(true)
+  })
+
+  try {
+    onStarted?.()
+    source.start(0)
+    audioUnlocked = true
+  } catch {
+    if (currentBufferSource === source) currentBufferSource = null
+    return null
+  }
+
+  await finished
+  return endedClean && epoch === speakEpoch
+}
+
+async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
   const objectUrl = URL.createObjectURL(blob)
   currentObjectUrl = objectUrl
   // Always reuse the DOM-mounted element so iPad/Chrome keep the gesture unlock.
@@ -341,18 +503,40 @@ async function playBlob(blob: Blob, epoch: number, onStarted?: () => void): Prom
   audio.muted = false
   audio.defaultMuted = false
   audio.volume = 1
+  const clampedRate = clampPlaybackRate(rate)
+  const applyRate = () => {
+    try {
+      audio.defaultPlaybackRate = clampedRate
+      audio.playbackRate = clampedRate
+      if ('preservesPitch' in audio) (audio as HTMLMediaElement & { preservesPitch: boolean }).preservesPitch = true
+    } catch {
+      /* ignore */
+    }
+  }
   audio.onplaying = () => {
+    applyRate()
     if (epoch === speakEpoch && !audio.muted && audio.volume > 0) onStarted?.()
   }
   audio.src = objectUrl
+  applyRate()
+  clearRateWatch()
+  rateWatch = setInterval(() => {
+    if (epoch !== speakEpoch || currentAudio !== audio) {
+      clearRateWatch()
+      return
+    }
+    applyRate()
+  }, 80)
 
   try {
     await audio.play()
+    applyRate()
     audioUnlocked = true
   } catch (err) {
     const blocked = err instanceof DOMException && err.name === 'NotAllowedError'
     if (blocked) audioUnlocked = false
     if (currentAudio === audio) currentAudio = null
+    clearRateWatch()
     revokeObjectUrl()
     if (blocked) throw new AutoplayBlockedError()
     return false
@@ -370,6 +554,7 @@ async function playBlob(blob: Blob, epoch: number, onStarted?: () => void): Prom
       if (settled) return
       settled = true
       endedClean = ok
+      clearRateWatch()
       window.clearInterval(watch)
       resolve()
     }
@@ -388,9 +573,19 @@ async function playBlob(blob: Blob, epoch: number, onStarted?: () => void): Prom
   return endedClean && epoch === speakEpoch
 }
 
+async function playBlob(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
+  if (epoch !== speakEpoch) return false
+  haltPlayback()
+
+  const viaCtx = await playBlobViaWebAudio(blob, epoch, onStarted, rate)
+  if (viaCtx !== null) return viaCtx
+  if (epoch !== speakEpoch) return false
+  return playBlobViaElement(blob, epoch, onStarted, rate)
+}
+
 /** Speak one line. `lang` selects the neural voice; browser speech is only the fallback. */
-export function speakPhrase(text: string, lang = 'zh-CN', onStarted?: () => void): Promise<boolean> {
-  return speakPrepared(text.trim(), lang, lang, onStarted)
+export function speakPhrase(text: string, lang = 'zh-CN', onStarted?: () => void, rate = 1): Promise<boolean> {
+  return speakPrepared(text.trim(), lang, lang, onStarted, rate)
 }
 
 export async function speakTask(title: string, description?: string | null, lang = 'zh-CN'): Promise<void> {
@@ -399,7 +594,22 @@ export async function speakTask(title: string, description?: string | null, lang
   await speakPrepared(text, lang, 'zh-CN')
 }
 
-async function speakPrepared(text: string, browserLang: string, apiLang: string, onStarted?: () => void): Promise<boolean> {
+/** Interactive taps should not wait on a slow upstream cascade (quota → Edge → Google). */
+const NEURAL_SPEAK_BUDGET_MS = 1600
+/** After neural already played once, wait longer so the next line keeps the same voice. */
+const NEURAL_LOCKED_BUDGET_MS = 4500
+
+async function fetchNeuralAudio(text: string, apiLang: string): Promise<{ base64: string; mime: string } | null> {
+  const result = await api.post<{
+    available: boolean; audio_base64: string | null; mime: string | null; provider: string | null
+  }>('/kid/tts', { text, lang: apiLang })
+  if (!result.available || !result.audio_base64 || !result.mime) return null
+  if (engineLock.get(apiLang) === 'browser') return null
+  rememberAudio(audioKey(text, apiLang), result.audio_base64, result.mime)
+  return preparedAudio.get(audioKey(text, apiLang)) ?? null
+}
+
+async function speakPrepared(text: string, browserLang: string, apiLang: string, onStarted?: () => void, rate = 1): Promise<boolean> {
   if (!text) return false
   // Silent media priming must finish before the shared element receives real audio.
   // Otherwise its delayed pause/reset can stop the first audible word.
@@ -407,6 +617,10 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
   if (unlockInFlight) await unlockInFlight
   if (epoch !== speakEpoch) return false
   haltPlayback()
+
+  if (engineLock.get(apiLang) === 'browser') {
+    return speakBrowser(text, browserLang, epoch, onStarted, rate)
+  }
 
   try {
     let ready = preparedAudio.get(audioKey(text, apiLang))
@@ -417,26 +631,38 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
       ready = preparedAudio.get(audioKey(text, apiLang))
     }
     if (!ready) {
-      const result = await api.post<{
-        available: boolean; audio_base64: string | null; mime: string | null; provider: string | null
-      }>('/kid/tts', { text, lang: apiLang })
+      const budget = engineLock.get(apiLang) === 'neural' ? NEURAL_LOCKED_BUDGET_MS : NEURAL_SPEAK_BUDGET_MS
+      const neural = fetchNeuralAudio(text, apiLang)
+      const raced = await Promise.race([
+        neural.then((audio) => ({ kind: 'ready' as const, audio })),
+        new Promise<{ kind: 'timeout' }>((resolve) => {
+          window.setTimeout(() => resolve({ kind: 'timeout' }), budget)
+        }),
+      ])
       if (epoch !== speakEpoch) return false
-      if (result.available && result.audio_base64 && result.mime) {
-        rememberAudio(audioKey(text, apiLang), result.audio_base64, result.mime)
-        ready = preparedAudio.get(audioKey(text, apiLang))
+      if (raced.kind === 'ready' && raced.audio) {
+        ready = raced.audio
+      } else {
+        void neural.catch(() => null)
+        lockBrowserEngine(apiLang)
       }
     }
     if (ready) {
+      if (!engineLock.has(apiLang)) engineLock.set(apiLang, 'neural')
       if (!audioUnlocked && !await unlockSpeak()) return false
       if (epoch !== speakEpoch) return false
       const mime = ready.mime.split(';')[0]?.trim() || 'audio/mpeg'
-      const played = await playBlob(base64ToBlob(ready.base64, mime), epoch, onStarted)
+      const played = await playBlob(base64ToBlob(ready.base64, mime), epoch, onStarted, rate)
       if (played || epoch !== speakEpoch) return played
+      // Neural playback failed after a prior neural success — stay consistent with browser.
+      lockBrowserEngine(apiLang)
     }
   } catch (error) {
     // Browser autoplay denial is actionable; don't silently queue another blocked voice.
     if (error instanceof AutoplayBlockedError) return false
+    lockBrowserEngine(apiLang)
   }
   if (epoch !== speakEpoch) return false
-  return speakBrowser(text, browserLang, epoch, onStarted)
+  lockBrowserEngine(apiLang)
+  return speakBrowser(text, browserLang, epoch, onStarted, rate)
 }

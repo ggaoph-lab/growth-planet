@@ -26,7 +26,7 @@ class EnglishLearningTest extends TestCase
         $this->assertSame(EnglishVocabularyService::NEW_WORDS_SESSION_CAP, count($firstPlan['items']));
         $this->assertSame(10, $firstPlan['new_words_goal']);
         $this->assertSame(0, $firstPlan['new_words_completed']);
-        $this->assertFalse($firstPlan['fairy_tale_unlocked']);
+        $this->assertTrue($firstPlan['fairy_tale_unlocked']);
         $this->assertFalse($firstPlan['review_unlocked']);
         $card = collect($firstPlan['items'])->first(fn ($item) => ! empty($item['daily_word']) || str_starts_with((string) $item['key'], 'word:'));
         $this->assertNotNull($card);
@@ -418,7 +418,7 @@ class EnglishLearningTest extends TestCase
 
         $plan = $service->plan($child);
         $this->assertSame(6, $plan['new_words_completed']);
-        $this->assertFalse($plan['fairy_tale_unlocked']);
+        $this->assertTrue($plan['fairy_tale_unlocked']);
         $this->assertNotEmpty($plan['items'], 'short pack must be topped up so learning can continue');
         $daily = collect($plan['items'])->filter(
             fn ($item) => ! empty($item['daily_word']) || str_starts_with((string) ($item['key'] ?? ''), 'word:')
@@ -437,7 +437,7 @@ class EnglishLearningTest extends TestCase
         $this->assertSame(1, DB::table('english_ai_records')->where('purpose', 'daily_word_pack')->count());
     }
 
-    public function test_daily_word_pack_caches_once_and_unlocks_fairy_tale_at_ten(): void
+    public function test_fairy_tale_is_available_without_new_words_and_heard_is_idempotent(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();
         $child = $this->makeChild($family);
@@ -445,32 +445,7 @@ class EnglishLearningTest extends TestCase
         $service = app(EnglishLearningService::class);
         $this->travelTo(CarbonImmutable::parse('2026-10-13 10:00:00', 'Asia/Shanghai'));
 
-        $first = $service->plan($child);
-        $second = $service->plan($child);
-        $this->assertSame(1, DB::table('english_ai_records')->where('purpose', 'daily_word_pack')->count());
-        $this->assertSame(
-            collect($first['items'])->where('daily_word', true)->pluck('key')->all(),
-            collect($second['items'])->where('daily_word', true)->pluck('key')->all(),
-        );
-
-        $this->actingAsKid($child, $device, $token)
-            ->getJson('/api/v1/kid/english/learning/fairy-tale')
-            ->assertOk()
-            ->assertJsonPath('data.available', false)
-            ->assertJsonPath('data.reason', 'need_new_words');
-
-        $answered = 0;
-        while ($answered < EnglishVocabularyService::NEW_WORDS_DAILY_GOAL) {
-            $plan = $service->plan($child);
-            $card = collect($plan['items'])->first(fn ($item) => ! empty($item['daily_word']) || str_starts_with((string) ($item['key'] ?? ''), 'word:'));
-            $this->assertNotNull($card, 'expected a daily word card while under goal');
-            $service->answer($child, $card['key'], $card['meaning']);
-            $answered++;
-        }
-
-        $unlocked = $service->plan($child);
-        $this->assertTrue($unlocked['fairy_tale_unlocked']);
-        $this->assertSame(10, $unlocked['new_words_completed']);
+        $this->assertTrue($service->plan($child)['fairy_tale_unlocked']);
 
         $tale = $this->actingAsKid($child, $device, $token)
             ->getJson('/api/v1/kid/english/learning/fairy-tale')

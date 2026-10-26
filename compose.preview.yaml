@@ -6,6 +6,7 @@ services:
   nginx:
     volumes:
       - ./frontend/dist:/var/www/frontend/dist:ro
+      - ./apps/word-atlas/dist:/var/www/frontend/dist/ielts:ro
   # Pick up PHP TTS / API edits without rebuilding the prod image.
   app:
     volumes:

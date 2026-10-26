@@ -32,6 +32,9 @@ class FamilyAiConfig
      *   tts_qwen_api_key: string,
      *   tts_qwen_configured: bool,
      *   tts_qwen_source: 'tts'|'ai'|'env'|'none',
+     *   tts_elevenlabs_api_key: string,
+     *   tts_elevenlabs_configured: bool,
+     *   tts_elevenlabs_source: 'family'|'env'|'none',
      *   tts_voice: string,
      *   tts_voice_en: string
      * }
@@ -88,10 +91,15 @@ class FamilyAiConfig
         $openaiBaseUrl = self::normalizeOpenAiBaseUrl($openaiBaseUrl);
 
         [$ttsKey, $ttsSource] = $this->resolveTtsSecret($familyId, $qwenKey, $qwenSource);
+        [$elevenKey, $elevenSource] = $this->resolveSecret(
+            $familyId,
+            'tts.elevenlabs_api_key',
+            (string) config('services.elevenlabs.api_key', ''),
+        );
         $ttsProvider = $familyId !== null
             ? (string) $this->settings->get('tts.provider', $familyId)
             : 'auto';
-        if (! in_array($ttsProvider, ['auto', 'qwen', 'edge'], true)) {
+        if (! in_array($ttsProvider, ['auto', 'qwen', 'edge', 'elevenlabs'], true)) {
             $ttsProvider = 'auto';
         }
         $ttsVoice = $familyId !== null
@@ -126,6 +134,9 @@ class FamilyAiConfig
             'tts_qwen_api_key' => $ttsKey,
             'tts_qwen_configured' => $ttsKey !== '',
             'tts_qwen_source' => $ttsSource,
+            'tts_elevenlabs_api_key' => $elevenKey,
+            'tts_elevenlabs_configured' => $elevenKey !== '',
+            'tts_elevenlabs_source' => $elevenSource,
             'tts_voice' => $ttsVoice,
             'tts_voice_en' => $ttsVoiceEn,
         ];
@@ -185,6 +196,11 @@ class FamilyAiConfig
                 'configured' => $cfg['tts_qwen_configured'],
                 'source' => $cfg['tts_qwen_source'],
                 'hint' => $this->maskHint($cfg['tts_qwen_api_key']),
+                'elevenlabs' => [
+                    'configured' => $cfg['tts_elevenlabs_configured'],
+                    'source' => $cfg['tts_elevenlabs_source'],
+                    'hint' => $this->maskHint($cfg['tts_elevenlabs_api_key']),
+                ],
                 'voice' => $cfg['tts_voice'],
                 'voice_en' => $cfg['tts_voice_en'],
                 'voice_customized' => $familyId !== null && $this->settings->has('tts.voice', $familyId)

@@ -9,6 +9,7 @@ PROD_APP     := $(COMPOSE_PROD) exec app
 
 .PHONY: help init up down build ps logs shell composer artisan key migrate fresh seed-demo \
         test test-backend test-frontend lint typecheck frontend-install frontend-build frontend-dev preview family \
+        word-atlas-install word-atlas-assets word-atlas-build \
         db-password-sync \
         prod-init prod-check prod-pull prod-build prod-build-host-frontend prod-up prod-down prod-ps prod-logs \
         prod-migrate prod-artisan prod-preflight prod-family prod-backup
@@ -22,7 +23,9 @@ help:
 	@echo "  make migrate         执行数据库迁移"
 	@echo "  make family          交互式创建家庭与首位家长"
 	@echo "  make test            运行后端与前端全部测试"
-	@echo "  make frontend-build  构建前端到 frontend/dist"
+	@echo "  make frontend-build  构建前端到 frontend/dist（含雅思星球 /ielts/）"
+	@echo "  make word-atlas-assets 同步词光插画/音频（约 700MB，首次或 CI 需要）"
+	@echo "  make word-atlas-build 仅构建词光到 frontend/dist/ielts/"
 	@echo "  make preview         构建前端并把 dist 挂到 nginx（预览固定 http://localhost:8088）"
 	@echo "  make frontend-dev    监听前端改动并写入 dist（需先 make preview）"
 	@echo ""
@@ -99,9 +102,25 @@ test-frontend:
 
 frontend-install:
 	cd frontend && npm install
+	$(MAKE) word-atlas-install
+
+word-atlas-install:
+	cd apps/word-atlas && npm ci
+
+word-atlas-assets:
+	bash scripts/sync-word-atlas-assets.sh $(ARGS)
+
+word-atlas-build:
+	@test -d apps/word-atlas/public/atlas/img || (echo "Missing Word Atlas media. Run: make word-atlas-assets" && exit 1)
+	# Keep the dist directory inode (nested docker bind-mount); only clear contents.
+	mkdir -p apps/word-atlas/dist
+	find apps/word-atlas/dist -mindepth 1 -delete
+	cd apps/word-atlas && ATLAS_BASE=/ielts/ npm run build
+	# Dev/preview nginx bind-mounts apps/word-atlas/dist → /ielts/ (see compose.yaml).
 
 frontend-build:
 	cd frontend && npm run build
+	$(MAKE) word-atlas-build
 
 # Build SPA and mount ./frontend/dist into the running nginx (fixes prod-image-baked frontend).
 # After this, http://localhost:8088 always serves your local dist.

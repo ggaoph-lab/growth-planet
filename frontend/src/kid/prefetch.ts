@@ -12,6 +12,8 @@ const routeChunks: Record<string, () => Promise<unknown>> = {
   'kid-food': () => import('@/kid/pages/KidFoodPage.vue'),
   'kid-movies': () => import('@/kid/pages/KidMoviesPage.vue'),
   'kid-english': () => import('@/kid/pages/KidEnglishPage.vue'),
+  'kid-english-beta': () => import('@/kid/pages/KidEnglishBetaPage.vue'),
+  'kid-ielts': () => import('@/kid/pages/KidIeltsPage.vue'),
   'kid-encyclopedia': () => import('@/kid/pages/KidEncyclopediaPage.vue'),
   'kid-games': () => import('@/kid/pages/KidGamesPage.vue'),
   'kid-schulte': () => import('@/kid/pages/KidSchultePage.vue'),

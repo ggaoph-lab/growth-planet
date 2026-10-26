@@ -3,6 +3,7 @@
 namespace Tests\Feature\Growth;
 
 use App\Modules\Task\Services\EdgeTtsClient;
+use App\Modules\Task\Services\QwenRealtimeTtsClient;
 use App\Modules\Task\Services\QwenTtsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -12,6 +13,33 @@ use Tests\TestCase;
 class KidTtsTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Local developer keys must never be used by automated tests.
+        config(['services.elevenlabs.api_key' => '']);
+    }
+
+    public function test_auto_english_uses_elevenlabs_when_configured(): void
+    {
+        config([
+            'services.elevenlabs.api_key' => 'test-elevenlabs-key',
+            'services.elevenlabs.model' => 'eleven_flash_v2_5',
+        ]);
+        ['family' => $family] = $this->makeFamily();
+        Http::fake(['api.elevenlabs.io/*' => Http::response(str_repeat('a', 2200), 200, ['Content-Type' => 'audio/mpeg'])]);
+
+        $audio = app(QwenTtsService::class)->synthesize('Today we are making soup.', $family->id, 'en-US');
+
+        $this->assertSame('elevenlabs', $audio['provider']);
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request): bool {
+            return str_contains($request->url(), '/v1/text-to-speech/')
+                && $request->hasHeader('xi-api-key', 'test-elevenlabs-key')
+                && ($request->data()['model_id'] ?? null) === 'eleven_flash_v2_5'
+                && ($request->data()['language_code'] ?? null) === 'en';
+        });
+    }
 
     public function test_prefetch_quota_does_not_block_tapped_playback(): void
     {
@@ -81,6 +109,46 @@ class KidTtsTest extends TestCase
             return ($data['input']['voice'] ?? null) === 'Jennifer'
                 && ($data['input']['language_type'] ?? null) === 'English';
         });
+    }
+
+    public function test_qwen_realtime_uses_jennifer_for_english(): void
+    {
+        config([
+            'services.qwen.api_key' => 'test-qwen-key',
+            'services.qwen.tts_model' => 'qwen3-tts-flash-realtime',
+            'services.qwen.tts_voice' => 'Cherry',
+            'services.qwen.tts_voice_en' => 'Jennifer',
+        ]);
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [$device, $token] = $this->makeDevice($family, $parent);
+
+        $audio = [
+            'audio_base64' => base64_encode(str_repeat('r', 80)),
+            'mime' => 'audio/mpeg',
+            'provider' => 'qwen',
+        ];
+        $this->mock(QwenRealtimeTtsClient::class, function ($mock) use ($audio): void {
+            $mock->shouldReceive('synthesize')
+                ->once()
+                ->withArgs(function (string $text, string $apiKey, string $model, string $voice, string $lang) {
+                    return $text === 'I like apples.'
+                        && $model === 'qwen3-tts-flash-realtime'
+                        && $voice === 'Jennifer'
+                        && str_starts_with($lang, 'en');
+                })
+                ->andReturn($audio);
+        });
+        $this->mock(EdgeTtsClient::class, function ($mock): void {
+            $mock->shouldReceive('synthesize')->never();
+            $mock->shouldReceive('synthesizeMany')->never();
+        });
+
+        $this->actingAsKid($child, $device, $token)
+            ->postJson('/api/v1/kid/tts', ['text' => 'I like apples.', 'lang' => 'en-US'])
+            ->assertOk()
+            ->assertJsonPath('data.available', true)
+            ->assertJsonPath('data.provider', 'qwen');
     }
 
     public function test_warm_uses_same_qwen_priority_as_speak(): void
@@ -165,6 +233,38 @@ class KidTtsTest extends TestCase
             ->postJson('/api/v1/kid/tts', ['text' => '整理书包'])
             ->assertOk()
             ->assertJsonPath('data.provider', 'edge_tts');
+    }
+
+    public function test_qwen_quota_exhaustion_skips_slow_fallbacks(): void
+    {
+        config([
+            'services.qwen.api_key' => 'test-qwen-key',
+            'services.qwen.tts_model' => 'qwen3-tts-flash',
+            'services.tts.prefer_gemini' => false,
+        ]);
+        ['family' => $family] = $this->makeFamily();
+
+        Http::fake([
+            'dashscope.aliyuncs.com/*' => Http::response([
+                'code' => 'AllocationQuota.FreeTierOnly',
+                'message' => 'Free quota exhausted.',
+            ], 403),
+            'dashscope-intl.aliyuncs.com/*' => Http::response([
+                'code' => 'AllocationQuota.FreeTierOnly',
+                'message' => 'Free quota exhausted.',
+            ], 403),
+            'translate.google.com/*' => Http::response(str_repeat('a', 128), 200, ['Content-Type' => 'audio/mpeg']),
+        ]);
+        $this->mock(EdgeTtsClient::class, function ($mock): void {
+            $mock->shouldReceive('synthesize')->never();
+            $mock->shouldReceive('synthesizeMany')->never();
+        });
+
+        $started = microtime(true);
+        $result = app(QwenTtsService::class)->synthesize('I would like milk, please.', $family->id, 'en-US');
+        $this->assertNull($result);
+        $this->assertLessThan(3.0, microtime(true) - $started);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'translate.google.com'));
     }
 
     public function test_does_not_call_gemini_tts_when_edge_fails(): void

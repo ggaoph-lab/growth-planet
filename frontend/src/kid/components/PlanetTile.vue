@@ -23,6 +23,7 @@ const ICONS: Record<string, string> = {
   food: '🥕',
   movie: '🎬',
   abc: '🔤',
+  ielts: '🌟',
   book: '📖',
   gamepad: '🎮',
   gift: '🎁',
@@ -45,6 +46,7 @@ const icon = computed(() => ICONS[props.planet.icon] ?? '⭐')
   >
     <span class="icon" aria-hidden="true">{{ icon }}</span>
     <span class="title">{{ title }}</span>
+    <span v-if="planet.key === 'english_beta'" class="badge">Beta</span>
     <span v-if="!planet.available" class="badge">{{ t('kid.comingSoon') }}</span>
   </button>
 </template>

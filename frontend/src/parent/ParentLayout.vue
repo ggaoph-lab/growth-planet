@@ -33,6 +33,7 @@ const primaryNav = computed(() => [
 
 const moreNav = computed(() => [
   { name: 'parent-reports', label: t('parent.nav.reports'), icon: '📊' },
+  { name: 'parent-english-beta', label: '英语星球 Beta', icon: '🔤' },
   { name: 'parent-devices', label: t('parent.nav.devices'), icon: '📱' },
   { name: 'parent-audit', label: t('parent.nav.audit'), icon: '📜' },
   { name: 'parent-family', label: t('parent.nav.family'), icon: '⚙️' },

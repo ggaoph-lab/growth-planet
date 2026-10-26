@@ -1,8 +1,12 @@
 # 成长星球 Growth Planet
 
-面向小学一年级儿童及家长的家庭成长管理系统：任务与习惯、XP 与金币账本、奖励商城、统一审核中心、书包星球、勇敢探索、食物探索日记、电影星球、英语探索星球、科学小百科星球、统一屏幕时间与成长报告。
+面向小学一年级儿童及家长的家庭成长管理系统：任务与习惯、XP 与金币账本、奖励商城、统一审核中心、书包星球、勇敢探索、食物探索日记、电影星球、童话星球、**英语星球 Beta**、**雅思星球**、科学小百科星球、统一屏幕时间与成长报告。
 
 > 当前阶段：**第六阶段已完成**；**阶段 4.1（电影系列折叠与管理）已实现**。界面默认 **中英双语**（`中文 / English`），右上角可切换「中英双语 / 中文 / English」。各阶段进度见 [`docs/development-plan.md`](docs/development-plan.md)。
+
+### 雅思星球来源说明
+
+**雅思星球**（`/ielts/`）搬运自开源项目 [词光 · Word Atlas](https://github.com/designfuchen/word-atlas)（作者 [designfuchen](https://github.com/designfuchen) / [@yangleiocx3](https://x.com/yangleiocx3)）。应用代码 MIT，词条插画与录音等为 CC BY 4.0；本地目录见 `apps/word-atlas/`，归属说明见 [`apps/word-atlas/ATTRIBUTION.md`](apps/word-atlas/ATTRIBUTION.md)。
 
 ## 技术栈
 

@@ -9,6 +9,8 @@ on:
     paths:
       - "backend/**"
       - "frontend/**"
+      - "apps/word-atlas/**"
+      - "scripts/sync-word-atlas-assets.sh"
       - "deploy/docker/**"
       - "compose.prod.yaml"
       - "compose.build.yaml"
@@ -27,6 +29,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Sync Word Atlas media
+        run: bash scripts/sync-word-atlas-assets.sh
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

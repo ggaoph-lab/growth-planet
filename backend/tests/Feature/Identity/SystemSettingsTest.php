@@ -168,6 +168,32 @@ class SystemSettingsTest extends TestCase
         $this->assertSame('tts', $cfg['tts_qwen_source']);
     }
 
+    public function test_elevenlabs_tts_key_can_be_saved_and_cleared(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        config(['services.elevenlabs.api_key' => '']);
+
+        $this->actingAsParent($parent, sudo: true)
+            ->putJson('/api/v1/parent/ai-settings', [
+                'tts_provider' => 'elevenlabs',
+                'tts_elevenlabs_api_key' => 'el-family-key',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.tts.provider', 'elevenlabs')
+            ->assertJsonPath('data.tts.elevenlabs.configured', true)
+            ->assertJsonPath('data.tts.elevenlabs.source', 'family');
+
+        $this->assertSame('el-family-key', app(Settings::class)->get('tts.elevenlabs_api_key', $family->id));
+
+        $this->actingAsParent($parent, sudo: true)
+            ->putJson('/api/v1/parent/ai-settings', [
+                'clear_tts_elevenlabs_api_key' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.tts.elevenlabs.configured', false)
+            ->assertJsonPath('data.tts.elevenlabs.source', 'none');
+    }
+
     public function test_tts_preview_uses_selected_voice_without_saving(): void
     {
         ['family' => $family, 'parent' => $parent] = $this->makeFamily();

@@ -29,6 +29,8 @@ const planetRoutes: Record<string, string> = {
   food_diary: 'kid-food',
   movie_planet: 'kid-movies',
   english_planet: 'kid-english',
+  english_beta: 'kid-english-beta',
+  ielts_planet: 'kid-ielts',
   encyclopedia_planet: 'kid-encyclopedia',
   game_planet: 'kid-games',
   collection: 'kid-collection',
@@ -57,7 +59,7 @@ function warmPlanet(planet: Planet): void {
 
 function open(planet: Planet): void {
   if (session.me?.child?.preferences.sounds) playTap()
-  // Unlock TTS during this tap so English Lab auto-read works on phone/iPad browsers.
+  // Unlock TTS during this tap so fairy-tale read-aloud works on phone/iPad browsers.
   if (planet.key === 'english_planet' && planet.available) void unlockSpeak()
   if (!planet.available) {
     toast.value = t('kid.building', { title: planetTitle(planet.key, planet.title) })

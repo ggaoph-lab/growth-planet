@@ -69,7 +69,10 @@ function goHome(): void {
         <span class="avatar" :style="{ background: child.theme_color }">{{ avatarEmoji(child.avatar) }}</span>
         <span class="name">{{ child.nickname }}</span>
       </button>
-      <button type="button" class="round" :aria-label="t('kid.settings')" @click="settingsOpen = true">⚙️</button>
+      <div class="bar-end">
+        <div id="kid-header-actions" class="header-actions" />
+        <button type="button" class="round" :aria-label="t('kid.settings')" @click="settingsOpen = true">⚙️</button>
+      </div>
     </header>
 
     <RouterView />
@@ -140,6 +143,17 @@ function goHome(): void {
 .name {
   font-size: 18px;
   font-weight: 700;
+}
+.bar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
 }
 .round {
   width: 48px;
