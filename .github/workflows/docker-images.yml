@@ -70,13 +70,15 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # amd64 only for now: CentOS / Synology DS918+ are x86_64, and QEMU arm64
+      # package:discover has been segfaulting in CI (exit 139).
       - name: Build and push php
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/php/Dockerfile
           target: prod
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta-php.outputs.tags }}
           labels: ${{ steps.meta-php.outputs.labels }}
@@ -89,7 +91,7 @@ jobs:
           context: .
           file: deploy/docker/nginx/Dockerfile
           target: prod
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta-nginx.outputs.tags }}
           labels: ${{ steps.meta-nginx.outputs.labels }}
