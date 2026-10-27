@@ -28,7 +28,9 @@ class KidPlanets
             self::planet('english_beta', '英语星球 Beta', 'English Planet Beta', 'abc', true, 5),
             self::planet('ielts_planet', '雅思星球', 'IELTS planet', 'ielts', true, 5),
             self::planet('encyclopedia_planet', '科学小百科星球', 'Science encyclopedia', 'book', true, 7),
+            self::planet('poetry_planet', '诗词星球', 'Poetry planet', 'scroll', true, 5),
             self::planet('game_planet', '游戏星球', 'Game planet', 'gamepad', true, 7),
+
             self::planet('shop', '奖励商城', 'Reward shop', 'gift', true, 2),
             self::planet('collection', '成长收藏馆', 'Collection', 'museum', true, 6),
         ];
@@ -69,7 +71,9 @@ class KidPlanets
             'english-beta' => 'english_beta',
             'ielts' => 'ielts_planet',
             'encyclopedia' => 'encyclopedia_planet',
+            'poetry' => 'poetry_planet',
             'games' => 'game_planet',
+
             'shop', 'wishes', 'redemptions' => 'shop',
             'collection' => 'collection',
             default => null,

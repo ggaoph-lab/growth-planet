@@ -279,6 +279,7 @@ function applyLoadedLayout(next: LayoutState) {
   Object.assign(layout.scale, next.scale)
 }
 function toggleLayoutEdit() {
+  if (talkFullscreen.value) setTalkFullscreen(false)
   layoutEditing.value = !layoutEditing.value
   if (!layoutEditing.value) persistLayout()
 }
@@ -1028,6 +1029,28 @@ async function leaveScene() {
   gap: calc(12px * var(--card-scale, 1));
   overflow: hidden;
 }
+.card-shell.talk.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  min-height: 0 !important;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  background: #1b2153;
+}
+.beta:not(.editing) .card-shell.talk.fullscreen .panel-face.talk {
+  height: 100%;
+  max-height: none;
+}
+.talk-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.panel-face .talk-fullscreen:not(.icon-speak) {
+  flex: none;
+  min-height: 44px;
+  padding: 5px 10px;
+  font-size: 14px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.talk-fullscreen small { font-size: 0.78em; font-weight: 500; }
 .talk-top {
   min-height: 0;
   font-size: clamp(14px, 1.3vw, 18px);

@@ -1479,10 +1479,12 @@ onUnmounted(stopPreviewAudio)
 
 <style scoped>
 .settings {
-  max-width: 720px;
+  width: min(100%, 1100px);
   background: #fff;
-  border-radius: 14px;
-  padding: 20px;
+  border-radius: 16px;
+  padding: 28px 32px;
+  border: 1px solid #e8ebf3;
+  box-shadow: 0 1px 2px rgba(28, 32, 51, 0.04);
 }
 .hint {
   color: #6b6f80;
@@ -1657,7 +1659,7 @@ onUnmounted(stopPreviewAudio)
 }
 @media (max-width: 767px) {
   .settings {
-    padding: 14px 12px;
+    padding: 16px 14px;
   }
 }
 </style>

@@ -25,6 +25,7 @@ const ICONS: Record<string, string> = {
   abc: '🔤',
   ielts: '🌟',
   book: '📖',
+  scroll: '📜',
   gamepad: '🎮',
   gift: '🎁',
   museum: '🏛️',

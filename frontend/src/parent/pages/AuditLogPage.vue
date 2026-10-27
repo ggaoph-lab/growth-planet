@@ -58,7 +58,7 @@ onMounted(load)
 
 <style scoped>
 .audit {
-  max-width: 900px;
+  width: 100%;
 }
 .desc {
   color: #6b6f80;

@@ -1,0 +1,86 @@
+[
+  {
+    "key": "jing-ye-si",
+    "title": "静夜思",
+    "author": "李白",
+    "dynasty": "唐",
+    "content": "床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。"
+  },
+  {
+    "key": "chun-xiao",
+    "title": "春晓",
+    "author": "孟浩然",
+    "dynasty": "唐",
+    "content": "春眠不觉晓，\n处处闻啼鸟。\n夜来风雨声，\n花落知多少。"
+  },
+  {
+    "key": "yong-e",
+    "title": "咏鹅",
+    "author": "骆宾王",
+    "dynasty": "唐",
+    "content": "鹅，鹅，鹅，\n曲项向天歌。\n白毛浮绿水，\n红掌拨清波。"
+  },
+  {
+    "key": "xiao-chi",
+    "title": "小池",
+    "author": "杨万里",
+    "dynasty": "宋",
+    "content": "泉眼无声惜细流，\n树阴照水爱晴柔。\n小荷才露尖尖角，\n早有蜻蜓立上头。"
+  },
+  {
+    "key": "hui-nong-yue",
+    "title": "画",
+    "author": "王维",
+    "dynasty": "唐",
+    "content": "远看山有色，\n近听水无声。\n春去花还在，\n人来鸟不惊。"
+  },
+  {
+    "key": "jiang-xue",
+    "title": "江雪",
+    "author": "柳宗元",
+    "dynasty": "唐",
+    "content": "千山鸟飞绝，\n万径人踪灭。\n孤舟蓑笠翁，\n独钓寒江雪。"
+  },
+  {
+    "key": "deng-guan-que-lou",
+    "title": "登鹳雀楼",
+    "author": "王之涣",
+    "dynasty": "唐",
+    "content": "白日依山尽，\n黄河入海流。\n欲穷千里目，\n更上一层楼。"
+  },
+  {
+    "key": "xiang-si",
+    "title": "相思",
+    "author": "王维",
+    "dynasty": "唐",
+    "content": "红豆生南国，\n春来发几枝。\n愿君多采撷，\n此物最相思。"
+  },
+  {
+    "key": "ye-si",
+    "title": "悯农（其一）",
+    "author": "李绅",
+    "dynasty": "唐",
+    "content": "锄禾日当午，\n汗滴禾下土。\n谁知盘中餐，\n粒粒皆辛苦。"
+  },
+  {
+    "key": "feng-qiao-ye-bo",
+    "title": "枫桥夜泊",
+    "author": "张继",
+    "dynasty": "唐",
+    "content": "月落乌啼霜满天，\n江枫渔火对愁眠。\n姑苏城外寒山寺，\n夜半钟声到客船。"
+  },
+  {
+    "key": "cui-hu",
+    "title": "村居",
+    "author": "高鼎",
+    "dynasty": "清",
+    "content": "草长莺飞二月天，\n拂堤杨柳醉春烟。\n儿童散学归来早，\n忙趁东风放纸鸢。"
+  },
+  {
+    "key": "qing-ping-yue-cun-ju",
+    "title": "赠汪伦",
+    "author": "李白",
+    "dynasty": "唐",
+    "content": "李白乘舟将欲行，\n忽闻岸上踏歌声。\n桃花潭水深千尺，\n不及汪伦送我情。"
+  }
+]

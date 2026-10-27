@@ -26,6 +26,10 @@ class RewardPolicySeeder
             ['code' => 'english_beta.session', 'xp_amount' => 0, 'coin_amount' => 0, 'point_amount' => 0, 'requires_approval' => false, 'max_per_subject' => 1],
             // Science encyclopedia: 1 XP + 1 point per article after CN+EN listen; daily section cap 10.
             ['code' => 'encyclopedia.read', 'xp_amount' => 1, 'coin_amount' => 0, 'point_amount' => 1, 'requires_approval' => false, 'max_per_day' => 10],
+            ['code' => 'poetry.read_aloud', 'xp_amount' => 1, 'coin_amount' => 0, 'point_amount' => 2, 'requires_approval' => false, 'max_per_day' => 10],
+            ['code' => 'poetry.recite', 'xp_amount' => 2, 'coin_amount' => 0, 'point_amount' => 5, 'requires_approval' => false, 'max_per_day' => 10],
+            ['code' => 'poetry.review', 'xp_amount' => 1, 'coin_amount' => 0, 'point_amount' => 3, 'requires_approval' => false, 'max_per_day' => 15],
+            ['code' => 'poetry.challenge', 'xp_amount' => 1, 'coin_amount' => 0, 'point_amount' => 3, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'item.checklist.before_school', 'xp_amount' => 5, 'coin_amount' => 2, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 10],
             ['code' => 'item.checklist.after_school', 'xp_amount' => 5, 'coin_amount' => 2, 'point_amount' => 0, 'requires_approval' => false, 'max_per_day' => 10],
             // Games award points (virtual shop currency); amounts overridden per play.

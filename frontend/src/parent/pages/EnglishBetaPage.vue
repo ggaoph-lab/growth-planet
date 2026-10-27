@@ -249,8 +249,8 @@ async function save() {
   </main>
 </template>
 <style scoped>
-.beta { max-width: 820px; margin: auto; padding: 24px }
-section { background: white; border-radius: 12px; padding: 20px; margin: 18px 0 }
+.beta { width: 100%; padding: 0 }
+section { background: white; border-radius: 16px; padding: 24px 28px; margin: 0 0 18px; border: 1px solid #e8ebf3 }
 .plan { padding: 12px; margin: 12px 0; border-radius: 10px; background: #f4f7fa }
 .plan h3 { margin: 0 0 8px }
 label { display: block; margin: 12px 0 }

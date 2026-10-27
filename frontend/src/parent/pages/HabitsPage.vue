@@ -229,7 +229,7 @@ onMounted(load)
 
 <style scoped>
 .page {
-  max-width: 900px;
+  width: 100%;
 }
 .toolbar {
   margin-bottom: 12px;

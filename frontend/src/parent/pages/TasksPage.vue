@@ -1273,7 +1273,7 @@ onMounted(load)
 
 <style scoped>
 .page {
-  max-width: 1080px;
+  width: 100%;
 }
 .toolbar {
   display: flex;

@@ -126,7 +126,7 @@ onMounted(load)
 
 <style scoped>
 .children {
-  max-width: 1000px;
+  width: 100%;
 }
 .toolbar {
   display: flex;
@@ -140,9 +140,9 @@ onMounted(load)
   font-size: 13px;
 }
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
   min-height: 120px;
 }
 .card {
@@ -150,8 +150,14 @@ onMounted(load)
   align-items: center;
   gap: 14px;
   background: #fff;
-  border-radius: 14px;
-  padding: 14px 16px;
+  border-radius: 16px;
+  padding: 16px 18px;
+  border: 1px solid #e8ebf3;
+}
+@media (min-width: 1024px) {
+  .list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .card.inactive {
   opacity: 0.65;

@@ -43,13 +43,13 @@ watch(childId, loadReports)
 
 <template>
   <div class="page">
-    <el-select v-model="childId" :placeholder="t('common.selectChild')" style="max-width: 220px">
+    <el-select v-model="childId" class="child-select" :placeholder="t('common.selectChild')">
       <el-option v-for="c in children" :key="c.id" :label="c.nickname" :value="c.id" />
     </el-select>
 
-    <el-row :gutter="12" class="report-row">
-      <el-col :xs="24" :sm="12" :md="8">
-        <el-card shadow="never" :header="t('common.reportToday')">
+    <el-row :gutter="16" class="report-row">
+      <el-col :xs="24" :sm="12" :lg="8">
+        <el-card shadow="never" class="report-card" :header="t('common.reportToday')">
           <ul v-if="daily">
             <li>{{ t('common.tasksCompleted') }}：{{ daily.tasks_completed }}</li>
             <li>{{ t('common.habitsLogged') }}：{{ daily.habits_logged }}</li>
@@ -57,8 +57,8 @@ watch(childId, loadReports)
           </ul>
         </el-card>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
-        <el-card shadow="never" :header="t('common.reportWeek')">
+      <el-col :xs="24" :sm="12" :lg="8">
+        <el-card shadow="never" class="report-card" :header="t('common.reportWeek')">
           <ul v-if="weekly">
             <li>{{ t('common.tasksCompleted') }}：{{ weekly.tasks_completed }}</li>
             <li>{{ t('common.moviesCompleted') }}：{{ weekly.movies_completed }}</li>
@@ -66,8 +66,8 @@ watch(childId, loadReports)
           </ul>
         </el-card>
       </el-col>
-      <el-col :xs="24" :sm="24" :md="8">
-        <el-card shadow="never" :header="t('common.reportTotal')">
+      <el-col :xs="24" :sm="24" :lg="8">
+        <el-card shadow="never" class="report-card" :header="t('common.reportTotal')">
           <ul v-if="growth">
             <li>{{ t('common.tasksTotal') }}：{{ growth.tasks_completed_total }}</li>
             <li>{{ t('common.habitsTotal') }}：{{ growth.habit_records_total }}</li>
@@ -81,11 +81,26 @@ watch(childId, loadReports)
 </template>
 
 <style scoped>
+.page {
+  width: 100%;
+}
+.child-select {
+  width: min(100%, 280px);
+}
 .report-row {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 .report-row :deep(.el-col) {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
-.page ul { margin: 0; padding-left: 18px; line-height: 1.8; }
+.report-card {
+  border-radius: 16px;
+  border: 1px solid #e8ebf3;
+  min-height: 160px;
+}
+.page ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.8;
+}
 </style>

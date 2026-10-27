@@ -35,7 +35,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'english-beta', name: 'kid-english-beta', component: () => import('@/kid/pages/KidEnglishBetaPage.vue'), meta: { role: 'child', title: 'planets.english_beta' } },
       { path: 'ielts', name: 'kid-ielts', component: () => import('@/kid/pages/KidIeltsPage.vue'), meta: { role: 'child', title: 'planets.ielts_planet' } },
       { path: 'encyclopedia', name: 'kid-encyclopedia', component: () => import('@/kid/pages/KidEncyclopediaPage.vue'), meta: { role: 'child', title: 'kid.encyclopedia.title' } },
+      { path: 'poetry', name: 'kid-poetry', component: () => import('@/kid/pages/KidPoetryPage.vue'), meta: { role: 'child', title: 'kid.poetry.title' } },
       { path: 'games', name: 'kid-games', component: () => import('@/kid/pages/KidGamesPage.vue'), meta: { role: 'child', title: 'kid.gamesTitle' } },
+
       { path: 'games/schulte', name: 'kid-schulte', component: () => import('@/kid/pages/KidSchultePage.vue'), meta: { role: 'child', title: 'kid.schulteTitle' } },
       { path: 'games/mirror', name: 'kid-mirror', component: () => import('@/kid/pages/KidMirrorPage.vue'), meta: { role: 'child', title: 'kid.mirrorTitle' } },
       { path: 'games/sudoku', name: 'kid-sudoku', component: () => import('@/kid/pages/KidSudokuPage.vue'), meta: { role: 'child', title: 'kid.sudokuTitle' } },
@@ -61,8 +63,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'audit-logs', name: 'parent-audit', component: () => import('@/parent/pages/AuditLogPage.vue'), meta: { role: 'parent', title: 'parent.nav.audit' } },
       { path: 'family', name: 'parent-family', component: () => import('@/parent/pages/FamilySettingsPage.vue'), meta: { role: 'parent', title: 'parent.nav.family' } },
       { path: 'english-beta', name: 'parent-english-beta', component: () => import('@/parent/pages/EnglishBetaPage.vue'), meta: { role: 'parent', title: 'parent.nav.reports' } },
+      { path: 'poetry', name: 'parent-poetry', component: () => import('@/parent/pages/PoetryPage.vue'), meta: { role: 'parent', title: 'planets.poetry_planet' } },
     ],
   },
+
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
@@ -99,7 +103,8 @@ router.beforeEach(async (to) => {
       tasks: 'task_planet', habits: 'task_planet', wallet: 'wallet', shop: 'shop',
       bag: 'bag_planet', schedule: 'schedule_planet', explore: 'explore_planet',
       food: 'food_diary', movies: 'movie_planet', english: 'english_planet', 'english-beta': 'english_beta',
-      ielts: 'ielts_planet', encyclopedia: 'encyclopedia_planet', games: 'game_planet', collection: 'collection',
+      ielts: 'ielts_planet', encyclopedia: 'encyclopedia_planet', poetry: 'poetry_planet',
+      games: 'game_planet', collection: 'collection',
     }
     const key = modules[to.path.split('/')[2] ?? '']
     const planets = useKidHomeStore().home?.planets

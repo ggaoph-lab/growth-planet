@@ -588,6 +588,29 @@ export function speakPhrase(text: string, lang = 'zh-CN', onStarted?: () => void
   return speakPrepared(text.trim(), lang, lang, onStarted, rate)
 }
 
+/** Play a server-hosted audio URL (e.g. poetry library MP3) through the shared unlocked element. */
+export async function speakAudioUrl(url: string, onStarted?: () => void, rate = 1): Promise<boolean> {
+  const src = url.trim()
+  if (!src) return false
+  const epoch = ++speakEpoch
+  if (unlockInFlight) await unlockInFlight
+  if (epoch !== speakEpoch) return false
+  haltPlayback()
+  if (!audioUnlocked && !await unlockSpeak()) return false
+  if (epoch !== speakEpoch) return false
+
+  try {
+    const response = await fetch(src, { credentials: 'same-origin' })
+    if (!response.ok) return false
+    const blob = await response.blob()
+    if (epoch !== speakEpoch) return false
+    if (blob.size < 200) return false
+    return playBlob(blob, epoch, onStarted, rate)
+  } catch {
+    return false
+  }
+}
+
 export async function speakTask(title: string, description?: string | null, lang = 'zh-CN'): Promise<void> {
   const text = taskPhrase(title, description)
   if (!text) return

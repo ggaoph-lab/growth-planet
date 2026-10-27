@@ -19,7 +19,9 @@ const session = useSessionStore()
 const isPhone = useIsPhone()
 const moreOpen = ref(false)
 
-const primaryNav = computed(() => [
+type NavItem = { name: string; label: string; icon: string }
+
+const primaryNav = computed<NavItem[]>(() => [
   { name: 'parent-dashboard', label: t('parent.nav.dashboard'), icon: '🏠' },
   { name: 'parent-approvals', label: t('parent.nav.approvals'), icon: '✅' },
   { name: 'parent-tasks', label: t('parent.nav.tasks'), icon: '📋' },
@@ -31,15 +33,21 @@ const primaryNav = computed(() => [
   { name: 'parent-children', label: t('parent.nav.children'), icon: '🧒' },
 ])
 
-const moreNav = computed(() => [
+const moreNav = computed<NavItem[]>(() => [
   { name: 'parent-reports', label: t('parent.nav.reports'), icon: '📊' },
   { name: 'parent-english-beta', label: '英语星球 Beta', icon: '🔤' },
+  { name: 'parent-poetry', label: '诗词星球', icon: '📜' },
   { name: 'parent-devices', label: t('parent.nav.devices'), icon: '📱' },
+
   { name: 'parent-audit', label: t('parent.nav.audit'), icon: '📜' },
   { name: 'parent-family', label: t('parent.nav.family'), icon: '⚙️' },
 ])
 
-const sidebarNav = computed(() => [...primaryNav.value, ...moreNav.value])
+const navGroups = computed(() => [
+  { key: 'daily', label: t('parent.nav.groupDaily'), items: primaryNav.value.slice(0, 4) },
+  { key: 'life', label: t('parent.nav.groupLife'), items: primaryNav.value.slice(4, 8) },
+  { key: 'family', label: t('parent.nav.groupFamily'), items: [primaryNav.value[8]!, ...moreNav.value] },
+])
 
 const phoneNav = computed(() => primaryNav.value.slice(0, 5))
 
@@ -48,7 +56,7 @@ function isActive(name: string): boolean {
 }
 
 function isMoreActive(): boolean {
-  return moreNav.value.some((item) => item.name === route.name)
+  return moreNav.value.some((item) => item.name === route.name) || primaryNav.value.slice(5).some((item) => item.name === route.name)
 }
 
 async function goMore(name: string): Promise<void> {
@@ -75,29 +83,49 @@ async function logout(): Promise<void> {
 <template>
   <el-config-provider :locale="epLocale">
     <div class="parent" :class="{ phone: isPhone }">
-      <aside v-if="!isPhone" class="sidebar">
-        <div class="brand">🪐 {{ t('app.name') }}</div>
-        <nav>
-          <RouterLink
-            v-for="item in sidebarNav"
-            :key="item.name"
-            :to="{ name: item.name }"
-            class="side-link"
-            :class="{ active: isActive(item.name) }"
-          >
-            <span class="icon">{{ item.icon }}</span>{{ item.label }}
-          </RouterLink>
+      <aside v-if="!isPhone" class="sidebar" aria-label="parent navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">🪐</span>
+          <div class="brand-copy">
+            <strong>{{ t('app.name') }}</strong>
+            <small>{{ t('parent.nav.parentConsole') }}</small>
+          </div>
+        </div>
+
+        <nav class="side-nav">
+          <section v-for="group in navGroups" :key="group.key" class="nav-group">
+            <p class="nav-label">{{ group.label }}</p>
+            <RouterLink
+              v-for="item in group.items"
+              :key="item.name"
+              :to="{ name: item.name }"
+              class="side-link"
+              :class="{ active: isActive(item.name) }"
+            >
+              <span class="icon" aria-hidden="true">{{ item.icon }}</span>
+              <span class="side-label">{{ item.label }}</span>
+            </RouterLink>
+          </section>
         </nav>
+
+        <div class="side-foot">
+          <button type="button" class="side-cta" @click="toKidMode">{{ t('parent.nav.kidMode') }}</button>
+        </div>
       </aside>
 
       <div class="main">
         <header class="topbar">
-          <h1>{{ pageTitle }}</h1>
+          <div class="topbar-title">
+            <p class="eyebrow">{{ t('parent.nav.parentConsole') }}</p>
+            <h1>{{ pageTitle }}</h1>
+          </div>
           <div class="actions">
             <LanguageSwitch />
-            <el-button size="small" round @click="toKidMode">{{ t('parent.nav.kidMode') }}</el-button>
+            <el-button v-if="isPhone" size="small" round @click="toKidMode">{{ t('parent.nav.kidMode') }}</el-button>
             <el-dropdown trigger="click">
-              <el-button size="small" circle>{{ session.me?.user.display_name.slice(0, 1) }}</el-button>
+              <button type="button" class="avatar-btn" :aria-label="session.me?.user.display_name">
+                {{ session.me?.user.display_name.slice(0, 1) }}
+              </button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item disabled>{{ session.me?.user.display_name }} · {{ session.me?.family.name }}</el-dropdown-item>
@@ -107,8 +135,11 @@ async function logout(): Promise<void> {
             </el-dropdown>
           </div>
         </header>
+
         <main class="content">
-          <RouterView />
+          <div class="content-frame">
+            <RouterView />
+          </div>
         </main>
       </div>
 
@@ -153,79 +184,227 @@ async function logout(): Promise<void> {
 
 <style scoped>
 .parent {
+  --parent-sidebar: 260px;
+  --parent-gutter: clamp(20px, 2.4vw, 40px);
+  --parent-content-max: 1480px;
+  --parent-surface: #f4f6fb;
+  --parent-panel: #ffffff;
+  --parent-line: #e6e8f0;
+  --parent-ink: #1c2033;
+  --parent-muted: #667085;
   display: flex;
   min-height: 100vh;
-  background: #f5f6fa;
-  color: #1f2333;
+  min-height: 100dvh;
+  background:
+    radial-gradient(1200px 420px at 12% -8%, rgba(91, 141, 239, 0.14), transparent 60%),
+    radial-gradient(900px 360px at 100% 0%, rgba(255, 181, 71, 0.1), transparent 55%),
+    var(--parent-surface);
+  color: var(--parent-ink);
 }
+
 .sidebar {
-  width: 220px;
+  width: var(--parent-sidebar);
   flex-shrink: 0;
-  background: var(--gp-space-dark);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(180deg, #171b45 0%, #23275f 100%);
   color: var(--gp-text-light);
-  padding: 20px 12px;
+  padding: 20px 14px 16px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: auto;
 }
+
 .brand {
-  font-size: 20px;
-  font-weight: 700;
-  padding: 0 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px 18px;
 }
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 22px;
+}
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.brand-copy strong {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.brand-copy small {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-label {
+  margin: 0 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+}
+
 .side-link {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px;
-  border-radius: 10px;
-  color: rgba(255, 255, 255, 0.8);
+  padding: 11px 12px;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.78);
   text-decoration: none;
   min-height: 44px;
+  transition: background 160ms ease, color 160ms ease;
+  cursor: pointer;
+}
+.side-link .icon {
+  width: 1.4em;
+  text-align: center;
+  flex-shrink: 0;
+}
+.side-label {
   white-space: pre-line;
   line-height: 1.25;
 }
-.side-link.active,
 .side-link:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
+.side-link.active {
+  background: rgba(255, 181, 71, 0.18);
+  color: #fff;
+  box-shadow: inset 3px 0 0 var(--gp-sun);
+}
+
+.side-foot {
+  padding: 12px 8px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 8px;
+}
+.side-cta {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.side-cta:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
 .main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
+
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e8e9f0;
+  gap: 16px;
+  padding: 18px var(--parent-gutter);
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--parent-line);
   position: sticky;
   top: 0;
   z-index: 10;
 }
+.topbar-title {
+  min-width: 0;
+}
+.eyebrow {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--parent-muted);
+  letter-spacing: 0.04em;
+}
 .topbar h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: clamp(20px, 1.4vw + 14px, 28px);
+  font-weight: 700;
   white-space: pre-line;
   line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  flex-shrink: 0;
 }
+.avatar-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--parent-line);
+  background: #eef1f8;
+  color: var(--parent-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .content {
-  padding: 24px;
+  padding: 28px var(--parent-gutter) 48px;
   flex: 1;
 }
+.content-frame {
+  width: min(100%, var(--parent-content-max));
+  margin: 0 auto;
+}
+
 .phone .topbar {
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  backdrop-filter: none;
+  background: #fff;
+}
+.phone .eyebrow {
+  display: none;
+}
+.phone .topbar h1 {
+  font-size: 18px;
 }
 .phone .content {
-  padding: 16px 12px calc(88px + env(safe-area-inset-bottom));
+  padding: 16px 14px calc(88px + env(safe-area-inset-bottom));
 }
+.phone .content-frame {
+  width: 100%;
+}
+
 .bottom-nav {
   position: fixed;
   left: 0;
@@ -234,7 +413,7 @@ async function logout(): Promise<void> {
   display: flex;
   overflow-x: auto;
   background: #fff;
-  border-top: 1px solid #e8e9f0;
+  border-top: 1px solid var(--parent-line);
   padding-bottom: env(safe-area-inset-bottom);
   z-index: 20;
   -webkit-overflow-scrolling: touch;
@@ -265,29 +444,6 @@ async function logout(): Promise<void> {
   line-height: 1.15;
   text-align: center;
 }
-@media (orientation: landscape) {
-  .phone .content {
-    padding: 12px 12px calc(64px + env(safe-area-inset-bottom));
-  }
-  .bottom-link {
-    min-height: 44px;
-    flex-basis: 56px;
-    min-width: 56px;
-  }
-  .bottom-link .label {
-    font-size: 9px;
-  }
-  .more-sheet {
-    align-items: center;
-    padding: 8px 12px;
-  }
-  .more-panel {
-    max-height: min(88vh, 420px);
-    overflow-y: auto;
-    border-radius: 16px;
-    padding: 12px;
-  }
-}
 .bottom-link .icon {
   font-size: 20px;
 }
@@ -295,6 +451,7 @@ async function logout(): Promise<void> {
   color: var(--el-color-primary);
   font-weight: 600;
 }
+
 .more-sheet {
   position: fixed;
   inset: 0;
@@ -321,5 +478,54 @@ async function logout(): Promise<void> {
   text-align: left;
   padding: 0 16px;
   cursor: pointer;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .parent {
+    --parent-sidebar: 220px;
+    --parent-gutter: 20px;
+    --parent-content-max: 100%;
+  }
+  .brand-copy small {
+    display: none;
+  }
+}
+
+@media (min-width: 1440px) {
+  .parent {
+    --parent-sidebar: 280px;
+    --parent-content-max: 1600px;
+  }
+}
+
+@media (orientation: landscape) {
+  .phone .content {
+    padding: 12px 12px calc(64px + env(safe-area-inset-bottom));
+  }
+  .bottom-link {
+    min-height: 44px;
+    flex-basis: 56px;
+    min-width: 56px;
+  }
+  .bottom-link .label {
+    font-size: 9px;
+  }
+  .more-sheet {
+    align-items: center;
+    padding: 8px 12px;
+  }
+  .more-panel {
+    max-height: min(88vh, 420px);
+    overflow-y: auto;
+    border-radius: 16px;
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-link,
+  .side-cta {
+    transition: none;
+  }
 }
 </style>

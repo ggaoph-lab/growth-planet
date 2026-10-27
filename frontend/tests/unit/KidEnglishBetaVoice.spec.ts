@@ -78,6 +78,21 @@ beforeEach(() => {
   })
 })
 
+it('expands the speaking card and restores the page on Escape', async () => {
+  const wrapper = mount(KidEnglishBetaPage)
+  await flushPromises()
+  const originalOverflow = document.body.style.overflow
+  await wrapper.get('button[aria-label="全屏显示对话"]').trigger('click')
+  expect(wrapper.get('[data-card-id="talk"]').classes()).toContain('fullscreen')
+  expect(wrapper.get('button[aria-label="退出全屏"]').attributes('aria-pressed')).toBe('true')
+  expect(document.body.style.overflow).toBe('hidden')
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  await nextTick()
+  expect(wrapper.get('[data-card-id="talk"]').classes()).not.toContain('fullscreen')
+  expect(document.body.style.overflow).toBe(originalOverflow)
+  wrapper.unmount()
+})
+
 it('cancels without uploading, then transcribes and sends a confirmed voice draft', async () => {
   const wrapper = mount(KidEnglishBetaPage)
   await flushPromises()

@@ -34,7 +34,13 @@ class SettingsRegistry
             'english_beta.speech_rate_percent' => ['type' => 'int', 'default' => 85, 'min' => 70, 'max' => 110, 'label' => 'Beta 伙伴英文语速百分比'],
             'english_beta.voice_provider' => ['type' => 'string', 'default' => 'qwen', 'enum' => ['qwen', 'doubao', 'mock'], 'label' => 'Beta 语音转写服务商'],
             'english_beta.asr_model' => ['type' => 'string', 'default' => 'qwen3-asr-flash', 'label' => 'Beta 语音转写模型'],
+
+            'poetry.allow_ai' => ['type' => 'bool', 'default' => false, 'label' => '诗词星球允许 AI（故事/纠错/生图提示）'],
+            'poetry.image_provider' => ['type' => 'string', 'default' => 'mock', 'enum' => ['mock', 'wanx'], 'label' => '诗词星球生图服务商'],
+            'poetry.image_model' => ['type' => 'string', 'default' => 'wanx-v1', 'label' => '诗词星球生图模型'],
+
             'auth.sudo_ttl_minutes' => ['type' => 'int', 'default' => 10, 'min' => 1, 'max' => 60, 'label' => '敏感操作确认有效期（分钟）'],
+
             'auth.parent_session_idle_minutes' => ['type' => 'int', 'default' => 120, 'min' => 15, 'max' => 1440, 'label' => '家长会话空闲超时（分钟）'],
 
             'ai.provider' => [

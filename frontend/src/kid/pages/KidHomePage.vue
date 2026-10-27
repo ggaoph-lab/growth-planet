@@ -32,6 +32,7 @@ const planetRoutes: Record<string, string> = {
   english_beta: 'kid-english-beta',
   ielts_planet: 'kid-ielts',
   encyclopedia_planet: 'kid-encyclopedia',
+  poetry_planet: 'kid-poetry',
   game_planet: 'kid-games',
   collection: 'kid-collection',
 }

@@ -226,12 +226,13 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 900px;
+  width: 100%;
 }
 .block {
   background: #fff;
-  border-radius: 14px;
-  padding: 16px 20px;
+  border-radius: 16px;
+  padding: 20px 24px;
+  border: 1px solid #e8ebf3;
 }
 h2 {
   font-size: 16px;

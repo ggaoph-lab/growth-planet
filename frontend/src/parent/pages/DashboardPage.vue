@@ -95,63 +95,88 @@ onMounted(async () => {
 
 <style scoped>
 .dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 1100px;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 1fr;
 }
 .hero {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 20px 24px;
-  border-radius: 16px;
+  gap: 20px;
+  padding: 28px 32px;
+  border-radius: 18px;
   color: #fff;
-  background: linear-gradient(135deg, var(--gp-space-mid), #5b8def);
+  background:
+    radial-gradient(520px 180px at 88% 10%, rgba(255, 181, 71, 0.28), transparent 60%),
+    linear-gradient(135deg, var(--gp-space-mid), #5b8def);
+  box-shadow: 0 12px 32px rgba(44, 47, 114, 0.16);
 }
 .family {
-  font-size: 22px;
+  font-size: clamp(22px, 1.2vw + 16px, 28px);
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 .hero .meta {
-  opacity: 0.85;
-  margin-top: 4px;
+  opacity: 0.88;
+  margin-top: 6px;
+  font-size: 14px;
 }
 .stat {
   text-align: center;
+  min-width: 120px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
 }
 .num {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
+  line-height: 1.1;
 }
 .label {
   font-size: 12px;
-  opacity: 0.85;
+  opacity: 0.88;
+  margin-top: 4px;
 }
 .block {
   background: #fff;
-  border-radius: 14px;
-  padding: 16px 20px;
+  border-radius: 16px;
+  padding: 20px 24px;
+  border: 1px solid #e8ebf3;
+  box-shadow: 0 1px 2px rgba(28, 32, 51, 0.04);
 }
 .block-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 4px;
 }
 .block-head h2 {
-  font-size: 16px;
-  margin: 0 0 12px;
+  font-size: 17px;
+  margin: 0 0 14px;
+  font-weight: 700;
 }
 .block-head a {
   color: var(--el-color-primary);
   text-decoration: none;
   font-size: 14px;
+  font-weight: 600;
 }
 .kids {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+@media (min-width: 1024px) {
+  .dashboard {
+    grid-template-columns: 1.4fr 1fr;
+    align-items: start;
+  }
+  .hero,
+  .alert-block {
+    grid-column: 1 / -1;
+  }
 }
 .kid {
   display: flex;

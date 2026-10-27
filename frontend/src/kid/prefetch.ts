@@ -15,7 +15,9 @@ const routeChunks: Record<string, () => Promise<unknown>> = {
   'kid-english-beta': () => import('@/kid/pages/KidEnglishBetaPage.vue'),
   'kid-ielts': () => import('@/kid/pages/KidIeltsPage.vue'),
   'kid-encyclopedia': () => import('@/kid/pages/KidEncyclopediaPage.vue'),
+  'kid-poetry': () => import('@/kid/pages/KidPoetryPage.vue'),
   'kid-games': () => import('@/kid/pages/KidGamesPage.vue'),
+
   'kid-schulte': () => import('@/kid/pages/KidSchultePage.vue'),
   'kid-mirror': () => import('@/kid/pages/KidMirrorPage.vue'),
   'kid-sudoku': () => import('@/kid/pages/KidSudokuPage.vue'),
@@ -60,6 +62,9 @@ const routeData: Record<string, () => void> = {
   },
   'kid-encyclopedia': () => {
     void warmGet('/kid/encyclopedia')
+  },
+  'kid-poetry': () => {
+    void warmGet('/kid/poetry')
   },
   'kid-collection': () => {
     void warmGet('/kid/collection')

@@ -808,8 +808,14 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 }
 @media (min-width: 768px) {
   .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+  }
+}
+@media (min-width: 1280px) {
+  .poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 18px;
   }
 }
 @media (orientation: landscape) {
