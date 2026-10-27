@@ -129,6 +129,8 @@ services:
       - ./deploy/certs:/etc/nginx/certs:ro
       - ./deploy/docker/nginx/prod.conf:/etc/growth-planet/nginx/prod.conf:ro
       - ./deploy/docker/nginx/prod-ssl.conf:/etc/growth-planet/nginx/prod-ssl.conf:ro
+      # Serve /storage/* (Wanx poem art, etc.) from the same disk the app writes.
+      - app-storage:/var/www/backend/storage/app:ro
     depends_on:
       app:
         condition: service_started
