@@ -5,6 +5,12 @@ import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '@/shared/api/client'
 import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
 import { prepareVoiceUpload } from '@/kid/englishBeta/audio'
+import {
+  chinesePinyinUnits,
+  loadChinesePinyin,
+  onChinesePinyinReady,
+  type ChinesePinyinUnit,
+} from '@/shared/chinesePinyin'
 import { playTap } from '@/shared/sfx'
 import { speakAudioUrl, speakPhrase, stopSpeaking, unlockSpeak } from '@/shared/speak'
 import { useSessionStore } from '@/stores/session'
@@ -59,9 +65,12 @@ type PoemDetail = {
     grade_tag: string | null
   }
   story_zh: string
+  author_zh: string
+  author_learned_poems: Array<{ id: number; title: string }>
   line_meanings: string[]
   image: { url: string | null; provider: string; status: string; cached: boolean }
   voice_available: boolean
+  follow_pause_ms: number
   progress: {
     read_aloud_done: boolean
     last_passed: boolean
@@ -105,6 +114,9 @@ const selectedLine = ref<number | null>(null)
 const meaningText = ref('')
 const poemBlurred = ref(false)
 const mounted = ref(false)
+/** Bumps when pinyin-pro finishes loading so ruby lines re-render. */
+const pinyinTick = ref(0)
+let offPinyinReady: (() => void) | null = null
 
 let recorder: MediaRecorder | null = null
 let stream: MediaStream | null = null
@@ -156,10 +168,15 @@ function modeBadge(key: ModeKey): string {
 }
 
 async function loadHome(force = false): Promise<void> {
-  loading.value = true
+  const hadHome = home.value !== null
+  if (!hadHome) loading.value = true
   error.value = ''
   try {
     home.value = await warmGet<HomeData>('/kid/poetry', undefined, { force })
+    // Warm mode lists in the background so tapping an entry feels instant.
+    void warmGet<ModeData>('/kid/poetry/required')
+    void warmGet<ModeData>('/kid/poetry/recommend')
+    void warmGet<ModeData>('/kid/poetry/challenge')
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('kid.planetSignalError')
   } finally {
@@ -167,13 +184,19 @@ async function loadHome(force = false): Promise<void> {
   }
 }
 
-async function openMode(key: ModeKey): Promise<void> {
+async function openMode(key: ModeKey, force = false): Promise<void> {
   if (session.me?.child?.preferences.sounds) playTap()
   mode.value = key
-  loading.value = true
+  const cached = force ? undefined : peekWarmGet<ModeData>(`/kid/poetry/${key}`)
+  if (cached) {
+    modeData.value = cached
+    view.value = 'mode'
+  } else {
+    loading.value = true
+  }
   error.value = ''
   try {
-    modeData.value = await api.get<ModeData>(`/kid/poetry/${key}`)
+    modeData.value = await warmGet<ModeData>(`/kid/poetry/${key}`, undefined, { force })
     view.value = 'mode'
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('kid.planetSignalError')
@@ -207,8 +230,9 @@ async function openPoem(card: PoemCard, asChallenge = false): Promise<void> {
   try {
     detail.value = await api.get<PoemDetail>(`/kid/poetry/poems/${card.id}`)
     view.value = 'poem'
-    // Prefetch expressive full-poem MP3 into the server library (lines cache on first play).
-    void api.post(`/kid/poetry/poems/${card.id}/audio/warm`, { clips: ['full'] }).catch(() => null)
+    void loadChinesePinyin()
+    // Safety-net prefetch; assign/recommend already warm the full static pack server-side.
+    void warmPoemLibrary(detail.value)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('kid.planetSignalError')
   } finally {
@@ -216,12 +240,26 @@ async function openPoem(card: PoemCard, asChallenge = false): Promise<void> {
   }
 }
 
+function poemLibraryClipsFor(d: PoemDetail): string[] {
+  const clips = ['full', 'author']
+  d.poem.lines.forEach((_, i) => {
+    clips.push(`line-${i}`, `meaning-${i}`)
+  })
+  return clips
+}
+
+function warmPoemLibrary(d: PoemDetail): void {
+  const clips = poemLibraryClipsFor(d)
+  void api.post(`/kid/poetry/poems/${d.poem.id}/audio/warm`, { clips }).catch(() => null)
+}
+
 function back(): void {
   if (view.value === 'poem') {
     resetPracticeState()
     view.value = 'mode'
     detail.value = null
-    if (mode.value) void openMode(mode.value)
+    // Force refresh — practice may have cleared an assignment / updated progress.
+    if (mode.value) void openMode(mode.value, true)
     return
   }
   if (view.value === 'mode') {
@@ -253,34 +291,66 @@ async function fetchPoetryClip(clip: string): Promise<PoetryAudioClip | null> {
   }
 }
 
-/** Prefer library MP3 (ElevenLabs expressive, disk-cached); fall back to live TTS text. */
-async function playPoetryClip(clip: string, fallbackText?: string): Promise<boolean> {
-  const seq = ++speechSeq
-  await unlockSpeak()
-  if (seq !== speechSeq || !mounted.value) return false
-  stopSpeaking()
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
 
-  const audio = await fetchPoetryClip(clip)
+/** Wait out a short busy lock so assign/open warm can finish writing ElevenLabs MP3s. */
+async function fetchPoetryClipReady(clip: string, seq: number): Promise<PoetryAudioClip | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (seq !== speechSeq || !mounted.value) return null
+    const audio = await fetchPoetryClip(clip)
+    if (!audio) return null
+    if (audio.status === 'ready' && audio.url) return audio
+    if (audio.status !== 'busy') return audio
+    await sleep(700)
+  }
+  return fetchPoetryClip(clip)
+}
+
+/** Play the configured poetry narrator consistently across all clips. */
+async function playLibraryOrScript(
+  seq: number,
+  clip: string,
+  fallbackText?: string,
+): Promise<boolean> {
   if (seq !== speechSeq || !mounted.value) return false
+  const audio = await fetchPoetryClipReady(clip, seq)
+  if (seq !== speechSeq || !mounted.value) return false
+
   if (audio?.url && (audio.status === 'ready' || audio.cached)) {
     const ok = await speakAudioUrl(audio.url)
-    return seq === speechSeq && mounted.value && ok
+    if (ok && seq === speechSeq && mounted.value) return true
+    if (seq === speechSeq && mounted.value) {
+      toast.value = '音频已准备好，但浏览器未能播放。请再点一次朗读。'
+    }
+    return false
   }
 
-  const text = (fallbackText ?? audio?.script ?? '').trim()
-  if (!text) return false
+  if (seq === speechSeq && mounted.value) {
+    toast.value = audio?.status === 'busy'
+      ? '诗词音频正在准备，请稍后再试。'
+      : '诗词音频暂时无法生成，请让家长检查朗读设置。'
+  }
+  return false
+}
+
+async function playPoetryClip(clip: string, fallbackText?: string): Promise<boolean> {
+  // Invalidate + halt before any await so a second tap never stacks audio.
+  const seq = ++speechSeq
+  stopSpeaking()
+  await unlockSpeak()
   if (seq !== speechSeq || !mounted.value) return false
-  const ok = await speakPhrase(text, 'zh-CN')
-  return seq === speechSeq && mounted.value && ok
+  return playLibraryOrScript(seq, clip, fallbackText)
 }
 
 async function speakText(text: string): Promise<boolean> {
   const line = text.trim()
   if (!line) return false
   const seq = ++speechSeq
+  stopSpeaking()
   await unlockSpeak()
   if (seq !== speechSeq || !mounted.value) return false
-  stopSpeaking()
   const ok = await speakPhrase(line, 'zh-CN')
   return seq === speechSeq && mounted.value && ok
 }
@@ -300,6 +370,11 @@ function speakLine(index: number): void {
 function speakStory(): void {
   if (!detail.value || practiceActive.value) return
   void playPoetryClip('story', detail.value.story_zh)
+}
+
+function speakAuthor(): void {
+  if (!detail.value?.author_zh || practiceActive.value) return
+  void playPoetryClip('author', detail.value.author_zh)
 }
 
 function speakMeaning(): void {
@@ -323,25 +398,19 @@ async function selectLine(index: number): Promise<void> {
   meaningText.value = meaning
 
   const seq = ++speechSeq
+  stopSpeaking()
   await unlockSpeak()
   if (seq !== speechSeq || !mounted.value) return
-  stopSpeaking()
 
-  const lineOk = await playPoetryClipUnderSeq(seq, `line-${index}`, line)
-  if (!lineOk || seq !== speechSeq || !mounted.value) return
-  await playPoetryClipUnderSeq(seq, `meaning-${index}`, meaning)
+  // Always attempt meaning after the line — do not abort when the line clip misses.
+  await playLibraryOrScript(seq, `line-${index}`, line)
+  if (seq !== speechSeq || !mounted.value) return
+  await playLibraryOrScript(seq, `meaning-${index}`, meaning)
 }
 
-async function playPoetryClipUnderSeq(seq: number, clip: string, fallbackText: string): Promise<boolean> {
-  if (seq !== speechSeq || !mounted.value) return false
-  const audio = await fetchPoetryClip(clip)
-  if (seq !== speechSeq || !mounted.value) return false
-  if (audio?.url && (audio.status === 'ready' || audio.cached)) {
-    return speakAudioUrl(audio.url)
-  }
-  const text = (fallbackText || audio?.script || '').trim()
-  if (!text) return false
-  return speakPhrase(text, 'zh-CN')
+function linePinyinUnits(text: string): ChinesePinyinUnit[] {
+  void pinyinTick.value
+  return chinesePinyinUnits(text)
 }
 
 function releaseMicrophone(): void {
@@ -529,6 +598,8 @@ async function runFollowStep(): Promise<void> {
   selectedLine.value = followIndex.value
   const ok = await playPoetryClip(`line-${followIndex.value}`, line)
   if (!ok || practice.value !== 'follow' || !mounted.value) return
+  await sleep(Math.max(0, Math.min(5000, detail.value.follow_pause_ms || 0)))
+  if (practice.value !== 'follow' || !mounted.value) return
   practiceHint.value = t('kid.poetry.followRecord')
   const started = await startRecording({
     maxMs: 20000,
@@ -663,11 +734,15 @@ function cancelPractice(): void {
 
 onMounted(() => {
   mounted.value = true
+  offPinyinReady = onChinesePinyinReady(() => { pinyinTick.value += 1 })
+  void loadChinesePinyin()
   void loadHome()
 })
 
 onBeforeUnmount(() => {
   mounted.value = false
+  offPinyinReady?.()
+  offPinyinReady = null
   resetPracticeState()
 })
 </script>
@@ -810,7 +885,17 @@ onBeforeUnmount(() => {
             <div class="poem-stack" :class="{ blurred: poemBlurred }">
               <div class="poem-row title-row">
                 <div class="title-cell">
-                  <h2 class="poem-title">{{ detail.poem.title }}</h2>
+                  <h2 class="poem-title" lang="zh">
+                    <span
+                      v-for="(unit, uIdx) in linePinyinUnits(detail.poem.title)"
+                      :key="`title-${uIdx}`"
+                      class="py-syllable"
+                      :class="{ punct: !unit.pinyin }"
+                    >
+                      <span v-if="unit.pinyin" class="py-mark" lang="zh-Latn">{{ unit.pinyin }}</span>
+                      <span class="py-char">{{ unit.char }}</span>
+                    </span>
+                  </h2>
                   <p v-if="metaLine" class="poem-meta">{{ metaLine }}</p>
                 </div>
                 <button
@@ -838,10 +923,19 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="line-text"
+                    lang="zh"
                     :disabled="practiceActive"
                     @click="selectLine(i)"
                   >
-                    {{ line }}
+                    <span
+                      v-for="(unit, uIdx) in linePinyinUnits(line)"
+                      :key="`l${i}-${uIdx}`"
+                      class="py-syllable"
+                      :class="{ punct: !unit.pinyin }"
+                    >
+                      <span v-if="unit.pinyin" class="py-mark" lang="zh-Latn">{{ unit.pinyin }}</span>
+                      <span class="py-char">{{ unit.char }}</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -947,6 +1041,40 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p class="story">{{ detail.story_zh }}</p>
+          </div>
+
+          <div v-if="!challengeMode && detail.author_zh" class="panel author-panel">
+            <div class="panel-head">
+              <p class="panel-label">{{ t('kid.poetry.author') }}</p>
+              <button
+                type="button"
+                class="spk"
+                :disabled="practiceActive"
+                :aria-label="t('kid.poetry.listenAuthor')"
+                @click="speakAuthor"
+              >
+                <span aria-hidden="true">🔊</span>
+              </button>
+            </div>
+            <p class="author">{{ detail.author_zh }}</p>
+            <div
+              v-if="detail.author_learned_poems?.length"
+              class="author-learned"
+            >
+              <p class="author-learned-label">{{ t('kid.poetry.authorLearned') }}</p>
+              <ul class="author-learned-list">
+                <li v-for="row in detail.author_learned_poems" :key="row.id">
+                  <button
+                    type="button"
+                    class="author-learned-btn"
+                    :disabled="practiceActive || busy"
+                    @click="openPoem({ id: row.id, title: row.title, author: detail.poem.author })"
+                  >
+                    《{{ row.title }}》
+                  </button>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -1111,13 +1239,21 @@ h2 {
 .poem-panel {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   min-height: 280px;
 }
 .poem-center {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   width: 100%;
+  min-height: 0;
+}
+/* Balance space above the poem with the button zone below, so title stays centered. */
+.poem-center::before {
+  content: '';
+  flex: 1 1 0;
+  min-height: 0;
 }
 .panel-label {
   margin: 0;
@@ -1138,8 +1274,9 @@ h2 {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  margin: 0 auto 16px;
+  margin: 0 auto;
   width: min(100%, 22em);
+  flex: 0 0 auto;
   transition: filter 0.25s ease;
 }
 .poem-stack.blurred {
@@ -1149,7 +1286,7 @@ h2 {
 }
 .poem-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
   align-items: center;
   column-gap: 10px;
   width: 100%;
@@ -1159,15 +1296,10 @@ h2 {
   padding: 2px 8px 4px;
 }
 .title-cell {
+  grid-column: 2;
   justify-self: center;
   text-align: center;
   min-width: 0;
-}
-.poem-title {
-  margin: 0;
-  font-size: clamp(22px, 3.2vw, 28px);
-  font-weight: 700;
-  letter-spacing: 0.16em;
 }
 .poem-meta {
   margin: 4px 0 0;
@@ -1189,7 +1321,15 @@ h2 {
   flex-shrink: 0;
   padding: 0;
   color: inherit;
-  justify-self: end;
+  grid-column: 3;
+  justify-self: center;
+  align-self: center;
+  line-height: 1;
+}
+.spk > span {
+  display: block;
+  line-height: 1;
+  translate: 0 0.02em;
 }
 .spk:disabled { opacity: 0.4; cursor: default; }
 .lines {
@@ -1202,7 +1342,8 @@ h2 {
 .line-row {
   border: 1px solid transparent;
   border-radius: 12px;
-  padding: 6px 8px;
+  padding: 8px;
+  min-height: 56px;
 }
 .line-row:not(.locked):hover,
 .line-row.active {
@@ -1214,7 +1355,14 @@ h2 {
   border-color: rgba(246, 210, 122, 0.45);
 }
 .line-text {
+  grid-column: 2;
   justify-self: center;
+  align-self: center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.08em;
   width: max-content;
   max-width: 100%;
   text-align: center;
@@ -1222,18 +1370,75 @@ h2 {
   background: transparent;
   color: inherit;
   padding: 0;
+  margin: 0;
   cursor: pointer;
   font: inherit;
   font-size: clamp(18px, 2.8vw, 24px);
-  line-height: 1.75;
-  letter-spacing: 0.16em;
+  line-height: 1;
+  letter-spacing: 0;
 }
 .line-text:disabled { cursor: default; }
-.practice-modes {
+.poem-title {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 0.08em;
+  margin: 0;
+  font-size: clamp(22px, 3.2vw, 30px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.py-syllable {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  width: 1.72em;
+}
+.py-syllable.punct {
+  width: 0.72em;
+  /* Sit on the character baseline under the pinyin row. */
+  padding-bottom: 0.08em;
+}
+.py-mark {
+  display: block;
+  width: 100%;
+  margin: 0 0 0.08em;
+  font-size: 0.48em;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: center;
+  white-space: nowrap;
+  color: #ffd7b0;
+  font-weight: 500;
+  opacity: 0.92;
+}
+.py-char {
+  display: block;
+  width: 100%;
+  line-height: 1;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.practice-modes {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  align-content: center;
+  column-gap: 12px;
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 56px;
+}
+.practice-modes .mode-btn:nth-child(1) { justify-self: end; }
+.practice-modes .mode-btn:nth-child(2) { justify-self: center; }
+.practice-modes .mode-btn:nth-child(3) { justify-self: start; }
+.practice-modes .mode-btn:only-child {
+  grid-column: 1 / -1;
+  justify-self: center;
 }
 .mode-btn {
   border: 1px solid rgba(255, 180, 120, 0.45);
@@ -1245,6 +1450,8 @@ h2 {
   font-weight: 600;
   cursor: pointer;
   min-height: 40px;
+  min-width: 4.5em;
+  white-space: nowrap;
 }
 .mode-btn.on {
   background: rgba(246, 210, 122, 0.22);
@@ -1253,7 +1460,8 @@ h2 {
 }
 .mode-btn:disabled { opacity: 0.45; cursor: default; }
 .practice-bar {
-  margin-top: 12px;
+  flex: 0 0 auto;
+  margin-top: 4px;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
@@ -1295,6 +1503,7 @@ h2 {
   color: #ff8f8f;
 }
 .result {
+  flex: 0 0 auto;
   margin-top: 12px;
   padding: 12px;
   border-radius: 12px;
@@ -1311,9 +1520,15 @@ h2 {
   gap: 12px;
   min-width: 0;
 }
+.side .panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
 .art {
   width: 100%;
-  aspect-ratio: 800 / 520;
+  flex: 0 0 auto;
+  aspect-ratio: 4 / 3;
   border-radius: 12px;
   overflow: hidden;
   margin-top: 8px;
@@ -1323,7 +1538,8 @@ h2 {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
 }
 .art-fallback {
   height: 100%;
@@ -1341,11 +1557,46 @@ h2 {
   letter-spacing: 0.2em;
 }
 .art-hint { font-size: 13px; opacity: 0.7; }
-.story {
+.story,
+.author {
   margin: 0;
   line-height: 1.65;
   font-size: 14px;
   white-space: pre-wrap;
+}
+.author-learned {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.author-learned-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #ffb07a;
+  font-weight: 600;
+}
+.author-learned-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.author-learned-btn {
+  border: 1px solid rgba(255, 180, 120, 0.4);
+  background: rgba(255, 180, 120, 0.12);
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 32px;
+}
+.author-learned-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .meaning {
   margin: 0;
@@ -1383,10 +1634,12 @@ h2 {
   }
   .poem-panel {
     grid-area: poem;
-    min-height: 0;
     height: 100%;
   }
-  .side { grid-area: side; }
+  .side {
+    grid-area: side;
+    align-self: stretch;
+  }
   .meaning-panel { grid-area: meaning; }
 }
 
@@ -1411,9 +1664,14 @@ h2 {
       "poem side"
       "meaning meaning";
     gap: 10px;
+    align-items: stretch;
+  }
+  .side {
+    align-self: stretch;
   }
   .line-text { font-size: 17px; line-height: 1.55; }
-  .story { font-size: 13px; }
+  .story,
+  .author { font-size: 13px; }
   .meaning { font-size: 17px; }
 }
 </style>

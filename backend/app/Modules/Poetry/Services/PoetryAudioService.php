@@ -6,15 +6,15 @@ use App\Modules\Poetry\Models\PoetryAudioCache;
 use App\Modules\Poetry\Models\PoetryPoem;
 use App\Modules\Task\Services\FamilyAiConfig;
 use App\Modules\Task\Services\QwenTtsService;
+use App\Modules\Core\Settings\Settings;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 /**
- * Poem read-aloud library: expressive script → ElevenLabs (preferred) → disk cache.
- * Subsequent plays reuse the stored MP3 without calling TTS again.
+ * Poem read-aloud: expressive script → permanent library (seed/runtime) → TTS.
+ * Assign / weekly recommend warm full + lines + meanings once; kids stream static files.
  */
 class PoetryAudioService
 {
@@ -23,6 +23,9 @@ class PoetryAudioService
         private readonly PoetryAiCoach $ai,
         private readonly FamilyAiConfig $familyAi,
         private readonly QwenTtsService $tts,
+        private readonly PoetryAudioLibrary $library,
+        private readonly Settings $settings,
+        private readonly QwenPoetryTts $qwenPoetry,
     ) {}
 
     /**
@@ -41,12 +44,18 @@ class PoetryAudioService
         $poem = $this->catalog->findOrFail($poemId);
         $clipKey = $this->normalizeClipKey($clip, $poem);
         $script = $this->scriptFor($poem, $clipKey, $familyId);
-        $scriptHash = $this->scriptHash($script);
         $voiceTag = $this->voiceTag($familyId);
+        $scriptHash = hash('sha256', $this->scriptHash($script).'|'.json_encode($voiceTag));
+        $storeClip = ($voiceTag['provider'] ?? '') === 'qwen-poetry' ? $clipKey.'--family-'.$familyId : $clipKey;
+
+        $fromLibrary = $this->hydrateFromLibrary($poem, $storeClip, $script, $scriptHash, $voiceTag);
+        if ($fromLibrary !== null) {
+            return $fromLibrary;
+        }
 
         $existing = PoetryAudioCache::query()
             ->where('poem_id', $poem->id)
-            ->where('clip_key', $clipKey)
+            ->where('clip_key', $storeClip)
             ->first();
 
         if (
@@ -59,17 +68,21 @@ class PoetryAudioService
             return $this->payload($existing, $script, cached: true);
         }
 
-        $lockKey = "poetry-audio:{$poem->id}:{$clipKey}";
-        $lock = Cache::lock($lockKey, 60);
+        $lockKey = "poetry-audio:{$poem->id}:{$storeClip}";
+        $lock = Cache::lock($lockKey, 90);
         try {
-            $lock->block(20);
+            $lock->block(25);
         } catch (LockTimeoutException) {
             $existing = PoetryAudioCache::query()
                 ->where('poem_id', $poem->id)
-                ->where('clip_key', $clipKey)
+                ->where('clip_key', $storeClip)
                 ->first();
             if ($existing && $existing->status === 'ready' && $this->fileExists($existing)) {
                 return $this->payload($existing, $script, cached: true);
+            }
+            $again = $this->hydrateFromLibrary($poem, $storeClip, $script, $scriptHash, $voiceTag, allowStale: true);
+            if ($again !== null) {
+                return $again;
             }
 
             return [
@@ -84,9 +97,14 @@ class PoetryAudioService
         }
 
         try {
+            $fromLibrary = $this->hydrateFromLibrary($poem, $storeClip, $script, $scriptHash, $voiceTag);
+            if ($fromLibrary !== null) {
+                return $fromLibrary;
+            }
+
             $existing = PoetryAudioCache::query()
                 ->where('poem_id', $poem->id)
-                ->where('clip_key', $clipKey)
+                ->where('clip_key', $storeClip)
                 ->first();
             if (
                 $existing !== null
@@ -98,17 +116,26 @@ class PoetryAudioService
                 return $this->payload($existing, $script, cached: true);
             }
 
-            $generated = $this->generateAudio($script, $familyId);
+            $generated = $this->generateAudio($script, $familyId, $clipKey, $poem);
             if ($generated === null) {
+                // Keep a prior Edge/library clip playable rather than failing the kid tap.
+                $stale = $this->hydrateFromLibrary($poem, $storeClip, $script, $scriptHash, $voiceTag, allowStale: true);
+                if ($stale !== null) {
+                    return $stale;
+                }
+                if ($existing && $existing->status === 'ready' && $this->fileExists($existing)) {
+                    return $this->payload($existing, $script, cached: true);
+                }
+
                 PoetryAudioCache::query()->updateOrCreate(
-                    ['poem_id' => $poem->id, 'clip_key' => $clipKey],
+                    ['poem_id' => $poem->id, 'clip_key' => $storeClip],
                     [
                         'provider' => 'none',
                         'voice' => $voiceTag['voice'],
                         'model' => $voiceTag['model'],
                         'script_hash' => $scriptHash,
                         'script' => $script,
-                        'disk' => (string) config('poetry.audio.disk', 'public'),
+                        'disk' => 'local',
                         'path' => '',
                         'mime' => 'audio/mpeg',
                         'bytes' => 0,
@@ -128,21 +155,24 @@ class PoetryAudioService
                 ];
             }
 
-            $disk = (string) config('poetry.audio.disk', 'public');
-            $dir = trim((string) config('poetry.audio.directory', 'poetry-audio'), '/');
-            $path = $dir.'/'.$poem->id.'/'.$clipKey.'.mp3';
-            Storage::disk($disk)->put($path, $generated['binary']);
+            $absolute = $this->library->put($poem, $storeClip, $generated['binary'], [
+                'provider' => $generated['provider'],
+                'voice' => $generated['voice'],
+                'model' => $generated['model'],
+                'script_hash' => $scriptHash,
+            ]);
+            $relative = $this->runtimeRelativePath($poem, $storeClip);
 
             $row = PoetryAudioCache::query()->updateOrCreate(
-                ['poem_id' => $poem->id, 'clip_key' => $clipKey],
+                ['poem_id' => $poem->id, 'clip_key' => $storeClip],
                 [
                     'provider' => $generated['provider'],
                     'voice' => $generated['voice'],
                     'model' => $generated['model'],
                     'script_hash' => $scriptHash,
                     'script' => $script,
-                    'disk' => $disk,
-                    'path' => $path,
+                    'disk' => 'local',
+                    'path' => $relative,
                     'mime' => $generated['mime'],
                     'bytes' => strlen($generated['binary']),
                     'status' => 'ready',
@@ -155,6 +185,7 @@ class PoetryAudioService
                 'clip' => $clipKey,
                 'provider' => $generated['provider'],
                 'bytes' => strlen($generated['binary']),
+                'library' => $absolute,
             ]);
 
             return $this->payload($row, $script, cached: false);
@@ -164,7 +195,130 @@ class PoetryAudioService
     }
 
     /**
-     * Prefetch selected clips (default: full poem). Lines/story generate on first play and then stick.
+     * Static practice pack: full + author + each line + each line meaning (not AI story).
+     *
+     * @return list<string>
+     */
+    public function libraryClipsFor(PoetryPoem $poem): array
+    {
+        $clips = ['full', 'author'];
+        foreach (array_keys($poem->lines()) as $i) {
+            $clips[] = 'line-'.$i;
+            $clips[] = 'meaning-'.$i;
+        }
+
+        return $clips;
+    }
+
+    /**
+     * Prefetch permanent library clips (assign / weekly recommend).
+     *
+     * @return list<array{clip: string, status: string, url: ?string, cached: bool}>
+     */
+    public function warmLibrary(int $poemId, int $familyId): array
+    {
+        $poem = $this->catalog->findOrFail($poemId);
+
+        return $this->warm($poemId, $familyId, $this->libraryClipsFor($poem));
+    }
+
+    /**
+     * Generate the practice pack after assign/recommend. Runs after the HTTP response
+     * in production; sync in unit tests so assertions see the files.
+     */
+    public function scheduleWarmLibrary(int $poemId, int $familyId, string $source = 'assign'): void
+    {
+        if (! $this->hasWarmCredentials($familyId)) {
+            Log::info('poetry.audio.warm_skipped', [
+                'source' => $source,
+                'poem_id' => $poemId,
+                'family_id' => $familyId,
+                'reason' => 'tts_unconfigured',
+            ]);
+
+            return;
+        }
+
+        $warm = function () use ($poemId, $familyId, $source): void {
+            try {
+                $this->warmLibrary($poemId, $familyId);
+            } catch (\Throwable $e) {
+                Log::warning('poetry.audio.warm_failed', [
+                    'source' => $source,
+                    'poem_id' => $poemId,
+                    'family_id' => $familyId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        };
+
+        if (app()->runningUnitTests()) {
+            $warm();
+
+            return;
+        }
+
+        dispatch($warm)->afterResponse();
+    }
+
+    /** True when assign/recommend can synthesize into the permanent library (not free-proxy fallback). */
+    public function hasWarmCredentials(int $familyId): bool
+    {
+        $provider = (string) $this->settings->get('poetry.tts_provider', $familyId);
+        $cfg = $this->familyAi->resolve($familyId);
+
+        if ($provider === 'qwen') {
+            $key = trim((string) $this->settings->get('poetry.tts_api_key', $familyId));
+            if ($key === '') {
+                $key = trim((string) ($cfg['tts_qwen_api_key'] ?? ''));
+            }
+
+            return $key !== '';
+        }
+
+        return trim((string) ($cfg['tts_elevenlabs_api_key'] ?? '')) !== '';
+    }
+
+    /** @return array{clips:int,bytes:int} */
+    public function familyCacheStats(int $familyId): array
+    {
+        $row = PoetryAudioCache::query()
+            ->where('clip_key', 'like', '%--family-'.$familyId)
+            ->selectRaw('count(*) as clips, coalesce(sum(bytes), 0) as bytes')
+            ->first();
+
+        return [
+            'clips' => (int) ($row->clips ?? 0),
+            'bytes' => (int) ($row->bytes ?? 0),
+        ];
+    }
+
+    /** @return array{binary:string,mime:string,provider:string,voice:string,model:string}|null */
+    public function previewElevenLabs(int $familyId): ?array
+    {
+        $key = trim((string) $this->familyAi->resolve($familyId)['tts_elevenlabs_api_key']);
+        return $key !== '' ? $this->synthesizeElevenLabs('床前明月光，疑是地上霜。', $key, $familyId) : null;
+    }
+
+    /** Clear only this family's generated clips, never shared seed or ElevenLabs audio. */
+    public function clearFamilyCache(int $familyId): array
+    {
+        $rows = PoetryAudioCache::query()->where('clip_key', 'like', '%--family-'.$familyId)->get();
+        $bytes = 0;
+        foreach ($rows as $row) {
+            $path = $this->absoluteFromRow($row);
+            if ($path !== null && str_starts_with($path, $this->library->runtimeDirectory().'/')) {
+                $bytes += (int) filesize($path);
+                @unlink($path);
+                @unlink(substr($path, 0, -4).'.json');
+            }
+            $row->delete();
+        }
+        return ['clips' => $rows->count(), 'bytes' => $bytes];
+    }
+
+    /**
+     * Prefetch selected clips (default: full poem).
      *
      * @param  list<string>  $clips
      * @return list<array{clip: string, status: string, url: ?string, cached: bool}>
@@ -175,7 +329,7 @@ class PoetryAudioService
         if ($clips === []) {
             $clips = ['full'];
         }
-        $clips = array_values(array_unique(array_slice($clips, 0, 12)));
+        $clips = array_values(array_unique(array_slice($clips, 0, 48)));
 
         $out = [];
         foreach ($clips as $clip) {
@@ -199,6 +353,9 @@ class PoetryAudioService
         if ($clipKey === 'story') {
             return trim($this->ai->storyFor($poem, $familyId));
         }
+        if ($clipKey === 'author') {
+            return trim($this->ai->authorIntroFor($poem));
+        }
         if (preg_match('/^line-(\d+)$/', $clipKey, $m)) {
             $lines = $poem->lines();
             $i = (int) $m[1];
@@ -217,7 +374,6 @@ class PoetryAudioService
 
     /**
      * Natural full-poem reading: title + era + author, then couplets with breathing pauses.
-     * Punctuation is tuned for expressive TTS (not a flat join of lines).
      */
     public function fullExpressiveScript(PoetryPoem $poem): string
     {
@@ -239,10 +395,10 @@ class PoetryAudioService
 
         $couplets = [];
         for ($i = 0; $i < count($lines); $i += 2) {
-            $a = rtrim($lines[$i], "，。！？、；：");
-            $b = isset($lines[$i + 1]) ? rtrim($lines[$i + 1], "，。！？、；：") : '';
+            // mb-safe: PHP rtrim() is byte-wise and corrupts UTF-8 Chinese punctuation.
+            $a = $this->stripTrailingPunctuation($lines[$i]);
+            $b = isset($lines[$i + 1]) ? $this->stripTrailingPunctuation($lines[$i + 1]) : '';
             if ($b !== '') {
-                // Slight pause between lines in a couplet, longer pause after the couplet.
                 $couplets[] = "{$a}，{$b}。";
             } else {
                 $couplets[] = "{$a}。";
@@ -254,16 +410,128 @@ class PoetryAudioService
             $parts[] = implode('，', $intro).'。';
         }
         if ($couplets !== []) {
-            $parts[] = implode('……', $couplets);
+            $parts[] = implode("\n", $couplets);
         }
 
         return trim(implode("\n", $parts));
     }
 
+    /**
+     * Absolute filesystem path for a ready clip, or null if missing.
+     *
+     * @return array{path: string, mime: string, bytes: int, clip: string}|null
+     */
+    public function absolutePathForReadyClip(int $poemId, string $clip, int $familyId): ?array
+    {
+        $poem = $this->catalog->findOrFail($poemId);
+        $clipKey = $this->normalizeClipKey($clip, $poem);
+        $voiceTag = $this->voiceTag($familyId);
+        $storeClip = ($voiceTag['provider'] ?? '') === 'qwen-poetry' ? $clipKey.'--family-'.$familyId : $clipKey;
+
+        $libraryPath = $this->library->absoluteMp3($poem, $storeClip);
+        if ($libraryPath !== null) {
+            return [
+                'path' => $libraryPath,
+                'mime' => 'audio/mpeg',
+                'bytes' => (int) (filesize($libraryPath) ?: 0),
+                'clip' => $clipKey,
+            ];
+        }
+
+        $row = PoetryAudioCache::query()
+            ->where('poem_id', $poem->id)
+            ->where('clip_key', $storeClip)
+            ->first();
+
+        if ($row === null || $row->status !== 'ready' || ! $this->fileExists($row)) {
+            return null;
+        }
+
+        $absolute = $this->absoluteFromRow($row);
+        if ($absolute === null) {
+            return null;
+        }
+
+        return [
+            'path' => $absolute,
+            'mime' => (string) ($row->mime ?: 'audio/mpeg'),
+            'bytes' => (int) ($row->bytes ?: filesize($absolute) ?: 0),
+            'clip' => $clipKey,
+        ];
+    }
+
+    /**
+     * @param  array{voice: string, model: string, prefer_eleven: bool}  $voiceTag
+     */
+    private function hydrateFromLibrary(
+        PoetryPoem $poem,
+        string $clipKey,
+        string $script,
+        string $scriptHash,
+        array $voiceTag,
+        bool $allowStale = false,
+    ): ?array {
+        // Story text is family AI output — never share via the permanent library.
+        if ($clipKey === 'story' || str_contains($clipKey, 'story--family-')) {
+            return null;
+        }
+
+        $libraryClip = $clipKey;
+        $path = $this->library->absoluteMp3($poem, $libraryClip);
+        // Family-scoped Qwen keys can still reuse shared seed clips (full/line/meaning).
+        if ($path === null && preg_match('/^(.*)--family-\d+$/', $clipKey, $m)) {
+            $libraryClip = $m[1];
+            $path = $this->library->absoluteMp3($poem, $libraryClip);
+        }
+        if ($path === null) {
+            return null;
+        }
+
+        $meta = $this->library->metaFor($poem, $libraryClip) ?? [];
+        $provider = (string) ($meta['provider'] ?? 'library');
+        if (! $allowStale && ($this->wantsElevenRefresh($provider, $meta['voice'] ?? null, $meta['model'] ?? null, $voiceTag)
+            || (($voiceTag['provider'] ?? '') === 'qwen-poetry' && ($meta['script_hash'] ?? null) !== $scriptHash))) {
+            // Stale Edge/browser-era file — regenerate with ElevenLabs when a key is configured.
+            return null;
+        }
+
+        $relative = $this->runtimeRelativePath($poem, $libraryClip);
+        $row = PoetryAudioCache::query()->updateOrCreate(
+            ['poem_id' => $poem->id, 'clip_key' => $clipKey],
+            [
+                'provider' => $provider,
+                'voice' => $meta['voice'] ?? null,
+                'model' => $meta['model'] ?? null,
+                'script_hash' => (string) ($meta['script_hash'] ?? $scriptHash),
+                'script' => $script,
+                'disk' => 'local',
+                'path' => $relative,
+                'mime' => 'audio/mpeg',
+                'bytes' => (int) ($meta['bytes'] ?? filesize($path) ?: 0),
+                'status' => 'ready',
+                'error' => null,
+            ],
+        );
+
+        return $this->payload($row, $script, cached: true);
+    }
+
+    private function runtimeRelativePath(PoetryPoem $poem, string $clipKey): string
+    {
+        $key = $this->library->libraryKey($poem);
+
+        return 'poetry-library/audio/'.$key.'/'.$clipKey.'.mp3';
+    }
+
+    private function stripTrailingPunctuation(string $line): string
+    {
+        return preg_replace('/[，。！？、；：,.!?;:]+$/u', '', $line) ?? $line;
+    }
+
     private function normalizeClipKey(string $clip, PoetryPoem $poem): string
     {
         $clip = trim($clip);
-        if ($clip === 'full' || $clip === 'story') {
+        if ($clip === 'full' || $clip === 'story' || $clip === 'author') {
             return $clip;
         }
         if (preg_match('/^line-(\d+)$/', $clip, $m)) {
@@ -293,11 +561,24 @@ class PoetryAudioService
     private function voiceTag(int $familyId): array
     {
         $cfg = $this->familyAi->resolve($familyId);
+        $provider = (string) $this->settings->get('poetry.tts_provider', $familyId);
+        if ($provider === 'qwen') {
+            return [
+                'provider' => 'qwen-poetry',
+                'voice' => (string) $this->settings->get('poetry.tts_voice', $familyId),
+                'model' => 'qwen-audio-3.1-tts-flash',
+                'rate' => (int) $this->settings->get('poetry.tts_rate_percent', $familyId),
+                'style' => (string) $this->settings->get('poetry.tts_style', $familyId),
+                'prefer_eleven' => false,
+            ];
+        }
         $preferEleven = (bool) config('poetry.audio.prefer_elevenlabs', true)
             && trim((string) ($cfg['tts_elevenlabs_api_key'] ?? '')) !== '';
 
         return [
-            'voice' => (string) config('poetry.audio.voice_zh', config('services.elevenlabs.voice_zh')),
+            'provider' => 'elevenlabs',
+            'voice' => trim((string) $this->settings->get('poetry.eleven_voice', $familyId))
+                ?: (string) config('poetry.audio.voice_zh', config('services.elevenlabs.voice_zh')),
             'model' => (string) config('poetry.audio.model', 'eleven_multilingual_v2'),
             'prefer_eleven' => $preferEleven,
         ];
@@ -305,27 +586,71 @@ class PoetryAudioService
 
     private function voiceMatches(PoetryAudioCache $row, array $voiceTag): bool
     {
+        if (($voiceTag['provider'] ?? '') === 'qwen-poetry') {
+            return $row->provider === 'qwen-poetry' && $row->voice === $voiceTag['voice'] && $row->model === $voiceTag['model'];
+        }
+        if ($this->wantsElevenRefresh((string) $row->provider, $row->voice, $row->model, $voiceTag)) {
+            return false;
+        }
         if ($row->provider === 'elevenlabs') {
             return $row->voice === $voiceTag['voice'] && $row->model === $voiceTag['model'];
         }
 
-        // Fallback providers: keep as long as script matches; voice tag only gates ElevenLabs.
         return true;
+    }
+
+    /**
+     * @param  array{voice: string, model: string, prefer_eleven: bool}  $voiceTag
+     */
+    private function wantsElevenRefresh(?string $provider, ?string $voice, ?string $model, array $voiceTag): bool
+    {
+        if (($voiceTag['provider'] ?? '') === 'qwen-poetry') {
+            return $provider !== 'qwen-poetry' || $voice !== $voiceTag['voice'] || $model !== $voiceTag['model'];
+        }
+        if (! $voiceTag['prefer_eleven']) {
+            return false;
+        }
+        if ($provider !== 'elevenlabs') {
+            return true;
+        }
+
+        return $voice !== $voiceTag['voice'] || $model !== $voiceTag['model'];
     }
 
     private function fileExists(PoetryAudioCache $row): bool
     {
+        return $this->absoluteFromRow($row) !== null;
+    }
+
+    private function absoluteFromRow(PoetryAudioCache $row): ?string
+    {
         if ($row->path === '' || $row->path === null) {
-            return false;
+            return null;
         }
 
-        return Storage::disk((string) $row->disk)->exists((string) $row->path);
+        $path = (string) $row->path;
+        if ($path[0] === '/' && is_file($path)) {
+            return $path;
+        }
+
+        $absolute = storage_path('app/'.ltrim($path, '/'));
+        if (is_file($absolute) && filesize($absolute) >= 500) {
+            return $absolute;
+        }
+
+        // Legacy rows may still point at the public disk.
+        $public = storage_path('app/public/'.ltrim($path, '/'));
+        if (is_file($public) && filesize($public) >= 500) {
+            return $public;
+        }
+
+        return null;
     }
 
     /**
      * @return array{binary: string, mime: string, provider: string, voice: string, model: string}|null
      */
-    private function generateAudio(string $script, int $familyId): ?array
+    private function generateAudio(string $script, int $familyId, string $clipKey, PoetryPoem $poem): ?array
     {
         $script = trim($script);
         if ($script === '') {
@@ -333,17 +658,45 @@ class PoetryAudioService
         }
 
         $cfg = $this->familyAi->resolve($familyId);
+        if ($this->settings->get('poetry.tts_provider', $familyId) === 'qwen') {
+            $key = trim((string) $this->settings->get('poetry.tts_api_key', $familyId));
+            if ($key === '') {
+                $key = trim((string) $cfg['tts_qwen_api_key']);
+            }
+            $workspaceId = trim((string) $this->settings->get('poetry.tts_workspace_id', $familyId));
+            if ($workspaceId === '') {
+                $workspaceId = (string) config('poetry.audio.qwen_workspace_id', '');
+            }
+            $qwen = $this->qwenPoetry->synthesize(
+                $script, $key, $workspaceId,
+                (string) $this->settings->get('poetry.tts_region', $familyId),
+                (string) $this->settings->get('poetry.tts_voice', $familyId),
+                (int) $this->settings->get('poetry.tts_rate_percent', $familyId) / 100,
+                (string) $this->settings->get('poetry.tts_style', $familyId),
+                $clipKey,
+                (string) $poem->title,
+                (string) ($poem->author ?? ''),
+                implode(' ', $poem->lines()),
+            );
+            if ($qwen !== null) {
+                return $qwen;
+            }
+            // Do not switch narrator mid-poem. Parents can select ElevenLabs explicitly.
+            return null;
+        }
         $elevenKey = trim((string) ($cfg['tts_elevenlabs_api_key'] ?? ''));
         $preferEleven = (bool) config('poetry.audio.prefer_elevenlabs', true);
         $providerSetting = (string) ($cfg['tts_provider'] ?? 'auto');
 
         $tryEleven = $elevenKey !== '' && (
+            $this->settings->get('poetry.tts_provider', $familyId) === 'elevenlabs'
+            ||
             $providerSetting === 'elevenlabs'
             || ($preferEleven && in_array($providerSetting, ['auto', 'elevenlabs'], true))
         );
 
         if ($tryEleven) {
-            $eleven = $this->synthesizeElevenLabs($script, $elevenKey);
+            $eleven = $this->synthesizeElevenLabs($script, $elevenKey, $familyId);
             if ($eleven !== null) {
                 return $eleven;
             }
@@ -370,9 +723,10 @@ class PoetryAudioService
     /**
      * @return array{binary: string, mime: string, provider: string, voice: string, model: string}|null
      */
-    private function synthesizeElevenLabs(string $text, string $apiKey): ?array
+    private function synthesizeElevenLabs(string $text, string $apiKey, int $familyId): ?array
     {
-        $voice = (string) config('poetry.audio.voice_zh', config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2'));
+        $voice = trim((string) $this->settings->get('poetry.eleven_voice', $familyId))
+            ?: (string) config('poetry.audio.voice_zh', config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2'));
         $model = (string) config('poetry.audio.model', 'eleven_multilingual_v2');
         $timeout = max(15, (int) config('poetry.audio.timeout', 45));
         $stability = (float) config('poetry.audio.stability', 0.32);
@@ -427,17 +781,26 @@ class PoetryAudioService
     }
 
     /**
+     * Same-origin API path — public /storage is not mounted on the nginx SPA host.
+     */
+    private function streamUrl(int $poemId, string $clipKey): string
+    {
+        return '/api/v1/kid/poetry/poems/'.$poemId.'/audio/file?clip='.rawurlencode($clipKey);
+    }
+
+    /**
      * @return array{clip: string, url: ?string, mime: string, provider: ?string, cached: bool, status: string, script: string}
      */
     private function payload(PoetryAudioCache $row, string $script, bool $cached): array
     {
+        $publicClip = preg_replace('/--family-\d+$/', '', (string) $row->clip_key);
         $url = null;
         if ($row->status === 'ready' && $row->path) {
-            $url = Storage::disk((string) $row->disk)->url((string) $row->path);
+            $url = $this->streamUrl((int) $row->poem_id, $publicClip);
         }
 
         return [
-            'clip' => (string) $row->clip_key,
+            'clip' => $publicClip,
             'url' => $url,
             'mime' => (string) ($row->mime ?: 'audio/mpeg'),
             'provider' => $row->provider ?: null,

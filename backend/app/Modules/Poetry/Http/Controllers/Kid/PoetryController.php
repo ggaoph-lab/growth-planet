@@ -7,6 +7,7 @@ use App\Modules\Poetry\Services\PoetryAudioService;
 use App\Modules\Poetry\Services\PoetryPracticeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class PoetryController
 {
@@ -108,21 +109,45 @@ class PoetryController
         ]);
     }
 
+    /** Stream a disk-cached poem clip (ElevenLabs/library MP3). */
+    public function audioFile(Request $request, int $id): BinaryFileResponse
+    {
+        $data = $request->validate([
+            'clip' => ['sometimes', 'string', 'max:64'],
+        ]);
+        // Ensure the kid session is valid; clips are not family-secret but stay behind auth.
+        $child = $this->context->child();
+
+        $file = $this->audio->absolutePathForReadyClip($id, (string) ($data['clip'] ?? 'full'), (int) $child->family_id);
+        abort_if($file === null, 404);
+
+        $response = response()->file($file['path'], [
+            'Content-Type' => $file['mime'],
+            'Cache-Control' => 'no-store',
+            'Accept-Ranges' => 'bytes',
+        ]);
+        $response->setPrivate();
+
+        return $response;
+    }
+
     public function warmAudio(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
-            'clips' => ['sometimes', 'array', 'max:12'],
+            'clips' => ['sometimes', 'array', 'max:24'],
             'clips.*' => ['string', 'max:64'],
         ]);
         $child = $this->context->child();
         $clips = array_values(array_filter(array_map('strval', $data['clips'] ?? ['full'])));
+        // Allow full + lines + meanings for one poem in a single warm (grade-1 ≈ 9 clips).
+        $clips = array_values(array_unique(array_slice($clips !== [] ? $clips : ['full'], 0, 24)));
 
         return response()->json([
             'data' => [
                 'items' => $this->audio->warm(
                     $id,
                     (int) $child->family_id,
-                    $clips !== [] ? $clips : ['full'],
+                    $clips,
                 ),
             ],
         ]);

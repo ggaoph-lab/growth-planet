@@ -14,6 +14,7 @@ use App\Modules\Identity\Http\Middleware\EnsureRole;
 use App\Modules\Identity\Http\Middleware\EnsureSiteAdmin;
 use App\Modules\Identity\Http\Middleware\RequireSudo;
 use App\Modules\Ledger\Console\GrantDailyPointsCommand;
+use App\Modules\Poetry\Console\PoetryAudioLibraryCommand;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -47,6 +48,7 @@ return Application::configure(basePath: dirname(__DIR__))
         PrepareEnglishDayCommand::class,
         PrepareEncyclopediaZhCommand::class,
         GrantDailyPointsCommand::class,
+        PoetryAudioLibraryCommand::class,
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
         ApiExceptionRenderer::register($exceptions);

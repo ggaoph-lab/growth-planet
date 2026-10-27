@@ -17,6 +17,7 @@ class PoetryRecommendationService
     public function __construct(
         private readonly PoetryCatalog $catalog,
         private readonly Clock $clock,
+        private readonly PoetryAudioService $audio,
     ) {}
 
     public function weekKey(CarbonImmutable $businessDate): string
@@ -49,7 +50,7 @@ class PoetryRecommendationService
 
         $age = $this->ageYears($child, $businessDate);
 
-        return PoetryWeeklyRecommendation::query()->create([
+        $row = PoetryWeeklyRecommendation::query()->create([
             'family_id' => $child->family_id,
             'child_id' => $child->id,
             'poem_id' => $pick['poem']->id,
@@ -59,6 +60,11 @@ class PoetryRecommendationService
             'reason' => $pick['reason'],
             'status' => 'active',
         ])->load('poem');
+
+        // Prefetch static practice pack so kid playback hits server files, not live TTS.
+        $this->audio->scheduleWarmLibrary((int) $pick['poem']->id, (int) $child->family_id, 'recommend');
+
+        return $row;
     }
 
     /**

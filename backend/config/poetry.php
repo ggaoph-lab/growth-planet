@@ -25,10 +25,13 @@ return [
     'review_intervals_days' => [1, 2, 4, 7, 15],
 
     /**
-     * Expressive poem read-aloud library.
-     * Prefer ElevenLabs once, then reuse the stored MP3 from public disk.
+     * Permanent expressive read-aloud library.
+     * Qwen clips are family-scoped in the runtime library; legacy ElevenLabs seeds remain shared.
+     * Assign / weekly recommend warm full+author+lines+meanings; kids stream via /audio/file.
+     * Share across deploys: `php artisan poetry:audio-library export|import`.
      */
     'audio' => [
+        'qwen_workspace_id' => env('POETRY_QWEN_WORKSPACE_ID', ''),
         'prefer_elevenlabs' => (bool) env('POETRY_TTS_PREFER_ELEVENLABS', true),
         'model' => env('POETRY_TTS_MODEL', 'eleven_multilingual_v2'),
         'voice_zh' => env('POETRY_TTS_VOICE_ZH', env('ELEVENLABS_VOICE_ZH', 'Xb7hH8MSUJpSbSDYk0k2')),
@@ -36,8 +39,6 @@ return [
         'stability' => (float) env('POETRY_TTS_STABILITY', 0.32),
         'similarity_boost' => (float) env('POETRY_TTS_SIMILARITY', 0.8),
         'style' => (float) env('POETRY_TTS_STYLE', 0.55),
-        'disk' => 'public',
-        'directory' => 'poetry-audio',
-        'script_version' => 'v2-expressive',
+        'script_version' => 'v4-poem-context',
     ],
 ];

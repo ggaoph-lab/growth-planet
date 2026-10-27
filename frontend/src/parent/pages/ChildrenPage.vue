@@ -6,12 +6,15 @@ import { ApiError, api } from '@/shared/api/client'
 import type { ParentChild } from '@/shared/api/types'
 import { avatarEmoji } from '@/shared/avatars'
 import ChildFormDialog from '../components/ChildFormDialog.vue'
+import ChildLedgerDialog from '../components/ChildLedgerDialog.vue'
 
 const { t } = useI18n()
 const children = ref<ParentChild[]>([])
 const loading = ref(true)
 const formOpen = ref(false)
 const editing = ref<ParentChild | null>(null)
+const ledgerOpen = ref(false)
+const ledgerChild = ref<ParentChild | null>(null)
 
 function statusLabel(status: string): string {
   if (status === 'active') return t('parent.children.active')
@@ -36,6 +39,11 @@ function openCreate(): void {
 function openEdit(child: ParentChild): void {
   editing.value = child
   formOpen.value = true
+}
+
+function openLedger(child: ParentChild): void {
+  ledgerChild.value = child
+  ledgerOpen.value = true
 }
 
 async function replace(updated: ParentChild): Promise<void> {
@@ -114,6 +122,7 @@ onMounted(load)
         </div>
         <div class="ops">
           <el-button size="small" @click="openEdit(c)">{{ t('common.edit') }}</el-button>
+          <el-button size="small" type="warning" plain @click="openLedger(c)">{{ t('parent.children.ledger') }}</el-button>
           <el-button size="small" @click="changeBirthDate(c)">{{ t('parent.children.changeBirth') }}</el-button>
           <el-button size="small" @click="changePin(c)">{{ t('parent.children.pin') }}</el-button>
         </div>
@@ -121,6 +130,7 @@ onMounted(load)
     </div>
 
     <ChildFormDialog v-model="formOpen" :child="editing" @saved="replace" />
+    <ChildLedgerDialog v-model="ledgerOpen" :child="ledgerChild" />
   </div>
 </template>
 

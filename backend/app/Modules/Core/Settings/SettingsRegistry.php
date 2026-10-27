@@ -38,6 +38,15 @@ class SettingsRegistry
             'poetry.allow_ai' => ['type' => 'bool', 'default' => false, 'label' => '诗词星球允许 AI（故事/纠错/生图提示）'],
             'poetry.image_provider' => ['type' => 'string', 'default' => 'mock', 'enum' => ['mock', 'wanx'], 'label' => '诗词星球生图服务商'],
             'poetry.image_model' => ['type' => 'string', 'default' => 'wanx-v1', 'label' => '诗词星球生图模型'],
+            'poetry.tts_provider' => ['type' => 'string', 'default' => 'qwen', 'enum' => ['qwen', 'elevenlabs'], 'label' => '诗词朗读服务商'],
+            'poetry.tts_api_key' => ['type' => 'secret', 'default' => '', 'label' => '诗词朗读阿里云 API Key'],
+            'poetry.tts_workspace_id' => ['type' => 'string', 'default' => '', 'label' => '诗词朗读工作空间 ID'],
+            'poetry.tts_region' => ['type' => 'string', 'default' => 'cn-beijing', 'enum' => ['cn-beijing', 'ap-southeast-1'], 'label' => '诗词朗读区域'],
+            'poetry.tts_voice' => ['type' => 'string', 'default' => 'wenhuaiqing_v3.1', 'label' => '诗词朗读音色'],
+            'poetry.eleven_voice' => ['type' => 'string', 'default' => '', 'label' => '诗词 ElevenLabs 音色 ID'],
+            'poetry.tts_rate_percent' => ['type' => 'int', 'default' => 90, 'min' => 50, 'max' => 200, 'label' => '诗词朗读语速百分比'],
+            'poetry.tts_style' => ['type' => 'string', 'default' => 'gentle', 'enum' => ['natural', 'gentle', 'expressive'], 'label' => '诗词朗读风格'],
+            'poetry.follow_pause_ms' => ['type' => 'int', 'default' => 1200, 'min' => 0, 'max' => 5000, 'label' => '逐句跟读停顿毫秒'],
 
             'auth.sudo_ttl_minutes' => ['type' => 'int', 'default' => 10, 'min' => 1, 'max' => 60, 'label' => '敏感操作确认有效期（分钟）'],
 

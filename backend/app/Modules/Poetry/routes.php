@@ -13,6 +13,9 @@ Route::prefix('v1/kid/poetry')->middleware(['auth:sanctum', 'role:child'])->grou
     Route::get('poems/{id}/audio', [KidPoetryController::class, 'audio'])
         ->whereNumber('id')
         ->middleware('throttle:30,1');
+    Route::get('poems/{id}/audio/file', [KidPoetryController::class, 'audioFile'])
+        ->whereNumber('id')
+        ->middleware('throttle:60,1');
     Route::post('poems/{id}/audio/warm', [KidPoetryController::class, 'warmAudio'])
         ->whereNumber('id')
         ->middleware('throttle:6,1');
@@ -30,6 +33,8 @@ Route::prefix('v1/kid/poetry')->middleware(['auth:sanctum', 'role:child'])->grou
 Route::prefix('v1/parent/poetry')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
     Route::get('', [ParentPoetryController::class, 'index']);
     Route::put('settings', [ParentPoetryController::class, 'settings']);
+    Route::post('audio/preview', [ParentPoetryController::class, 'previewAudio'])->middleware('throttle:6,1');
+    Route::delete('audio/cache', [ParentPoetryController::class, 'clearAudioCache'])->middleware('throttle:6,1');
     Route::get('search', [ParentPoetryController::class, 'search'])->middleware('throttle:30,1');
     Route::post('assignments', [ParentPoetryController::class, 'assign'])->middleware('throttle:30,1');
     Route::delete('assignments/{id}', [ParentPoetryController::class, 'cancelAssignment'])->whereNumber('id');

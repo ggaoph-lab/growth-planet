@@ -45,11 +45,17 @@ class PoetryPracticeService
             ->count();
 
         $weekly = $this->recommendations->currentFor($child, $today);
-        $challengeCount = $this->masteredPoemIds($child->id)->count();
 
         $recitedPass = PoetryRecitationRecord::query()
             ->where('child_id', $child->id)
             ->whereIn('kind', ['recite', 'challenge'])
+            ->where('passed', true)
+            ->distinct()
+            ->count('poem_id');
+
+        $challengeCount = PoetryRecitationRecord::query()
+            ->where('child_id', $child->id)
+            ->where('kind', 'recite')
             ->where('passed', true)
             ->distinct()
             ->count('poem_id');
@@ -173,29 +179,31 @@ class PoetryPracticeService
     public function showPoem(ChildProfile $child, int $poemId): array
     {
         $poem = $this->catalog->findOrFail($poemId);
+        // storyFor seeds enrichment (local-first); line meanings then hit the same row.
         $story = $this->ai->storyFor($poem, $child->family_id);
+        $authorIntro = $this->ai->authorIntroFor($poem);
         $lineMeanings = $this->ai->lineMeaningsFor($poem, $child->family_id);
         $image = $this->images->ensureImage($poem, $child->family_id);
 
-        $last = PoetryRecitationRecord::query()
+        $records = PoetryRecitationRecord::query()
             ->where('child_id', $child->id)
             ->where('poem_id', $poem->id)
             ->orderByDesc('id')
-            ->first();
+            ->get(['kind', 'passed', 'accuracy_percent']);
+
+        $last = $records->first();
+        $readAloudDone = $records->contains(
+            static fn (PoetryRecitationRecord $r) => $r->kind === 'read_aloud' && $r->passed,
+        );
+        $mastered = $records->contains(
+            static fn (PoetryRecitationRecord $r) => $r->kind === 'recite' && $r->passed,
+        );
 
         $plan = PoetryReviewPlan::query()
             ->where('child_id', $child->id)
             ->where('poem_id', $poem->id)
             ->first();
 
-        $readAloudDone = PoetryRecitationRecord::query()
-            ->where('child_id', $child->id)
-            ->where('poem_id', $poem->id)
-            ->where('kind', 'read_aloud')
-            ->where('passed', true)
-            ->exists();
-
-        $mastered = $this->masteredPoemIds($child->id)->contains($poem->id);
         $asrKey = trim((string) $this->settings->get('ai.qwen_api_key', $child->family_id));
 
         return [
@@ -209,9 +217,12 @@ class PoetryPracticeService
                 'grade_tag' => $poem->grade_tag,
             ],
             'story_zh' => $story,
+            'author_zh' => $authorIntro,
+            'author_learned_poems' => $this->learnedPoemsBySameAuthor($child, $poem),
             'line_meanings' => $lineMeanings,
             'image' => $image,
             'voice_available' => $asrKey !== '',
+            'follow_pause_ms' => (int) $this->settings->get('poetry.follow_pause_ms', $child->family_id),
             'progress' => [
                 'read_aloud_done' => $readAloudDone,
                 'last_passed' => (bool) ($last?->passed),
@@ -463,6 +474,38 @@ class PoetryPracticeService
             ->pluck('poem_id')
             ->unique()
             ->values();
+    }
+
+    /**
+     * Other poems by the same author that this child has already recited successfully.
+     *
+     * @return list<array{id: int, title: string}>
+     */
+    private function learnedPoemsBySameAuthor(ChildProfile $child, PoetryPoem $poem): array
+    {
+        $author = trim((string) ($poem->author ?? ''));
+        if ($author === '') {
+            return [];
+        }
+
+        $masteredIds = $this->masteredPoemIds($child->id)
+            ->reject(static fn ($id) => (int) $id === (int) $poem->id)
+            ->values();
+        if ($masteredIds->isEmpty()) {
+            return [];
+        }
+
+        return PoetryPoem::query()
+            ->where('author', $author)
+            ->whereIn('id', $masteredIds->all())
+            ->orderBy('id')
+            ->get(['id', 'title'])
+            ->map(static fn (PoetryPoem $row) => [
+                'id' => (int) $row->id,
+                'title' => (string) $row->title,
+            ])
+            ->values()
+            ->all();
     }
 
     private function businessDate(ChildProfile $child): CarbonImmutable

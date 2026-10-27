@@ -173,6 +173,15 @@ function haltPlayback(): void {
     }
     currentBufferSource = null
   }
+  // Always pause the shared unlock element — a prior clip may still be audible
+  // even after currentAudio was cleared mid-race.
+  if (sharedAudio) {
+    try {
+      sharedAudio.pause()
+    } catch {
+      /* ignore */
+    }
+  }
   if (currentAudio) {
     try {
       currentAudio.pause()
@@ -450,12 +459,27 @@ async function playBlobViaWebAudio(blob: Blob, epoch: number, onStarted?: () => 
   }
   if (epoch !== speakEpoch) return false
 
+  // Drop any leftover source/element before arming a new one (overlap guard).
+  haltPlayback()
+  if (epoch !== speakEpoch) return false
+
   const clampedRate = clampPlaybackRate(rate)
   const source = ctx.createBufferSource()
-  currentBufferSource = source
   source.buffer = audioBuffer
   source.playbackRate.value = clampedRate
   source.connect(ctx.destination)
+
+  // Epoch check must sit immediately before start — no await in between —
+  // so a newer speak/stop cannot leave two BufferSources audible.
+  if (epoch !== speakEpoch) {
+    try {
+      source.disconnect()
+    } catch {
+      /* ignore */
+    }
+    return false
+  }
+  currentBufferSource = source
 
   let endedClean = false
   const finished = new Promise<void>((resolve) => {
@@ -488,6 +512,14 @@ async function playBlobViaWebAudio(blob: Blob, epoch: number, onStarted?: () => 
   } catch {
     if (currentBufferSource === source) currentBufferSource = null
     return null
+  }
+
+  if (epoch !== speakEpoch) {
+    try {
+      source.stop()
+    } catch {
+      /* ignore */
+    }
   }
 
   await finished
@@ -527,6 +559,13 @@ async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => v
     }
     applyRate()
   }, 80)
+
+  if (epoch !== speakEpoch) {
+    clearRateWatch()
+    revokeObjectUrl()
+    if (currentAudio === audio) currentAudio = null
+    return false
+  }
 
   try {
     await audio.play()
@@ -592,15 +631,19 @@ export function speakPhrase(text: string, lang = 'zh-CN', onStarted?: () => void
 export async function speakAudioUrl(url: string, onStarted?: () => void, rate = 1): Promise<boolean> {
   const src = url.trim()
   if (!src) return false
+  // Bump + halt first so a second tap cuts the previous clip immediately,
+  // even while this call awaits unlock/fetch.
   const epoch = ++speakEpoch
+  haltPlayback()
   if (unlockInFlight) await unlockInFlight
   if (epoch !== speakEpoch) return false
-  haltPlayback()
-  if (!audioUnlocked && !await unlockSpeak()) return false
+  // The silent unlock probe can fail even when the requested audio is playable.
+  // Still fetch and try the real clip before reporting a playback failure.
+  if (!audioUnlocked) await unlockSpeak()
   if (epoch !== speakEpoch) return false
 
   try {
-    const response = await fetch(src, { credentials: 'same-origin' })
+    const response = await fetch(src, { credentials: 'same-origin', cache: 'no-store' })
     if (!response.ok) return false
     const blob = await response.blob()
     if (epoch !== speakEpoch) return false
@@ -634,12 +677,13 @@ async function fetchNeuralAudio(text: string, apiLang: string): Promise<{ base64
 
 async function speakPrepared(text: string, browserLang: string, apiLang: string, onStarted?: () => void, rate = 1): Promise<boolean> {
   if (!text) return false
+  // Bump + halt first so a second tap cuts the previous clip immediately.
+  const epoch = ++speakEpoch
+  haltPlayback()
   // Silent media priming must finish before the shared element receives real audio.
   // Otherwise its delayed pause/reset can stop the first audible word.
-  const epoch = ++speakEpoch
   if (unlockInFlight) await unlockInFlight
   if (epoch !== speakEpoch) return false
-  haltPlayback()
 
   if (engineLock.get(apiLang) === 'browser') {
     return speakBrowser(text, browserLang, epoch, onStarted, rate)

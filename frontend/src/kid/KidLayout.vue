@@ -71,9 +71,25 @@ function goHome(): void {
       </button>
       <div class="bar-end">
         <div id="kid-header-actions" class="header-actions" />
+        <button
+          type="button"
+          class="round cache-button"
+          :aria-label="clearingCache ? t('kid.clearingCache') : t('kid.clearCache')"
+          :title="t('kid.clearCache')"
+          :disabled="clearingCache"
+          @click="clearLocalCache"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 7v5h-5" />
+            <path d="M4 17v-5h5" />
+            <path d="M5.6 9A7 7 0 0 1 18 6.6L20 12" />
+            <path d="M18.4 15A7 7 0 0 1 6 17.4L4 12" />
+          </svg>
+        </button>
         <button type="button" class="round" :aria-label="t('kid.settings')" @click="settingsOpen = true">⚙️</button>
       </div>
     </header>
+    <p v-if="saveError && !settingsOpen" class="cache-error" role="alert">{{ saveError }}</p>
 
     <RouterView />
 
@@ -163,6 +179,30 @@ function goHome(): void {
   background: rgba(255, 255, 255, 0.14);
   font-size: 22px;
   cursor: pointer;
+}
+.round:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+.round:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.cache-button {
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+.cache-button svg {
+  width: 23px;
+  height: 23px;
+}
+.cache-error {
+  margin: 0 18px 8px;
+  color: #fff;
+  background: #8d2c3e;
+  border-radius: 12px;
+  padding: 10px 14px;
 }
 .sheet-mask {
   position: fixed;

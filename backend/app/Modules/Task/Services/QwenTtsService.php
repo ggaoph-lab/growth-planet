@@ -158,8 +158,8 @@ class QwenTtsService
             if ($result !== null) {
                 return $result;
             }
-        } elseif ($allowEleven && $ttsProvider === 'auto' && $elevenKey !== '' && $english) {
-            // Soft prefer ElevenLabs for English when key is configured (Word Atlas quality).
+        } elseif ($allowEleven && $ttsProvider === 'auto' && $elevenKey !== '') {
+            // Soft prefer ElevenLabs whenever a key is configured (poetry zh + Word Atlas en).
             $result = $this->synthesizeElevenLabs($text, $elevenKey, $lang);
             if ($result !== null) {
                 return $result;
@@ -210,7 +210,7 @@ class QwenTtsService
         $provider = (string) ($cfg['tts_provider'] ?? 'auto');
         $elevenKey = trim((string) ($cfg['tts_elevenlabs_api_key'] ?? ''));
         $useEleven = $provider === 'elevenlabs'
-            || ($provider === 'auto' && $elevenKey !== '' && str_starts_with($lang, 'en'));
+            || ($provider === 'auto' && $elevenKey !== '');
         if ($useEleven) {
             $voice = str_starts_with($lang, 'en')
                 ? (string) config('services.elevenlabs.voice_en', 'EXAVITQu4vr4xnSDxMaL')

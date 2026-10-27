@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '@/shared/api/client'
 
@@ -8,6 +8,17 @@ type Settings = {
   image_provider: 'mock' | 'wanx'
   image_model: string
   review_intervals_days: number[]
+  tts_provider: 'qwen' | 'elevenlabs'
+  tts_workspace_id: string
+  tts_region: 'cn-beijing' | 'ap-southeast-1'
+  tts_voice: string
+  eleven_voice: string
+  tts_rate_percent: number
+  tts_style: 'natural' | 'gentle' | 'expressive'
+  follow_pause_ms: number
+  tts_key_configured: boolean
+  tts_workspace_configured: boolean
+  qwen_ready: boolean
 }
 type Child = { id: number; nickname: string }
 type Poem = { id: number; title: string; author: string | null; dynasty?: string | null; preview?: string; source?: string }
@@ -37,7 +48,16 @@ const settings = reactive<Settings>({
   image_provider: 'mock',
   image_model: 'wanx-v1',
   review_intervals_days: [1, 2, 4, 7, 15],
+  tts_provider: 'qwen', tts_workspace_id: '', tts_region: 'cn-beijing',
+  tts_voice: 'wenhuaiqing_v3.1', eleven_voice: '', tts_rate_percent: 90,
+  tts_style: 'gentle', follow_pause_ms: 1200, tts_key_configured: false,
+  tts_workspace_configured: false, qwen_ready: false,
 })
+const ttsKey = ref('')
+const previewLoading = ref(false)
+const previewUrl = ref('')
+const previewError = ref('')
+const cacheStats = reactive({ clips: 0, bytes: 0 })
 const children = ref<Child[]>([])
 const grade1 = ref<Poem[]>([])
 const assignments = ref<Assignment[]>([])
@@ -60,6 +80,7 @@ async function load() {
       recent_records: RecordRow[]
       review_plans: Plan[]
       grade1: Poem[]
+      audio_cache: { clips: number; bytes: number }
     }>('/parent/poetry')
     Object.assign(settings, data.settings)
     children.value = data.children
@@ -67,6 +88,7 @@ async function load() {
     recent.value = data.recent_records
     plans.value = data.review_plans
     grade1.value = data.grade1
+    Object.assign(cacheStats, data.audio_cache)
     if (assignChildId.value == null && data.children[0]) assignChildId.value = data.children[0].id
   } catch (e) {
     error.value = String(e)
@@ -81,12 +103,48 @@ async function saveSettings() {
       allow_ai: settings.allow_ai,
       image_provider: settings.image_provider,
       image_model: settings.image_model,
+      tts_provider: settings.tts_provider,
+      tts_workspace_id: settings.tts_workspace_id,
+      tts_region: settings.tts_region,
+      tts_voice: settings.tts_voice,
+      eleven_voice: settings.eleven_voice,
+      tts_rate_percent: settings.tts_rate_percent,
+      tts_style: settings.tts_style,
+      follow_pause_ms: settings.follow_pause_ms,
+      ...(ttsKey.value.trim() ? { tts_api_key: ttsKey.value.trim() } : {}),
     }))
+    ttsKey.value = ''
     ElMessage.success('已保存 / Saved')
   } catch (e) {
     error.value = String(e)
   } finally {
     saving.value = false
+  }
+}
+
+async function previewVoice() {
+  previewError.value = ''
+  previewLoading.value = true
+  try {
+    const result = await api.post<{ available: boolean; audio_base64?: string; mime?: string; error?: string }>('/parent/poetry/audio/preview', {})
+    if (!result.available || !result.audio_base64) throw new Error(result.error || '试听生成失败')
+    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+    const bytes = Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0))
+    previewUrl.value = URL.createObjectURL(new Blob([bytes], { type: result.mime || 'audio/mpeg' }))
+  } catch (e) {
+    previewError.value = String(e)
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function clearAudioCache() {
+  try {
+    await api.delete('/parent/poetry/audio/cache')
+    Object.assign(cacheStats, { clips: 0, bytes: 0 })
+    ElMessage.success('本家庭诗词朗读缓存已清除')
+  } catch (e) {
+    error.value = String(e)
   }
 }
 
@@ -132,6 +190,7 @@ function childName(id: number): string {
 }
 
 onMounted(load)
+onUnmounted(() => { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value) })
 </script>
 
 <template>
@@ -152,6 +211,35 @@ onMounted(load)
           </select>
         </label>
         <label>生图模型 <input v-model="settings.image_model" type="text"></label>
+        <h3>诗词朗读</h3>
+        <label>服务商
+          <select v-model="settings.tts_provider"><option value="qwen">阿里云 Qwen-Audio 3.1 TTS Flash</option><option value="elevenlabs">ElevenLabs</option></select>
+        </label>
+        <p class="hint">朗读全程使用所选音色；如需使用原有 ElevenLabs 音色，请在这里切换服务商。</p>
+        <p v-if="settings.tts_provider === 'qwen' && !settings.qwen_ready" role="alert">Qwen 朗读尚未就绪：请配置阿里云 API Key。配置完成前不会切换到其他音色。</p>
+        <label v-if="settings.tts_provider === 'qwen'">音色
+          <select v-model="settings.tts_voice"><option value="wenhuaiqing_v3.1">温怀清 · wenhuaiqing_v3.1</option></select>
+        </label>
+        <label v-else>ElevenLabs 音色 ID <input v-model="settings.eleven_voice" type="text" placeholder="留空使用原有默认音色"></label>
+        <p v-if="settings.tts_provider === 'elevenlabs'" class="hint">ElevenLabs API Key 沿用「家庭设置 → 朗读语音」中已安全保存的密钥。</p>
+        <label v-if="settings.tts_provider === 'qwen'">阿里云 API Key <input v-model="ttsKey" type="password" autocomplete="new-password" :placeholder="settings.tts_key_configured ? '已安全保存，留空表示不修改' : '填写后安全保存'"></label>
+        <details v-if="settings.tts_provider === 'qwen'">
+          <summary>高级连接设置（通常不用修改）</summary>
+          <label>API Key 所属区域
+            <select v-model="settings.tts_region"><option value="cn-beijing">中国北京</option><option value="ap-southeast-1">新加坡</option></select>
+          </label>
+          <label>工作空间 ID（可选） <input v-model="settings.tts_workspace_id" type="text" autocomplete="off" placeholder="留空即可，只需 API Key"></label>
+        </details>
+        <label v-if="settings.tts_provider === 'qwen'">语速 {{ settings.tts_rate_percent }}% <input v-model.number="settings.tts_rate_percent" type="range" min="50" max="200" step="5"></label>
+        <label v-if="settings.tts_provider === 'qwen'">朗读风格
+          <select v-model="settings.tts_style"><option value="natural">自然</option><option value="gentle">温柔</option><option value="expressive">有感情</option></select>
+        </label>
+        <label>逐句跟读停顿 {{ settings.follow_pause_ms / 1000 }} 秒 <input v-model.number="settings.follow_pause_ms" type="range" min="0" max="5000" step="100"></label>
+        <div class="row"><button type="button" :disabled="previewLoading" @click="previewVoice">{{ previewLoading ? '生成试听中…' : '试听当前保存的朗读设置' }}</button></div>
+        <audio v-if="previewUrl" :src="previewUrl" controls aria-label="诗词朗读试听" />
+        <p v-if="previewError" role="alert">{{ previewError }}</p>
+        <p class="hint">本家庭已缓存 {{ cacheStats.clips }} 段朗读（{{ (cacheStats.bytes / 1024 / 1024).toFixed(1) }} MB）</p>
+        <button type="button" :disabled="cacheStats.clips === 0" @click="clearAudioCache">清除本家庭朗读缓存</button>
         <p class="hint">复习间隔（天）：{{ settings.review_intervals_days.join(' → ') }}</p>
         <button type="button" :disabled="saving" @click="saveSettings">保存设置</button>
       </section>

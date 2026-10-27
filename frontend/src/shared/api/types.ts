@@ -509,6 +509,45 @@ export interface KidWallet {
   coin: { balance: number; held: number; available: number; lifetime_earned: number }
 }
 
+export type LedgerAsset = 'xp' | 'point' | 'coin'
+
+export interface LedgerEntry {
+  ulid: string
+  amount: number
+  balance_after: number
+  entry_type: string
+  source_module: string
+  source_type: string | null
+  source_id: number | null
+  policy_code: string | null
+  source_name: string | null
+  note: string | null
+  business_date: string | null
+  created_at: string | null
+}
+
+export interface ChildLedger {
+  asset: LedgerAsset
+  balance?: number
+  held?: number
+  available?: number
+  lifetime_earned: number
+  level?: number
+  max_level?: number
+  to_next?: number
+  progress?: number
+  entries: LedgerEntry[]
+}
+
+export interface DeductionPreset {
+  id: number
+  title: string
+  point_amount: number
+  coin_amount: number
+  sort: number
+  is_active: boolean
+}
+
 export interface ItemLocation {
   id: number
   family_id: number

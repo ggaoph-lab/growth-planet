@@ -44,6 +44,7 @@ toNextLevel(lvl) =
 |---|---|---|
 | `reward` | XP / Points / Coins | 策略发放 |
 | `parent_bonus` | 三者 | 家长手动奖励 |
+| `parent_deduction` | Points / Coins | 家长扣减：可多选家庭预设扣分项（每项一条流水），或自定义原因；单项最多 50 |
 | `daily_allowance` | Points | 每日津贴（也可记为 reward + policy） |
 | `level_up` | XP | 升级扣除阈值 / 满级封顶 |
 | `level_down` | XP | 冲正前降级恢复阈值 / 恢复满级封顶 |

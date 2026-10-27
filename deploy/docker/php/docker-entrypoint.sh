@@ -7,6 +7,7 @@ mkdir -p \
   resources/views \
   storage/app/public \
   storage/app/private \
+  storage/app/poetry-library/audio \
   storage/framework/cache/data \
   storage/framework/sessions \
   storage/framework/views \
@@ -14,6 +15,9 @@ mkdir -p \
   bootstrap/cache
 
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || true
+
+# Copy shippable poem MP3 seeds into the durable volume (no-op when already present).
+php artisan poetry:audio-library sync >/dev/null 2>&1 || true
 
 if [[ -z "${APP_KEY:-}" ]]; then
   echo "ERROR: APP_KEY is empty. Set it in deploy/compose/.env.prod before starting." >&2

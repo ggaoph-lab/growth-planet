@@ -1,0 +1,9 @@
+{
+    "provider": "elevenlabs",
+    "voice": "Xb7hH8MSUJpSbSDYk0k2",
+    "model": "eleven_multilingual_v2",
+    "script_hash": "dd118ed4898993cc57be218e9f146d166246365f1a63bc555e2b2c688b7c129e",
+    "bytes": 146746,
+    "clip": "full",
+    "key": "deng-guan-que-lou"
+}

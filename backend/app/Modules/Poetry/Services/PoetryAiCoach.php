@@ -6,6 +6,7 @@ use App\Modules\Core\Settings\Settings;
 use App\Modules\Poetry\Models\PoetryPoem;
 use App\Modules\Poetry\Models\PoetryPoemEnrichment;
 use App\Modules\Task\Services\QwenClient;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -24,6 +25,21 @@ class PoetryAiCoach
         $enrichment = $this->ensureEnrichment($poem, $familyId);
 
         return (string) ($enrichment->story_zh ?: $this->fallbackStory($poem));
+    }
+
+    /** Kid-friendly author intro shown under the little story card. */
+    public function authorIntroFor(PoetryPoem $poem): string
+    {
+        $name = trim((string) ($poem->author ?? ''));
+        if ($name !== '') {
+            /** @var array<string, string> $bios */
+            $bios = require __DIR__.'/../data/grade1-authors.php';
+            if (isset($bios[$name]) && trim($bios[$name]) !== '') {
+                return trim($bios[$name]);
+            }
+        }
+
+        return $this->fallbackAuthorIntro($poem);
     }
 
     /**
@@ -144,8 +160,99 @@ class PoetryAiCoach
             is_array($existing?->line_meanings) ? $existing->line_meanings : null,
             $lineCount,
         );
+        $aiOn = $this->aiEnabled($familyId) && $this->qwenConfigured($familyId);
         if ($existing !== null && $existing->story_zh && $existing->image_prompt && $meaningsOk) {
+            // Retry AI polish at most once per hour when we still only have local fallbacks.
+            if ($aiOn && $existing->ai_provider !== 'qwen') {
+                $this->scheduleEnrichmentUpgrade($poem->id, $familyId, throttle: true);
+            }
+
             return $existing;
+        }
+
+        // Local-first: never block poem open on remote Qwen. Seed builtins/fallbacks now;
+        // when AI is enabled, upgrade in afterResponse so the kid page stays snappy.
+        $story = $existing?->story_zh ?: $this->fallbackStory($poem);
+        $prompt = $existing?->image_prompt ?: $this->fallbackImagePrompt($poem);
+        $meanings = $meaningsOk && is_array($existing?->line_meanings)
+            ? array_values(array_map(static fn ($m) => trim((string) $m), $existing->line_meanings))
+            : $this->fallbackLineMeanings($poem);
+        $needsAiUpgrade = $aiOn;
+
+        $row = PoetryPoemEnrichment::query()->updateOrCreate(
+            ['poem_id' => $poem->id],
+            [
+                'story_zh' => $story,
+                'line_meanings' => $meanings,
+                'image_prompt' => $prompt,
+                'ai_provider' => $existing?->ai_provider ?: 'local',
+                'ai_model' => $existing?->ai_model,
+            ],
+        );
+
+        if ($needsAiUpgrade) {
+            $this->scheduleEnrichmentUpgrade($poem->id, $familyId);
+        }
+
+        return $row;
+    }
+
+    /** Queue AI story/meanings upgrade after the HTTP response (sync in unit tests). */
+    private function scheduleEnrichmentUpgrade(int $poemId, int $familyId, bool $throttle = false): void
+    {
+        if ($throttle && ! Cache::add('poetry-enrich-ai:'.$poemId, 1, 3600)) {
+            return;
+        }
+
+        $job = function () use ($poemId, $familyId): void {
+            try {
+                $poem = PoetryPoem::query()->find($poemId);
+                if ($poem === null) {
+                    return;
+                }
+                app(self::class)->upgradeEnrichmentViaAi($poem, $familyId);
+            } catch (\Throwable $e) {
+                Log::warning('poetry.enrichment_upgrade_failed', [
+                    'poem_id' => $poemId,
+                    'family_id' => $familyId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        };
+
+        if (app()->runningUnitTests()) {
+            $job();
+
+            return;
+        }
+
+        dispatch($job)->afterResponse();
+    }
+
+    /**
+     * Best-effort Qwen refresh for story / image prompt / line meanings.
+     * Safe to call after the kid already received local fallbacks.
+     */
+    public function upgradeEnrichmentViaAi(PoetryPoem $poem, int $familyId): void
+    {
+        if (! $this->aiEnabled($familyId) || ! $this->qwenConfigured($familyId)) {
+            return;
+        }
+
+        $existing = PoetryPoemEnrichment::query()->where('poem_id', $poem->id)->first();
+        $lineCount = count($poem->lines());
+        $meaningsOk = ! $this->meaningsNeedRefresh(
+            is_array($existing?->line_meanings) ? $existing->line_meanings : null,
+            $lineCount,
+        );
+        if (
+            $existing !== null
+            && $existing->story_zh
+            && $existing->image_prompt
+            && $meaningsOk
+            && $existing->ai_provider === 'qwen'
+        ) {
+            return;
         }
 
         $story = $existing?->story_zh;
@@ -153,53 +260,55 @@ class PoetryAiCoach
         $meanings = $meaningsOk ? $existing->line_meanings : null;
         $provider = $existing?->ai_provider;
         $model = $existing?->ai_model;
-        $aiOn = $this->aiEnabled($familyId) && $this->qwenConfigured($familyId);
 
-        if ($aiOn && ($story === null || $prompt === null || $meanings === null)) {
-            // Prefer a focused line-meaning call when story/image already exist.
-            if ($meanings === null && $story !== null && $prompt !== null) {
-                $onlyMeanings = $this->generateLineMeaningsViaQwen($poem, $familyId);
-                if ($onlyMeanings !== null) {
-                    $meanings = $onlyMeanings['line_meanings'];
-                    $provider = 'qwen';
-                    $model = $onlyMeanings['model'] ?? $model;
-                }
-            }
-
-            if ($story === null || $prompt === null || $meanings === null) {
-                $generated = $this->generateEnrichmentViaQwen($poem, $familyId);
-                if ($generated !== null) {
-                    $story = $story ?: $generated['story_zh'];
-                    $prompt = $prompt ?: $generated['image_prompt'];
-                    $meanings = $meanings ?: $generated['line_meanings'];
-                    $provider = 'qwen';
-                    $model = $generated['model'];
-                }
-            }
-
-            if ($meanings === null) {
-                $onlyMeanings = $this->generateLineMeaningsViaQwen($poem, $familyId);
-                if ($onlyMeanings !== null) {
-                    $meanings = $onlyMeanings['line_meanings'];
-                    $provider = 'qwen';
-                    $model = $onlyMeanings['model'] ?? $model;
-                }
+        if ($meanings === null && $story !== null && $prompt !== null) {
+            $onlyMeanings = $this->generateLineMeaningsViaQwen($poem, $familyId);
+            if ($onlyMeanings !== null) {
+                $meanings = $onlyMeanings['line_meanings'];
+                $provider = 'qwen';
+                $model = $onlyMeanings['model'] ?? $model;
             }
         }
 
-        $story = $story ?: $this->fallbackStory($poem);
-        $prompt = $prompt ?: $this->fallbackImagePrompt($poem);
+        if ($story === null || $prompt === null || $meanings === null || $provider !== 'qwen') {
+            $generated = $this->generateEnrichmentViaQwen($poem, $familyId);
+            if ($generated !== null) {
+                $story = $story ?: $generated['story_zh'];
+                $prompt = $prompt ?: $generated['image_prompt'];
+                $meanings = $meanings ?: $generated['line_meanings'];
+                $provider = 'qwen';
+                $model = $generated['model'];
+            }
+        }
+
+        if ($meanings === null) {
+            $onlyMeanings = $this->generateLineMeaningsViaQwen($poem, $familyId);
+            if ($onlyMeanings !== null) {
+                $meanings = $onlyMeanings['line_meanings'];
+                $provider = 'qwen';
+                $model = $onlyMeanings['model'] ?? $model;
+            }
+        }
+
+        if ($story === null && $prompt === null && $meanings === null) {
+            return;
+        }
+
+        $story = $story ?: ($existing?->story_zh ?: $this->fallbackStory($poem));
+        $prompt = $prompt ?: ($existing?->image_prompt ?: $this->fallbackImagePrompt($poem));
         $meanings = ! $this->meaningsNeedRefresh(is_array($meanings) ? $meanings : null, $lineCount)
             ? array_values(array_map(static fn ($m) => trim((string) $m), $meanings))
-            : $this->fallbackLineMeanings($poem);
+            : ($meaningsOk
+                ? array_values(array_map(static fn ($m) => trim((string) $m), $existing->line_meanings))
+                : $this->fallbackLineMeanings($poem));
 
-        return PoetryPoemEnrichment::query()->updateOrCreate(
+        PoetryPoemEnrichment::query()->updateOrCreate(
             ['poem_id' => $poem->id],
             [
                 'story_zh' => $story,
                 'line_meanings' => $meanings,
                 'image_prompt' => $prompt,
-                'ai_provider' => $provider,
+                'ai_provider' => $provider ?: ($existing?->ai_provider ?: 'local'),
                 'ai_model' => $model,
             ],
         );
@@ -320,6 +429,7 @@ class PoetryAiCoach
         if ($meanings === null || count($meanings) !== $lineCount) {
             return true;
         }
+        $hasWordGloss = false;
         foreach ($meanings as $m) {
             $t = trim((string) $m);
             if ($t === '') {
@@ -330,6 +440,7 @@ class PoetryAiCoach
                 || str_contains($t, '体会诗人')
                 || str_contains($t, '体会意思')
                 || str_contains($t, '慢慢体会')
+                || str_contains($t, '想象一下当时的画面')
             ) {
                 return true;
             }
@@ -337,9 +448,13 @@ class PoetryAiCoach
             if (mb_strlen($t) < 28) {
                 return true;
             }
+            if (str_contains($t, '『') || str_contains($t, '合起来')) {
+                $hasWordGloss = true;
+            }
         }
 
-        return false;
+        // Older scene-only glosses (no word-by-word markers) should be regenerated.
+        return ! $hasWordGloss;
     }
 
     private function aiEnabled(int $familyId): bool
@@ -372,6 +487,16 @@ class PoetryAiCoach
         return "很久很久以前，{$author}写了一首叫《{$title}》的小诗。诗里讲的是：".implode('', $poem->lines()).' 我们一起慢慢读，想象画面，就像听故事一样。';
     }
 
+    private function fallbackAuthorIntro(PoetryPoem $poem): string
+    {
+        $author = trim((string) ($poem->author ?? '')) ?: '这位诗人';
+        $dynasty = trim((string) ($poem->dynasty ?? ''));
+        $title = $poem->title;
+        $era = $dynasty !== '' ? "{$dynasty}代的" : '';
+
+        return "{$author}是{$era}诗人，写下了《{$title}》。读诗的时候，可以想想他当时看见了什么、心里在想什么。";
+    }
+
     private function fallbackImagePrompt(PoetryPoem $poem): string
     {
         return "古诗《{$poem->title}》意境插画，".implode(' ', $poem->lines());
@@ -386,9 +511,9 @@ class PoetryAiCoach
             return $builtin;
         }
 
-        // Last resort: still try to sound like a kid explanation, not a vague prompt.
+        // Last resort: nudge toward word gloss + whole-line sense (AI/builtin preferred).
         return array_map(
-            static fn (string $line) => '这句说的是：'.preg_replace('/[，。！？、；：]/u', '', $line).'。想象一下当时的画面。',
+            static fn (string $line) => '先认字词：'.preg_replace('/[，。！？、；：]/u', '、', $line).'。合起来想想这句话在说什么，对照原文慢慢记。',
             $lines,
         );
     }
@@ -524,29 +649,33 @@ class PoetryAiCoach
 你是面向中国一年级（6–7岁）孩子的古诗词助手。根据给定古诗，输出严格 JSON（不要 markdown）：
 {
   "story_zh": "把古诗改写成 120–220 字的白话小故事，口语化、生动、有画面，不用文言，不出现恐吓内容",
-  "line_meanings": ["与 lines 一一对应的详细儿童讲解"],
+  "line_meanings": ["与 lines 一一对应的逐字词义讲解"],
   "image_prompt": "英文或中文皆可的 AI 绘画提示词，抓住意境与主要景物，末尾不要重复风格后缀"
 }
-line_meanings 要求：
+line_meanings 要求（帮助小朋友记诗）：
 - 数组长度必须等于诗句行数，顺序与 lines 一致
-- 每句 35–80 个汉字，比简单翻译更详细一点
-- 先说清楚画面里有谁、在干什么、看到什么，再轻轻点出心情或原因
-- 难字、典故要用一年级熟悉的词解释（如「疑是」→「还以为／好像是」）
-- 禁止只重复原句；禁止「慢慢体会」「想象画面」「体会诗人」等空话
-- 像温柔的老师把这句话讲给坐在身边的小朋友听
+- 每句 40–90 个汉字；优先讲「字/词是什么意思」，再一句合起来说整句
+- 按诗句从左到右拆关键词（二字词优先，难单字也要讲），用口语说清每个词义
+  例：「床前明月光」→「『床前』是床的前面；『明月光』是又亮又白的月光。合起来：床前面洒满了亮亮的月光。」
+- 难字、典故换成一年级熟悉说法（如「疑是」→「还以为／好像是」；「举头」→「抬起头」）
+- 诗句里的多音字要按本句词义解释清楚（如「还」表返回就说「回来／返回」，表仍然就说「仍旧／又」），避免笼统到让人读错音
+- 禁止只重复原句；禁止大段意境抒情；禁止「慢慢体会」「想象画面」「体会诗人」等空话
+- 像温柔的老师把每个字讲给坐在身边的小朋友听，方便对照原文背下来
 PROMPT;
 
     public const LINE_MEANINGS_SYSTEM_PROMPT = <<<'PROMPT'
-你是一年级语文老师。请把古诗每一句讲成适龄小朋友一听就懂、又够详细的解释。输出严格 JSON（不要 markdown）：
+你是一年级语文老师。请把古诗每一句讲成「先逐字词义、再合句」的讲解，方便小朋友对照原文记忆。输出严格 JSON（不要 markdown）：
 {
   "line_meanings": ["第1句解释", "第2句解释", "..."]
 }
 硬性要求：
 1. line_meanings 长度必须等于给定 line_count，顺序与 lines 完全对应
-2. 每句 35–80 个汉字：说明谁/什么在做什么、眼前是什么画面，必要时补一句心情或为什么
-3. 用口语短句，像讲故事；难字要换成孩子熟悉的说法
-4. 不要只抄原句；不要文言；不要恐吓内容
-5. 禁止「慢慢体会」「体会诗人」「好好想象」等空洞套话
+2. 每句 40–90 个汉字：先按从左到右解释关键词（二字词优先，难单字也讲），再用一两句口语把整句串起来
+3. 格式参考：「『A』是…；『B』是…。合起来：…。」不要写成长篇故事或空泛意境描写
+4. 用口语短句；难字换成孩子熟悉的说法（如「疑是」→「还以为」）
+5. 多音字按本句词义讲清含义（「还」=返回就写「回来」，=仍然就写「仍旧／又」），便于正确朗读，不要把拼音写进正文
+6. 不要只抄原句；不要文言；不要恐吓内容
+7. 禁止「慢慢体会」「体会诗人」「好好想象」等空洞套话
 PROMPT;
 
     public const RECITATION_SYSTEM_PROMPT = <<<'PROMPT'

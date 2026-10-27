@@ -7,18 +7,33 @@ use Illuminate\Support\Facades\File;
 
 class PoetryCatalog
 {
+    /** @var list<array<string, mixed>>|null */
+    private static ?array $grade1Rows = null;
+
     public function __construct(private readonly ShiQuanClient $shiQuan) {}
 
     /** Ensure the grade-1 builtin set exists; return them. */
     public function ensureBuiltinGrade1(): void
     {
-        $path = base_path('app/Modules/Poetry/data/grade1-poems.json');
-        if (! File::exists($path)) {
+        $rows = $this->grade1SourceRows();
+        if ($rows === []) {
             return;
         }
-        $rows = json_decode(File::get($path), true);
-        if (! is_array($rows)) {
-            return;
+        $expected = 0;
+        foreach ($rows as $row) {
+            if (is_array($row) && (string) ($row['key'] ?? '') !== '') {
+                $expected++;
+            }
+        }
+        // One COUNT beats N firstOrCreate round-trips on every hub/detail open.
+        if ($expected > 0) {
+            $have = PoetryPoem::query()
+                ->where('source', 'builtin')
+                ->where('grade_tag', 'grade1')
+                ->count();
+            if ($have >= $expected) {
+                return;
+            }
         }
         foreach ($rows as $row) {
             if (! is_array($row)) {
@@ -108,5 +123,23 @@ class PoetryCatalog
     public function findOrFail(int $id): PoetryPoem
     {
         return PoetryPoem::query()->findOrFail($id);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function grade1SourceRows(): array
+    {
+        if (self::$grade1Rows !== null) {
+            return self::$grade1Rows;
+        }
+        $path = base_path('app/Modules/Poetry/data/grade1-poems.json');
+        if (! File::exists($path)) {
+            return self::$grade1Rows = [];
+        }
+        $rows = json_decode(File::get($path), true);
+        self::$grade1Rows = is_array($rows) ? array_values(array_filter($rows, 'is_array')) : [];
+
+        return self::$grade1Rows;
     }
 }

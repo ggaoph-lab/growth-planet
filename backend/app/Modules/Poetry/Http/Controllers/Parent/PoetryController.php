@@ -10,7 +10,10 @@ use App\Modules\Identity\Support\CurrentContext;
 use App\Modules\Poetry\Models\PoetryAssignment;
 use App\Modules\Poetry\Models\PoetryRecitationRecord;
 use App\Modules\Poetry\Models\PoetryReviewPlan;
+use App\Modules\Poetry\Services\PoetryAudioService;
 use App\Modules\Poetry\Services\PoetryCatalog;
+use App\Modules\Poetry\Services\QwenPoetryTts;
+use App\Modules\Task\Services\FamilyAiConfig;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -102,6 +105,7 @@ class PoetryController
                     'author' => $p->author,
                     'dynasty' => $p->dynasty,
                 ], $this->catalog->grade1Poems()),
+                'audio_cache' => app(PoetryAudioService::class)->familyCacheStats($familyId),
             ],
         ]);
     }
@@ -113,6 +117,16 @@ class PoetryController
             'allow_ai' => ['sometimes', 'boolean'],
             'image_provider' => ['sometimes', 'string', 'in:mock,wanx'],
             'image_model' => ['sometimes', 'string', 'max:64'],
+            'tts_provider' => ['sometimes', 'string', 'in:qwen,elevenlabs'],
+            'tts_api_key' => ['sometimes', 'nullable', 'string', 'max:512'],
+            'clear_tts_api_key' => ['sometimes', 'boolean'],
+            'tts_workspace_id' => ['sometimes', 'nullable', 'string', 'regex:/^[a-zA-Z0-9_-]*$/', 'max:128'],
+            'tts_region' => ['sometimes', 'string', 'in:cn-beijing,ap-southeast-1'],
+            'tts_voice' => ['sometimes', 'string', 'in:wenhuaiqing_v3.1'],
+            'eleven_voice' => ['sometimes', 'nullable', 'string', 'regex:/^[A-Za-z0-9_-]*$/', 'max:64'],
+            'tts_rate_percent' => ['sometimes', 'integer', 'between:50,200'],
+            'tts_style' => ['sometimes', 'string', 'in:natural,gentle,expressive'],
+            'follow_pause_ms' => ['sometimes', 'integer', 'between:0,5000'],
         ]);
 
         if (array_key_exists('allow_ai', $data)) {
@@ -124,8 +138,49 @@ class PoetryController
         if (array_key_exists('image_model', $data)) {
             $this->settings->set('poetry.image_model', (string) $data['image_model'], $familyId, $this->context->user()->id);
         }
+        foreach (['tts_provider', 'tts_workspace_id', 'tts_region', 'tts_voice', 'eleven_voice', 'tts_rate_percent', 'tts_style', 'follow_pause_ms'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $this->settings->set('poetry.'.$field, $data[$field], $familyId, $this->context->user()->id);
+            }
+        }
+        if (! empty($data['clear_tts_api_key'])) {
+            $this->settings->set('poetry.tts_api_key', '', $familyId, $this->context->user()->id);
+        } elseif (trim((string) ($data['tts_api_key'] ?? '')) !== '') {
+            $this->settings->set('poetry.tts_api_key', trim($data['tts_api_key']), $familyId, $this->context->user()->id);
+        }
 
         return response()->json(['data' => $this->settingsPayload($familyId)]);
+    }
+
+    public function previewAudio(Request $request, QwenPoetryTts $tts, FamilyAiConfig $ai, PoetryAudioService $poetryAudio): JsonResponse
+    {
+        $data = $request->validate(['text' => ['sometimes', 'string', 'max:120']]);
+        $familyId = $this->context->familyId();
+        if ($this->settings->get('poetry.tts_provider', $familyId) === 'elevenlabs') {
+            $audio = $poetryAudio->previewElevenLabs($familyId);
+            return response()->json(['data' => $audio === null
+                ? ['available' => false, 'error' => 'ElevenLabs 试听失败，请检查家庭朗读设置中的 API Key 与音色 ID']
+                : ['available' => true, 'audio_base64' => base64_encode($audio['binary']), 'mime' => $audio['mime']]]);
+        }
+        $key = trim((string) $this->settings->get('poetry.tts_api_key', $familyId))
+            ?: (string) $ai->resolve($familyId)['tts_qwen_api_key'];
+        $workspace = trim((string) $this->settings->get('poetry.tts_workspace_id', $familyId))
+            ?: (string) config('poetry.audio.qwen_workspace_id', '');
+        $audio = $tts->synthesize(
+            (string) ($data['text'] ?? '床前明月光，疑是地上霜。'), $key, $workspace,
+            (string) $this->settings->get('poetry.tts_region', $familyId),
+            (string) $this->settings->get('poetry.tts_voice', $familyId),
+            (int) $this->settings->get('poetry.tts_rate_percent', $familyId) / 100,
+            (string) $this->settings->get('poetry.tts_style', $familyId),
+        );
+        return response()->json(['data' => $audio === null
+            ? ['available' => false, 'error' => $key === '' ? '请先配置阿里云 API Key' : '阿里云朗读失败，请检查 API Key 所属区域、模型权限和余额']
+            : ['available' => true, 'audio_base64' => base64_encode($audio['binary']), 'mime' => $audio['mime']]]);
+    }
+
+    public function clearAudioCache(PoetryAudioService $audio): JsonResponse
+    {
+        return response()->json(['data' => $audio->clearFamilyCache($this->context->familyId())]);
     }
 
     public function search(Request $request): JsonResponse
@@ -179,6 +234,9 @@ class PoetryController
             ],
         );
 
+        // Prefetch static practice pack (full + lines + meanings) onto the server.
+        app(PoetryAudioService::class)->scheduleWarmLibrary((int) $poem->id, $familyId, 'assign');
+
         return response()->json([
             'data' => [
                 'id' => $assignment->id,
@@ -186,6 +244,7 @@ class PoetryController
                 'poem_id' => $poem->id,
                 'due_date' => $assignment->due_date?->toDateString(),
                 'status' => $assignment->status,
+                'audio_warming' => true,
             ],
         ]);
     }
@@ -208,10 +267,25 @@ class PoetryController
     /** @return array<string, mixed> */
     private function settingsPayload(int $familyId): array
     {
+        $workspace = trim((string) $this->settings->get('poetry.tts_workspace_id', $familyId))
+            ?: trim((string) config('poetry.audio.qwen_workspace_id', ''));
+        $key = trim((string) $this->settings->get('poetry.tts_api_key', $familyId))
+            ?: trim((string) app(FamilyAiConfig::class)->resolve($familyId)['tts_qwen_api_key']);
         return [
             'allow_ai' => (bool) $this->settings->get('poetry.allow_ai', $familyId),
             'image_provider' => (string) $this->settings->get('poetry.image_provider', $familyId),
             'image_model' => (string) $this->settings->get('poetry.image_model', $familyId),
+            'tts_provider' => (string) $this->settings->get('poetry.tts_provider', $familyId),
+            'tts_workspace_id' => (string) $this->settings->get('poetry.tts_workspace_id', $familyId),
+            'tts_region' => (string) $this->settings->get('poetry.tts_region', $familyId),
+            'tts_voice' => (string) $this->settings->get('poetry.tts_voice', $familyId),
+            'eleven_voice' => (string) $this->settings->get('poetry.eleven_voice', $familyId),
+            'tts_rate_percent' => (int) $this->settings->get('poetry.tts_rate_percent', $familyId),
+            'tts_style' => (string) $this->settings->get('poetry.tts_style', $familyId),
+            'follow_pause_ms' => (int) $this->settings->get('poetry.follow_pause_ms', $familyId),
+            'tts_key_configured' => $key !== '',
+            'tts_workspace_configured' => $workspace !== '',
+            'qwen_ready' => $key !== '',
             'review_intervals_days' => config('poetry.review_intervals_days', [1, 2, 4, 7, 15]),
         ];
     }

@@ -1,16 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ApiError } from '@/shared/api/client'
+import { ApiError, api } from '@/shared/api/client'
 import { peekWarmGet, warmGet } from '@/shared/api/warmGet'
-import type { KidWallet } from '@/shared/api/types'
+import type { ChildLedger, KidWallet, LedgerEntry } from '@/shared/api/types'
+import { ledgerEntryKind, ledgerEntryTitle } from '@/shared/ledgerLabels'
+import { formatInTimezone } from '@/shared/time'
+import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
 const router = useRouter()
+const session = useSessionStore()
 const wallet = ref<KidWallet | null>(peekWarmGet<KidWallet>('/kid/wallet') ?? null)
 const loading = ref(wallet.value == null)
 const error = ref('')
+
+const activeAsset = ref<'point' | 'coin' | null>(null)
+const ledger = ref<ChildLedger | null>(null)
+const ledgerLoading = ref(false)
+const ledgerError = ref('')
+
+const ledgerTitle = computed(() =>
+  activeAsset.value === 'coin' ? t('kid.ledgerTitleCoins') : t('kid.ledgerTitlePoints'),
+)
 
 onMounted(async () => {
   try {
@@ -21,6 +34,36 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+async function openLedger(asset: 'point' | 'coin'): Promise<void> {
+  if (activeAsset.value === asset && ledger.value) {
+    activeAsset.value = null
+    ledger.value = null
+    return
+  }
+  activeAsset.value = asset
+  ledgerLoading.value = true
+  ledgerError.value = ''
+  try {
+    ledger.value = await api.get<ChildLedger>('/kid/wallet/ledger', { asset })
+  } catch (e) {
+    ledger.value = null
+    ledgerError.value = e instanceof ApiError ? e.message : t('common.loadFailed')
+  } finally {
+    ledgerLoading.value = false
+  }
+}
+
+function amountText(entry: LedgerEntry): string {
+  const sign = entry.amount > 0 ? '+' : ''
+  return `${sign}${entry.amount}`
+}
+
+function whenText(entry: LedgerEntry): string {
+  if (entry.created_at) return formatInTimezone(entry.created_at, session.timezone, 'MM-DD HH:mm')
+  return entry.business_date ?? ''
+}
+
 </script>
 
 <template>
@@ -48,17 +91,54 @@ onMounted(async () => {
           </div>
           <div class="sub muted">{{ t('common.lifetimeEarned', { n: wallet.xp?.lifetime_earned ?? 0 }) }}</div>
         </div>
-        <div class="orb points">
+        <button
+          type="button"
+          class="orb points clickable"
+          :class="{ active: activeAsset === 'point' }"
+          :aria-pressed="activeAsset === 'point'"
+          @click="openLedger('point')"
+        >
           <div class="label">{{ t('common.pointsLabel') }}</div>
           <div class="num">{{ wallet.points?.available ?? 0 }}</div>
           <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.points?.held ?? 0 }}</div>
-        </div>
-        <div class="orb coin">
+          <div class="sub muted tip-line">{{ t('kid.tapForLedger') }}</div>
+        </button>
+        <button
+          type="button"
+          class="orb coin clickable"
+          :class="{ active: activeAsset === 'coin' }"
+          :aria-pressed="activeAsset === 'coin'"
+          @click="openLedger('coin')"
+        >
           <div class="label">{{ t('common.growthCoin') }}</div>
           <div class="num">{{ wallet.coin?.available ?? 0 }}</div>
           <div class="sub">{{ t('growth.available') }} · {{ t('growth.held') }} {{ wallet.coin?.held ?? 0 }}</div>
-        </div>
+          <div class="sub muted tip-line">{{ t('kid.tapForLedger') }}</div>
+        </button>
       </section>
+
+      <section v-if="activeAsset" class="ledger" aria-live="polite">
+        <div class="ledger-head">
+          <h2>{{ ledgerTitle }}</h2>
+          <button type="button" class="close" @click="activeAsset = null; ledger = null">{{ t('kid.closeLedger') }}</button>
+        </div>
+        <p v-if="ledgerLoading" class="hint">{{ t('common.loading') }}</p>
+        <p v-else-if="ledgerError" class="err">{{ ledgerError }}</p>
+        <p v-else-if="!ledger?.entries?.length" class="hint">{{ t('kid.ledgerEmpty') }}</p>
+        <ul v-else class="entries">
+          <li v-for="entry in ledger.entries" :key="entry.ulid" class="entry">
+            <div class="entry-main">
+              <span class="entry-note">{{ ledgerEntryTitle(entry) }}</span>
+              <span class="entry-amt" :class="{ plus: entry.amount > 0, minus: entry.amount < 0 }">{{ amountText(entry) }}</span>
+            </div>
+            <div class="entry-meta">
+              <span>{{ whenText(entry) }} · {{ ledgerEntryKind(entry) }}</span>
+              <span>{{ t('kid.ledgerBalanceAfter', { n: entry.balance_after }) }}</span>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <p class="tip">{{ t('kid.shopTip') }}</p>
       <RouterLink class="shop-link" :to="{ name: 'kid-shop' }">{{ t('kid.goShop') }}</RouterLink>
     </template>
@@ -120,12 +200,29 @@ onMounted(async () => {
   border-radius: 20px;
   padding: 20px;
   text-align: center;
+  border: none;
+  color: inherit;
+  font: inherit;
+}
+.orb.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.orb.clickable:hover,
+.orb.clickable:focus-visible {
+  transform: translateY(-2px);
+  outline: none;
+}
+.orb.clickable.active {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55);
 }
 .orb.xp {
   background: linear-gradient(160deg, #5b8def, #3d5fc4);
+  color: #fff;
 }
 .orb.points {
   background: linear-gradient(160deg, #6bcf8e, #3fa66a);
+  color: #fff;
 }
 .orb.coin {
   background: linear-gradient(160deg, #f5c542, #e89b1f);
@@ -148,6 +245,9 @@ onMounted(async () => {
   margin-top: 6px;
   opacity: 0.7;
 }
+.tip-line {
+  margin-top: 8px;
+}
 .bar {
   margin: 10px auto 0;
   height: 8px;
@@ -161,6 +261,79 @@ onMounted(async () => {
   height: 100%;
   background: #fff;
   border-radius: inherit;
+}
+.ledger {
+  margin-bottom: 20px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.ledger-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ledger-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.close {
+  border: none;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  /* Show ~5 rows; older entries stay reachable by scroll. */
+  max-height: calc(5 * 4.25rem + 4 * 10px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+.entry {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.entry-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.entry-note {
+  font-weight: 600;
+  text-align: left;
+}
+.entry-amt {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.entry-amt.plus {
+  color: #9dffb8;
+}
+.entry-amt.minus {
+  color: #ffb4b4;
+}
+.entry-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.75;
 }
 .tip {
   text-align: center;
