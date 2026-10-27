@@ -183,7 +183,7 @@ class PoetryPracticeService
         $story = $this->ai->storyFor($poem, $child->family_id);
         $authorIntro = $this->ai->authorIntroFor($poem);
         $lineMeanings = $this->ai->lineMeaningsFor($poem, $child->family_id);
-        $image = $this->images->ensureImage($poem, $child->family_id);
+        $image = $this->images->cachedOrSchedule($poem, $child->family_id);
 
         $records = PoetryRecitationRecord::query()
             ->where('child_id', $child->id)

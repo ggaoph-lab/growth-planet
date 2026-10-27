@@ -63,6 +63,7 @@ class PoetryRecommendationService
 
         // Prefetch static practice pack so kid playback hits server files, not live TTS.
         $this->audio->scheduleWarmLibrary((int) $pick['poem']->id, (int) $child->family_id, 'recommend');
+        app(PoemImageService::class)->schedulePreparation((int) $pick['poem']->id, (int) $child->family_id);
 
         return $row;
     }

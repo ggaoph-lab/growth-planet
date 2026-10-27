@@ -8,7 +8,9 @@ use App\Modules\Poetry\Image\ImageProvider;
 use App\Modules\Poetry\Image\ImageProviderManager;
 use App\Modules\Poetry\Models\PoetryImageCache;
 use App\Modules\Poetry\Models\PoetryPoem;
+use App\Modules\Poetry\Jobs\PreparePoemAssets;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -23,6 +25,40 @@ use Illuminate\Support\Facades\Storage;
  */
 class PoemImageService
 {
+    /** Return a cached image immediately; missing assets are prepared by the queue. */
+    public function cachedOrSchedule(PoetryPoem $poem, int $familyId): array
+    {
+        $this->hydrateWanxKeyFromFamily($familyId);
+        $provider = $this->providers->resolve($familyId);
+        $name = $provider->isConfigured() ? $provider->name() : 'mock';
+        foreach (array_unique([$name, 'mock']) as $candidate) {
+            $row = PoetryImageCache::query()->where('poem_id', $poem->id)
+                ->where('provider', $candidate)->where('status', 'ready')
+                ->whereNotNull('image_url')->first();
+            if ($row !== null && ! $this->shouldRegenerateMock($row, $poem)) {
+                return ['url' => $row->image_url, 'provider' => $candidate, 'status' => 'ready', 'cached' => true];
+            }
+        }
+
+        $this->schedulePreparation((int) $poem->id, $familyId);
+        if (app()->runningUnitTests()) {
+            return $this->ensureImage($poem, $familyId);
+        }
+        return ['url' => null, 'provider' => $name, 'status' => 'pending', 'cached' => false];
+    }
+
+    public function schedulePreparation(int $poemId, int $familyId): void
+    {
+        if (app()->runningUnitTests()) {
+            (new PreparePoemAssets($poemId, $familyId))->handle($this, app(PoetryAiCoach::class));
+            return;
+        }
+        if (! Cache::add("poetry-prepare:{$poemId}:{$familyId}", true, 300)) {
+            return;
+        }
+        PreparePoemAssets::dispatch($poemId, $familyId);
+    }
+
     public function __construct(
         private readonly ImageProviderManager $providers,
         private readonly PoetryAiCoach $ai,

@@ -126,6 +126,29 @@ let discardRecording = false
 let followAdvanceAfterStop = false
 let scoreAfterStop: 'read_aloud' | 'recite' | 'challenge' | null = null
 let speechSeq = 0
+let imagePoll: ReturnType<typeof setTimeout> | null = null
+
+function stopImagePoll(): void {
+  if (imagePoll) clearTimeout(imagePoll)
+  imagePoll = null
+}
+
+function pollImage(poemId: number, attempts = 0): void {
+  stopImagePoll()
+  if (attempts >= 18) return
+  imagePoll = setTimeout(async () => {
+    if (view.value !== 'poem' || detail.value?.poem.id !== poemId) return
+    try {
+      const updated = await api.get<PoemDetail>(`/kid/poetry/poems/${poemId}`)
+      if (detail.value?.poem.id !== poemId) return
+      detail.value.image = updated.image
+      detail.value.line_meanings = updated.line_meanings
+      if (!updated.image.url) pollImage(poemId, attempts + 1)
+    } catch {
+      pollImage(poemId, attempts + 1)
+    }
+  }, 10000)
+}
 
 const recordingMime = typeof MediaRecorder !== 'undefined'
   ? ['audio/webm', 'audio/mp4'].find((type) => MediaRecorder.isTypeSupported(type))
@@ -218,6 +241,7 @@ function resetPracticeState(): void {
 }
 
 async function openPoem(card: PoemCard, asChallenge = false): Promise<void> {
+  stopImagePoll()
   if (session.me?.child?.preferences.sounds) playTap()
   void unlockSpeak()
   challengeMode.value = asChallenge || mode.value === 'challenge'
@@ -230,6 +254,7 @@ async function openPoem(card: PoemCard, asChallenge = false): Promise<void> {
   try {
     detail.value = await api.get<PoemDetail>(`/kid/poetry/poems/${card.id}`)
     view.value = 'poem'
+    if (!detail.value.image.url) pollImage(card.id)
     void loadChinesePinyin()
     // Safety-net prefetch; assign/recommend already warm the full static pack server-side.
     void warmPoemLibrary(detail.value)
@@ -255,6 +280,7 @@ function warmPoemLibrary(d: PoemDetail): void {
 
 function back(): void {
   if (view.value === 'poem') {
+    stopImagePoll()
     resetPracticeState()
     view.value = 'mode'
     detail.value = null
@@ -740,6 +766,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopImagePoll()
   mounted.value = false
   offPinyinReady?.()
   offPinyinReady = null

@@ -12,6 +12,7 @@ use App\Modules\Poetry\Models\PoetryRecitationRecord;
 use App\Modules\Poetry\Models\PoetryReviewPlan;
 use App\Modules\Poetry\Services\PoetryAudioService;
 use App\Modules\Poetry\Services\PoetryCatalog;
+use App\Modules\Poetry\Services\PoemImageService;
 use App\Modules\Poetry\Services\QwenPoetryTts;
 use App\Modules\Task\Services\FamilyAiConfig;
 use Illuminate\Http\JsonResponse;
@@ -236,6 +237,7 @@ class PoetryController
 
         // Prefetch static practice pack (full + lines + meanings) onto the server.
         app(PoetryAudioService::class)->scheduleWarmLibrary((int) $poem->id, $familyId, 'assign');
+        app(PoemImageService::class)->schedulePreparation((int) $poem->id, $familyId);
 
         return response()->json([
             'data' => [
