@@ -10,6 +10,12 @@ return [
      * Image generation: switch provider with poetry.image_provider family setting
      * (or IMAGE_GEN_PROVIDER env default). Adapters live under Modules/Poetry/Image.
      */
+    /**
+     * Full story + line_meanings JSON often needs 35–90s on DashScope.
+     * Keep above services.qwen.timeout (30) or enrichment upgrades always fail.
+     */
+    'enrichment_timeout' => (int) env('POETRY_ENRICHMENT_TIMEOUT', 120),
+
     'image' => [
         'default_provider' => env('IMAGE_GEN_PROVIDER', 'mock'),
         'wanx' => [

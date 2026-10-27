@@ -5,6 +5,7 @@ namespace App\Modules\Poetry\Services;
 use App\Modules\Core\Settings\Settings;
 use App\Modules\Poetry\Models\PoetryPoem;
 use App\Modules\Poetry\Models\PoetryPoemEnrichment;
+use App\Modules\Task\Services\HomeworkLlmTimeoutException;
 use App\Modules\Task\Services\QwenClient;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -261,7 +262,11 @@ class PoetryAiCoach
         $provider = $existing?->ai_provider;
         $model = $existing?->ai_model;
 
-        if ($meanings === null && $story !== null && $prompt !== null) {
+        // Prefer replacing local placeholder story/prompt/meanings with Qwen output.
+        $storyIsLocal = $story === null || $this->isLocalFallbackStory($story);
+        $promptIsLocal = $prompt === null || $this->isLocalFallbackImagePrompt($poem, $prompt);
+
+        if ($meanings === null && $story !== null && $prompt !== null && ! $storyIsLocal && ! $promptIsLocal) {
             $onlyMeanings = $this->generateLineMeaningsViaQwen($poem, $familyId);
             if ($onlyMeanings !== null) {
                 $meanings = $onlyMeanings['line_meanings'];
@@ -270,12 +275,18 @@ class PoetryAiCoach
             }
         }
 
-        if ($story === null || $prompt === null || $meanings === null || $provider !== 'qwen') {
+        if ($story === null || $prompt === null || $meanings === null || $provider !== 'qwen' || $storyIsLocal || $promptIsLocal) {
             $generated = $this->generateEnrichmentViaQwen($poem, $familyId);
             if ($generated !== null) {
-                $story = $story ?: $generated['story_zh'];
-                $prompt = $prompt ?: $generated['image_prompt'];
-                $meanings = $meanings ?: $generated['line_meanings'];
+                if ($story === null || $storyIsLocal) {
+                    $story = $generated['story_zh'];
+                }
+                if ($prompt === null || $promptIsLocal) {
+                    $prompt = $generated['image_prompt'];
+                }
+                if ($meanings === null) {
+                    $meanings = $generated['line_meanings'];
+                }
                 $provider = 'qwen';
                 $model = $generated['model'];
             }
@@ -338,7 +349,16 @@ class PoetryAiCoach
             ],
         ];
 
-        $result = $this->qwen->chatJson($messages, $this->qwenConfig($familyId));
+        try {
+            $result = $this->qwen->chatJson($messages, $this->qwenConfig($familyId));
+        } catch (HomeworkLlmTimeoutException $e) {
+            Log::warning('poetry.enrichment_timeout', [
+                'poem_id' => $poem->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
         $parsed = $this->parseJsonObject($result['content'] ?? null);
         if ($parsed === null) {
             return null;
@@ -384,7 +404,16 @@ class PoetryAiCoach
             ],
         ];
 
-        $result = $this->qwen->chatJson($messages, $this->qwenConfig($familyId));
+        try {
+            $result = $this->qwen->chatJson($messages, $this->qwenConfig($familyId));
+        } catch (HomeworkLlmTimeoutException $e) {
+            Log::warning('poetry.line_meanings_timeout', [
+                'poem_id' => $poem->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
         $parsed = $this->parseJsonObject($result['content'] ?? null);
         if ($parsed === null) {
             return null;
@@ -435,6 +464,10 @@ class PoetryAiCoach
             if ($t === '') {
                 return true;
             }
+            // Offline seed text — looks long enough to pass length checks but is not a real gloss.
+            if ($this->isLocalFallbackMeaning($t)) {
+                return true;
+            }
             if (
                 str_contains($t, '慢慢想画面')
                 || str_contains($t, '体会诗人')
@@ -457,6 +490,24 @@ class PoetryAiCoach
         return ! $hasWordGloss;
     }
 
+    private function isLocalFallbackMeaning(string $text): bool
+    {
+        return str_contains($text, '先认字词：')
+            || str_contains($text, '对照原文慢慢记');
+    }
+
+    private function isLocalFallbackStory(string $story): bool
+    {
+        return str_starts_with($story, '很久很久以前，')
+            && str_contains($story, '我们一起慢慢读');
+    }
+
+    private function isLocalFallbackImagePrompt(PoetryPoem $poem, string $prompt): bool
+    {
+        return $prompt === $this->fallbackImagePrompt($poem)
+            || str_starts_with($prompt, "古诗《{$poem->title}》意境插画");
+    }
+
     private function aiEnabled(int $familyId): bool
     {
         return (bool) $this->settings->get('poetry.allow_ai', $familyId);
@@ -467,15 +518,17 @@ class PoetryAiCoach
         return $this->qwen->isConfigured($this->qwenConfig($familyId));
     }
 
-    /** @return array{api_key?: string, model?: string} */
+    /** @return array{api_key?: string, model?: string, timeout?: int} */
     private function qwenConfig(int $familyId): array
     {
         $key = trim((string) $this->settings->get('ai.qwen_api_key', $familyId));
         $model = trim((string) $this->settings->get('ai.qwen_model', $familyId));
+        $timeout = max(30, (int) config('poetry.enrichment_timeout', 120));
 
         return array_filter([
             'api_key' => $key !== '' ? $key : null,
             'model' => $model !== '' ? $model : null,
+            'timeout' => $timeout,
         ], fn ($v) => $v !== null);
     }
 

@@ -2,13 +2,16 @@
 
 namespace App\Modules\Poetry\Services;
 
+use App\Modules\Core\Settings\Settings;
 use App\Modules\Poetry\Image\BuiltinPoemIllustrations;
 use App\Modules\Poetry\Image\ImageProvider;
 use App\Modules\Poetry\Image\ImageProviderManager;
 use App\Modules\Poetry\Models\PoetryImageCache;
 use App\Modules\Poetry\Models\PoetryPoem;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Generate once, cache forever (per poem + provider). Subsequent opens read DB only.
@@ -31,6 +34,7 @@ class PoemImageService
      */
     public function ensureImage(PoetryPoem $poem, int $familyId): array
     {
+        $this->hydrateWanxKeyFromFamily($familyId);
         $provider = $this->providers->resolve($familyId);
         if (! $provider->isConfigured()) {
             $provider = $this->providers->get('mock');
@@ -100,13 +104,14 @@ class PoemImageService
 
             try {
                 $result = $provider->generate($fullPrompt);
+                $url = $this->persistRemoteImageLocally($poem, $name, $result['url']);
 
                 return $this->persistReady(
                     $row,
                     $poem,
                     $name,
                     $result['model'] ?? null,
-                    $result['url'],
+                    $url,
                     $fullPrompt,
                 );
             } catch (\Throwable $e) {
@@ -194,13 +199,66 @@ class PoemImageService
             return true;
         }
 
-        if (str_starts_with($model, 'mock-placeholder') || str_starts_with($model, 'mock-scene-svg')) {
-            return true;
-        }
-        if (str_contains($url, 'image/svg') || str_contains($url, 'image/png;base64')) {
+        // One-shot upgrade from the oldest abstract PNG placeholders.
+        if (str_starts_with($model, 'mock-placeholder') || str_contains($url, 'image/png;base64')) {
             return true;
         }
 
         return false;
+    }
+
+    /** Prefer env DASHSCOPE_API_KEY; fall back to the family Qwen chat key. */
+    private function hydrateWanxKeyFromFamily(int $familyId): void
+    {
+        if (trim((string) config('poetry.image.wanx.api_key', '')) !== '') {
+            return;
+        }
+        $familyKey = trim((string) app(Settings::class)->get('ai.qwen_api_key', $familyId));
+        if ($familyKey !== '') {
+            config(['poetry.image.wanx.api_key' => $familyKey]);
+        }
+    }
+
+    /**
+     * Wanx returns short-lived OSS HTTPS URLs blocked by our CSP (img-src self/data/blob).
+     * Mirror into public storage so the kid UI can load the illustration.
+     */
+    private function persistRemoteImageLocally(PoetryPoem $poem, string $provider, string $url): string
+    {
+        if (! str_starts_with($url, 'https://') && ! str_starts_with($url, 'http://')) {
+            return $url;
+        }
+
+        try {
+            $response = Http::timeout(45)->get($url);
+            if (! $response->successful()) {
+                Log::warning('poetry.image_mirror_failed', [
+                    'poem_id' => $poem->id,
+                    'provider' => $provider,
+                    'status' => $response->status(),
+                ]);
+
+                return $url;
+            }
+            $bytes = $response->body();
+            if ($bytes === '') {
+                return $url;
+            }
+            $mime = strtolower((string) $response->header('Content-Type'));
+            $ext = str_contains($mime, 'jpeg') || str_contains($mime, 'jpg') ? 'jpg'
+                : (str_contains($mime, 'webp') ? 'webp' : 'png');
+            $path = "poetry-art/generated/{$poem->id}-{$provider}.{$ext}";
+            Storage::disk('public')->put($path, $bytes);
+
+            return '/storage/'.$path;
+        } catch (\Throwable $e) {
+            Log::warning('poetry.image_mirror_failed', [
+                'poem_id' => $poem->id,
+                'provider' => $provider,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $url;
+        }
     }
 }
