@@ -13,7 +13,7 @@ import { Onboarding } from "./pages/Onboarding";
 import { Practice } from "./pages/Practice";
 import { Today } from "./pages/Today";
 import { cue } from "./lib/sound";
-import { store, useStore } from "./store/store";
+import { flush, hydrateFromCloud, store, useStore } from "./store/store";
 import { EntryView } from "./ui/EntryView";
 import { AmbienceController, AmbiencePicker } from "./ui/Ambience";
 import { Logo } from "./ui/Logo";
@@ -97,6 +97,9 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
   const theme = useStore((s) => s.settings.theme);
   const [palette, setPalette] = useState(false);
   const [splash, setSplash] = useState(shouldShowSplash);
+  // Embedded under Growth Planet as 雅思星球 (/ielts/).
+  const inGrowthPlanet = import.meta.env.BASE_URL.includes("/ielts");
+  const [cloudReady, setCloudReady] = useState(!inGrowthPlanet);
   const focus = route.page === "learn";
 
   useEffect(() => {
@@ -120,21 +123,41 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
   }, [route.page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  // Embedded under Growth Planet as 雅思星球 (/ielts/).
-  const inGrowthPlanet = import.meta.env.BASE_URL.includes("/ielts");
 
   useEffect(() => {
     if (!inGrowthPlanet) return;
     // Warm Sanctum CSRF so the first phrase tap can hit /kid/tts without waiting.
     void fetch("/sanctum/csrf-cookie", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    let cancelled = false;
+    void hydrateFromCloud().finally(() => {
+      if (!cancelled) setCloudReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [inGrowthPlanet]);
+
+  if (!cloudReady) {
+    return (
+      <div className="boot" aria-busy="true">
+        <Logo />
+        <span className="spinner" />
+      </div>
+    );
+  }
 
   return (
     <div className={`app ${focus ? "is-focus" : ""}`}>
       {!focus && (
         <header className="topbar">
           {inGrowthPlanet && (
-            <a className="icon-btn" href="/kid/" aria-label="返回成长星球" title="返回成长星球">
+            <a
+              className="icon-btn"
+              href="/kid/"
+              aria-label="返回成长星球"
+              title="返回成长星球"
+              onClick={() => flush()}
+            >
               <ChevronLeft size={19} />
             </a>
           )}

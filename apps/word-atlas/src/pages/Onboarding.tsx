@@ -14,7 +14,14 @@ export function Onboarding() {
   const atlas = useAtlas();
   const [level, setLevel] = useState(1);
   const [goal, setGoal] = useState(10);
-  const finish = () => store.settings({ onboarded: true, startLevel: atlas.cefr.indexOf(LEVELS[level][0]), dailyNew: goal });
+  const finish = () => {
+    const startLevel = atlas.cefr.indexOf(LEVELS[level][0]);
+    store.settings({
+      onboarded: true,
+      startLevel: startLevel >= 0 ? startLevel : 1,
+      dailyNew: goal,
+    });
+  };
   return (
     <div className="onboard" role="dialog" aria-modal="true" aria-label="欢迎">
       <div className="onboard-card">
@@ -51,7 +58,7 @@ export function Onboarding() {
           <button className="btn btn-primary btn-xl" onClick={finish}>
             出发 <ArrowRight size={20} />
           </button>
-          <p className="muted">不用注册。进度只留在这台设备上，随时可以在「我的」里修改。</p>
+          <p className="muted">学习路线会保存在本设备和成长星球账号里，随时可以在「我的」里修改。</p>
         </div>
       </div>
     </div>

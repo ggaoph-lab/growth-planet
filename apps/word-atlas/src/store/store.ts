@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Accent } from "../atlas/types";
+import { inGrowthPlanet, pullLearningState, pushLearningState } from "../lib/growth";
 import type { CardState, Grade } from "./srs";
 
 export type QuizKind = "meaning" | "picture" | "listen" | "spell";
@@ -187,6 +188,10 @@ export function sanitizeSettings(v: unknown): Settings {
   return s;
 }
 
+function cardCount(p: Progress): number {
+  return Object.keys(p.cards).length;
+}
+
 /* ---------- store ---------- */
 
 interface State {
@@ -202,10 +207,14 @@ let state: State = {
 };
 const listeners = new Set<() => void>();
 let saveTimer: number | undefined;
+let cloudTimer: number | undefined;
 /** Only write when this tab changed something, so idle tabs never clobber newer data. */
 let dirty = false;
 /** Progress is written only after it has been read from storage for this dataset. */
 let loadedId: string | null = null;
+/** Allow writing an intentionally empty progress (reset / import). */
+let allowEmptyProgressWrite = false;
+let cloudHydrated = !inGrowthPlanet;
 
 function emit() {
   listeners.forEach((l) => l());
@@ -217,16 +226,46 @@ function scheduleSave() {
   saveTimer = window.setTimeout(flush, 250);
 }
 
+function scheduleCloudPush() {
+  if (!inGrowthPlanet || !cloudHydrated) return;
+  window.clearTimeout(cloudTimer);
+  cloudTimer = window.setTimeout(() => {
+    void pushLearningState(state.settings, state.progress);
+  }, 400);
+}
+
 export function flush() {
   window.clearTimeout(saveTimer);
   if (!dirty) return;
-  dirty = false;
-  const progressOk = loadedId !== state.progress.datasetId || write(progressKey(state.progress.datasetId), state.progress);
-  const ok = progressOk && write(SETTINGS_KEY, state.settings);
+
+  // Settings must always attempt to persist — do not gate on progress write success.
+  // (A failed progress setItem used to block onboarded=true from ever landing.)
+  const settingsOk = write(SETTINGS_KEY, state.settings);
+
+  let progressOk = true;
+  if (loadedId === state.progress.datasetId) {
+    const key = progressKey(state.progress.datasetId);
+    const empty = cardCount(state.progress) === 0 && !state.progress.session;
+    if (empty && !allowEmptyProgressWrite) {
+      const existing = read<Progress>(key);
+      const existingCards = existing && isObj(existing) && isObj(existing.cards) ? Object.keys(existing.cards).length : 0;
+      // Never clobber a rich local progress blob with an accidental empty state.
+      if (existingCards > 0) progressOk = true;
+      else progressOk = write(key, state.progress);
+    } else {
+      progressOk = write(key, state.progress);
+      allowEmptyProgressWrite = false;
+    }
+  }
+
+  const ok = settingsOk && progressOk;
+  // Keep dirty if either write failed so pagehide / next edit can retry.
+  dirty = !ok;
   if (ok === state.saveError) {
     state = { ...state, saveError: !ok };
     emit();
   }
+  if (ok) scheduleCloudPush();
 }
 
 if (typeof window !== "undefined") {
@@ -267,9 +306,61 @@ export const store = {
   settings(patch: Partial<Settings>) {
     state = { ...state, settings: { ...state.settings, ...patch } };
     emit();
-    scheduleSave();
+    // Path / onboarding must land before navigation can tear the page down.
+    if ("onboarded" in patch || "startLevel" in patch || "dailyNew" in patch) {
+      dirty = true;
+      flush();
+    } else {
+      scheduleSave();
+    }
   },
 };
+
+/**
+ * Pull learning path + progress from Growth Planet when embedded under /ielts/.
+ * Prefers cloud when local looks empty / not onboarded, or cloud has more cards.
+ */
+export async function hydrateFromCloud(): Promise<void> {
+  if (!inGrowthPlanet) {
+    cloudHydrated = true;
+    return;
+  }
+  try {
+    const remote = await pullLearningState();
+    if (!remote) {
+      // First visit or offline: push whatever we have so the next device can recover.
+      if (state.settings.onboarded || cardCount(state.progress) > 0) {
+        void pushLearningState(state.settings, state.progress);
+      }
+      return;
+    }
+
+    const remoteSettings = sanitizeSettings(remote.settings);
+    const datasetId = state.progress.datasetId;
+    const remoteProgress = sanitizeProgress(remote.progress, datasetId);
+    const localCards = cardCount(state.progress);
+    const remoteCards = cardCount(remoteProgress);
+
+    const preferRemoteSettings = remoteSettings.onboarded && (!state.settings.onboarded || remoteCards >= localCards);
+    const preferRemoteProgress = remoteCards > localCards || (remoteCards > 0 && localCards === 0);
+
+    if (preferRemoteSettings || preferRemoteProgress) {
+      state = {
+        ...state,
+        settings: preferRemoteSettings ? remoteSettings : state.settings,
+        progress: preferRemoteProgress ? { ...remoteProgress, session: state.progress.session } : state.progress,
+      };
+      loadedId = datasetId;
+      dirty = true;
+      flush();
+      emit();
+    } else if (state.settings.onboarded || localCards > 0) {
+      void pushLearningState(state.settings, state.progress);
+    }
+  } finally {
+    cloudHydrated = true;
+  }
+}
 
 export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state), () => select(state));
@@ -320,6 +411,7 @@ export function importBackup(text: string): { ok: true; cards: number } | { ok: 
   const progress = sanitizeProgress({ ...data.progress, session: null }, id);
   state = { ...state, progress, settings: { ...sanitizeSettings(data.settings), onboarded: true } };
   emit();
+  allowEmptyProgressWrite = cardCount(progress) === 0;
   markDirty();
   flush();
   return { ok: true, cards: Object.keys(progress.cards).length };
@@ -328,6 +420,7 @@ export function importBackup(text: string): { ok: true; cards: number } | { ok: 
 export function resetProgress() {
   state = { ...state, progress: emptyProgress(state.progress.datasetId) };
   emit();
+  allowEmptyProgressWrite = true;
   markDirty();
   flush();
 }

@@ -73,6 +73,10 @@ rsync -a --delete \
   --exclude 'node_modules/' \
   --exclude 'frontend/node_modules/' \
   --exclude 'frontend/dist/' \
+  --exclude 'apps/word-atlas/dist/' \
+  --exclude 'apps/word-atlas/public/atlas/img/' \
+  --exclude 'apps/word-atlas/public/atlas/audio/' \
+  --exclude 'apps/word-atlas/public/atlas/thumb/' \
   --exclude 'backend/vendor/' \
   --exclude '.release-*/' \
   "$work/src/" "$ROOT/"
