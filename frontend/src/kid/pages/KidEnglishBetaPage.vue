@@ -637,6 +637,16 @@ async function saveAndLeave(opts: { announce?: boolean } = {}) {
 async function leaveScene() {
   await saveAndLeave({ announce: false })
 }
+
+/** Always-available exit: mid-visit keeps progress; otherwise finish or just leave the hub. */
+async function goBackHome() {
+  if (busy.value || recording.value || preparingVoice.value) return
+  if (session.value) {
+    await leaveScene()
+    return
+  }
+  await router.push({ name: 'kid-home' })
+}
 </script>
 
 <template>
@@ -671,6 +681,13 @@ async function leaveScene() {
     </div>
 
     <nav class="dir" aria-label="英语星球 Beta">
+      <button
+        type="button"
+        class="back"
+        :disabled="busy || recording || preparingVoice"
+        :aria-label="session ? (adventureOpen ? '保存并离开' : '结束本次并返回') : '返回星球'"
+        @click="goBackHome"
+      >← 星球</button>
       <span class="tag">Beta</span>
       <div class="dir-text">
         <strong>英语星球 Beta</strong>
@@ -948,6 +965,28 @@ async function leaveScene() {
   gap: 10px;
   margin: 0 0 var(--beta-gap);
   text-align: left;
+}
+.dir .back {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dir .back:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.dir .back:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
 }
 .dir-text {
   display: flex;
