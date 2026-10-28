@@ -44,6 +44,7 @@
 | GET | `/api/v1/auth/me` | 已登录 | 用户、角色、`is_site_admin`、家庭（时区）、孩子档案（孩子会话）、`sudo_until` |
 | POST | `/api/v1/auth/confirm-password` | 家长 | `{password}` → `{sudo_until}`；限流 |
 | GET | `/api/v1/auth/device` | 游客 | 当前设备是否已授权 `{authorized, name}` |
+| POST | `/api/v1/auth/device/pair` | 游客 | `{code, name}`；一次性配对新浏览器，成功下发 HttpOnly 设备 Cookie；失败按 IP 限流 |
 | GET | `/api/v1/auth/kid/profiles` | 已授权设备 | 可登录的孩子 `[{id, nickname, avatar, theme_color, pin_required}]` |
 | POST | `/api/v1/auth/kid/login` | 已授权设备 | `{child_id, pin}`；限流 5 次/10 分钟/设备+孩子 |
 
@@ -75,6 +76,7 @@
 |---|---|---|
 | GET | `/api/v1/parent/devices` | 已授权设备 |
 | POST | `/api/v1/parent/devices` 🔐 | 将**当前浏览器**授权为孩子设备 `{name}`，下发 HttpOnly Cookie |
+| POST | `/api/v1/parent/devices/pairing-code` 🔐 | 生成 8 位、10 分钟有效的一次性配对码；新码使旧码失效 |
 | PATCH | `/api/v1/parent/devices/{id}` | 重命名已授权设备 `{name}`（已撤销不可改） |
 | DELETE | `/api/v1/parent/devices/{id}` | 撤销（无需二次密码；授权仍需 🔐） |
 | GET | `/api/v1/parent/audit-logs` | 分页、按动作筛选 |

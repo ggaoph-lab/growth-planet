@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -18,6 +18,9 @@ const devices = ref<Device[]>([])
 const loading = ref(true)
 const name = ref(t('parent.devices.defaultName'))
 const authorizing = ref(false)
+const pairingCode = ref('')
+const pairingBusy = ref(false)
+let pairingExpiryTimer: ReturnType<typeof setTimeout> | null = null
 const needKid = computed(() => route.query.for === 'kid')
 /** After the first confirmed revoke this visit, skip the confirm dialog (and password is not required for revoke). */
 const revokeConfirmDone = ref(false)
@@ -85,6 +88,20 @@ async function authorize(): Promise<void> {
   }
 }
 
+async function createPairingCode(): Promise<void> {
+  pairingBusy.value = true
+  try {
+    const result = await api.post<{ code: string; expires_at: string }>('/parent/devices/pairing-code', {})
+    pairingCode.value = result.code
+    if (pairingExpiryTimer) clearTimeout(pairingExpiryTimer)
+    pairingExpiryTimer = setTimeout(() => { pairingCode.value = '' }, Math.max(0, Date.parse(result.expires_at) - Date.now()))
+  } catch (e) {
+    if (e instanceof ApiError && e.code !== 'SUDO_REQUIRED') ElMessage.error(e.message)
+  } finally {
+    pairingBusy.value = false
+  }
+}
+
 async function startRename(device: Device): Promise<void> {
   editingId.value = device.id
   editingName.value = device.name
@@ -140,6 +157,7 @@ async function revoke(device: Device): Promise<void> {
 }
 
 onMounted(load)
+onBeforeUnmount(() => { if (pairingExpiryTimer) clearTimeout(pairingExpiryTimer) })
 </script>
 
 <template>
@@ -161,6 +179,18 @@ onMounted(load)
           }}
         </el-button>
         <el-button v-if="currentAuthorized && needKid" type="success" @click="enterKidMode">{{ t('parent.devices.enterKid') }}</el-button>
+      </div>
+    </section>
+
+    <section v-loading="loading" class="block">
+      <h2>{{ t('parent.devices.pairingTitle') }}</h2>
+      <p class="desc">{{ t('parent.devices.pairingDesc') }}</p>
+      <el-button type="primary" plain :loading="pairingBusy" @click="createPairingCode">
+        {{ t('parent.devices.createPairingCode') }}
+      </el-button>
+      <div v-if="pairingCode" class="pairing-code" aria-live="polite">
+        <strong>{{ pairingCode.slice(0, 4) }} {{ pairingCode.slice(4) }}</strong>
+        <p>{{ t('parent.devices.pairingExpires') }}</p>
       </div>
     </section>
 
@@ -244,6 +274,15 @@ h2 {
   line-height: 1.6;
   margin: 0 0 12px;
 }
+.pairing-code {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f2f5ff;
+  text-align: center;
+}
+.pairing-code strong { font-size: 28px; letter-spacing: 3px; font-variant-numeric: tabular-nums; }
+.pairing-code p { margin: 8px 0 0; color: #6b6f80; font-size: 13px; }
 .ok {
   margin-bottom: 12px;
 }

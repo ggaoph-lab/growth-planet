@@ -18,6 +18,14 @@ const selected = ref<KidLoginProfile | null>(null)
 const message = ref('')
 const busy = ref(false)
 const pinpad = ref<InstanceType<typeof PinPad> | null>(null)
+const pairingCode = ref('')
+const pairingName = ref(t('auth.pairingDefaultName'))
+
+async function loadProfiles(): Promise<void> {
+  profiles.value = await api.get<KidLoginProfile[]>('/auth/kid/profiles')
+  state.value = 'ready'
+  prefetchKidHome()
+}
 
 function prefetchKidHome(): void {
   void ensureCsrfCookie()
@@ -29,14 +37,34 @@ onMounted(async () => {
   void ensureCsrfCookie()
   if (session.isParent) await session.logout()
   try {
-    profiles.value = await api.get<KidLoginProfile[]>('/auth/kid/profiles')
-    state.value = 'ready'
-    prefetchKidHome()
+    await loadProfiles()
   } catch (e) {
     if (e instanceof ApiError && e.code === 'DEVICE_NOT_AUTHORIZED') state.value = 'unauthorized'
     else message.value = e instanceof ApiError ? e.message : t('common.loadFailed')
   }
 })
+
+async function pairBrowser(): Promise<void> {
+  const code = pairingCode.value.replace(/\s/g, '')
+  const name = pairingName.value.trim()
+  if (!/^\d{8}$/.test(code) || !name || busy.value) {
+    message.value = t('auth.pairingInputHint')
+    return
+  }
+  busy.value = true
+  message.value = ''
+  try {
+    await ensureCsrfCookie()
+    await api.post('/auth/device/pair', { code, name })
+    await session.checkDevice()
+    await loadProfiles()
+    pairingCode.value = ''
+  } catch (e) {
+    message.value = e instanceof ApiError ? e.message : t('common.loadFailed')
+  } finally {
+    busy.value = false
+  }
+}
 
 async function login(pin: string | null): Promise<void> {
   if (!selected.value || busy.value) return
@@ -70,6 +98,22 @@ function choose(p: KidLoginProfile): void {
       <div class="panel">
         <div class="big-emoji">🔒</div>
         <p>{{ t('auth.deviceNotAuthorized') }}</p>
+        <p class="pairing-hint">{{ t('auth.pairingHint') }}</p>
+        <form class="pairing-form" @submit.prevent="pairBrowser">
+          <label for="pairing-code">{{ t('auth.pairingCode') }}</label>
+          <input
+            id="pairing-code"
+            v-model="pairingCode"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="9"
+            :placeholder="t('auth.pairingCodePlaceholder')"
+          />
+          <label for="pairing-name">{{ t('auth.pairingName') }}</label>
+          <input id="pairing-name" v-model="pairingName" type="text" maxlength="64" />
+          <button type="submit" :disabled="busy">{{ t('auth.pairBrowser') }}</button>
+        </form>
       </div>
     </template>
 
@@ -178,6 +222,29 @@ h1 {
 .big-emoji {
   font-size: 56px;
 }
+.pairing-hint { font-size: 15px; opacity: 0.9; }
+.pairing-form { display: grid; gap: 10px; text-align: left; margin-top: 18px; }
+.pairing-form label { font-size: 14px; }
+.pairing-form input {
+  min-height: 48px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #aeb5da;
+  border-radius: 12px;
+  background: #fff;
+  color: #1b2045;
+  font-size: 18px;
+}
+.pairing-form button {
+  min-height: 48px;
+  margin-top: 8px;
+  border-radius: 12px;
+  background: #7fdbaf;
+  color: #182b42;
+  font-size: 17px;
+  font-weight: 700;
+}
+.pairing-form button:disabled { opacity: 0.6; }
 .message {
   margin-top: 20px;
   padding: 10px 18px;

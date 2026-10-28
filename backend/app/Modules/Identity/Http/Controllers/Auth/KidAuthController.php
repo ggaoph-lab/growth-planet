@@ -13,6 +13,7 @@ use App\Modules\Identity\Http\Resources\MePresenter;
 use App\Modules\Identity\Models\ChildProfile;
 use App\Modules\Identity\Models\TrustedDevice;
 use App\Modules\Identity\Services\DeviceTokens;
+use App\Modules\Identity\Services\DevicePairing;
 use App\Modules\Identity\Services\PinHasher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -40,6 +41,21 @@ class KidAuthController
             'authorized' => $device !== null,
             'name' => $device?->name,
         ]]);
+    }
+
+    public function pairDevice(Request $request, DevicePairing $pairing): JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['required', 'string', 'regex:/^[0-9]{8}$/'],
+            'name' => ['required', 'string', 'min:1', 'max:64'],
+        ]);
+
+        [$device, $token] = $pairing->redeem($data['code'], trim($data['name']), (string) $request->ip());
+
+        return response()->json(['data' => [
+            'authorized' => true,
+            'name' => $device->name,
+        ]])->withCookie($this->devices->cookie($token));
     }
 
     public function profiles(Request $request): JsonResponse

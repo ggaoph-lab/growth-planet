@@ -164,6 +164,13 @@ erDiagram
 | authorized_by | FK users |
 | last_used_at, revoked_at, timestamps | |
 
+### `device_pairing_codes`
+| 列 | 说明 |
+|---|---|
+| id, family_id, created_by | 家庭及生成码的家长 |
+| code_hash | CHAR(64) UNIQUE，8 位码的 HMAC 摘要 |
+| expires_at, used_at, created_at | 10 分钟过期；核销或生成新码时标记已用 |
+
 ### `system_settings`
 | 列 | 说明 |
 |---|---|

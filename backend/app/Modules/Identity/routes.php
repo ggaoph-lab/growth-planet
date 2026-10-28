@@ -18,6 +18,7 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('login', [ParentAuthController::class, 'login']);
     Route::post('register', [RegisterController::class, 'store']);
     Route::get('device', [KidAuthController::class, 'device']);
+    Route::post('device/pair', [KidAuthController::class, 'pairDevice']);
     Route::get('kid/profiles', [KidAuthController::class, 'profiles']);
     Route::post('kid/login', [KidAuthController::class, 'login']);
 
@@ -63,6 +64,7 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 
     Route::get('devices', [DeviceController::class, 'index']);
     Route::post('devices', [DeviceController::class, 'store'])->middleware('sudo');
+    Route::post('devices/pairing-code', [DeviceController::class, 'pairingCode'])->middleware('sudo');
     Route::patch('devices/{id}', [DeviceController::class, 'update'])->whereNumber('id');
     Route::delete('devices/{id}', [DeviceController::class, 'destroy'])->whereNumber('id');
 

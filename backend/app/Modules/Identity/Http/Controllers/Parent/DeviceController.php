@@ -6,6 +6,7 @@ use App\Modules\Core\Audit\AuditLogger;
 use App\Modules\Core\Support\Clock;
 use App\Modules\Identity\Models\TrustedDevice;
 use App\Modules\Identity\Services\DeviceTokens;
+use App\Modules\Identity\Services\DevicePairing;
 use App\Modules\Identity\Support\CurrentContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -48,6 +49,13 @@ class DeviceController
         return response()
             ->json(['data' => $this->present($device->load('authorizer.member'), true)], 201)
             ->withCookie($tokens->cookie($token));
+    }
+
+    public function pairingCode(DevicePairing $pairing): JsonResponse
+    {
+        $result = $pairing->create($this->context->familyId(), $this->context->user());
+
+        return response()->json(['data' => $result], 201);
     }
 
     public function update(Request $request, int $id, DeviceTokens $tokens): JsonResponse
