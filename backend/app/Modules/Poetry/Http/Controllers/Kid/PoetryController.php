@@ -101,7 +101,7 @@ class PoetryController
         $child = $this->context->child();
 
         return response()->json([
-            'data' => $this->audio->ensureClip(
+            'data' => $this->audio->readyClip(
                 $id,
                 (string) ($data['clip'] ?? 'full'),
                 (int) $child->family_id,
@@ -123,7 +123,7 @@ class PoetryController
 
         $response = response()->file($file['path'], [
             'Content-Type' => $file['mime'],
-            'Cache-Control' => 'no-store',
+            'Cache-Control' => 'private, max-age=604800',
             'Accept-Ranges' => 'bytes',
         ]);
         $response->setPrivate();
@@ -144,9 +144,8 @@ class PoetryController
 
         return response()->json([
             'data' => [
-                'items' => $this->audio->warm(
-                    $id,
-                    (int) $child->family_id,
+                'items' => array_map(
+                    fn (string $clip) => $this->audio->readyClip($id, $clip, (int) $child->family_id),
                     $clips,
                 ),
             ],

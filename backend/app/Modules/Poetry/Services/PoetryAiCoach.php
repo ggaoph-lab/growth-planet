@@ -28,6 +28,22 @@ class PoetryAiCoach
         return (string) ($enrichment->story_zh ?: $this->fallbackStory($poem));
     }
 
+    /** Read a prepared static explanation without invoking or scheduling AI. */
+    public function cachedContentFor(PoetryPoem $poem): array
+    {
+        $row = PoetryPoemEnrichment::query()->where('poem_id', $poem->id)->first();
+        $lines = $poem->lines();
+        $validMeanings = ! $this->meaningsNeedRefresh(
+            is_array($row?->line_meanings) ? $row->line_meanings : null,
+            count($lines),
+        );
+        return [
+            'story' => (string) ($row?->story_zh ?: $this->fallbackStory($poem)),
+            'line_meanings' => $validMeanings ? $row->line_meanings : $this->fallbackLineMeanings($poem),
+            'needs_preparation' => $row === null || ! $row->story_zh || ! $row->image_prompt || ! $validMeanings,
+        ];
+    }
+
     /** Kid-friendly author intro shown under the little story card. */
     public function authorIntroFor(PoetryPoem $poem): string
     {

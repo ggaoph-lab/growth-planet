@@ -6,6 +6,9 @@ use Illuminate\Support\Facades\Schedule;
 use App\Modules\Poetry\Models\PoetryAssignment;
 use App\Modules\Poetry\Models\PoetryWeeklyRecommendation;
 use App\Modules\Poetry\Services\PoemImageService;
+use App\Modules\Poetry\Services\PoetryRecommendationService;
+use App\Modules\Core\Support\Clock;
+use App\Modules\Identity\Models\ChildProfile;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -24,6 +27,21 @@ Artisan::command('poetry:prepare-assets {--limit=500}', function () {
     $this->info('Scheduled '.$pairs->count().' assigned or recommended poem assets.');
 })->purpose('Queue image and line-meaning preparation for existing poetry assignments');
 
+Artisan::command('poetry:prepare-weekly', function () {
+    $recommendations = app(PoetryRecommendationService::class);
+    $clock = app(Clock::class);
+    $created = 0;
+    ChildProfile::query()->with('family')->where('status', 'active')->chunkById(100, function ($children) use ($recommendations, $clock, &$created) {
+        foreach ($children as $child) {
+            $date = $clock->today($child->family?->timezone ?: 'Asia/Shanghai');
+            if ($recommendations->currentFor($child, $date) !== null) {
+                $created++;
+            }
+        }
+    });
+    $this->info('Checked weekly poetry recommendations for '.$created.' children.');
+})->purpose('Create and prepare weekly poems before children open the planet');
+
 // Queue housekeeping. Task instances are generated lazily on kid/parent access;
 // the scheduler process stays up for this prune job and future scheduled work.
 Schedule::command('queue:prune-failed --hours=168')->dailyAt('03:15');
@@ -32,3 +50,4 @@ Schedule::command('english:prune-speak-attempts')->dailyAt('03:30');
 Schedule::command('english:prepare-day')->everyTenMinutes()->withoutOverlapping(60)->runInBackground();
 // Family-local daily points; runs often with grant-key idempotency so each child gets at most one grant per business day.
 Schedule::command('points:grant-daily-allowance')->everyTenMinutes()->withoutOverlapping(30)->runInBackground();
+Schedule::command('poetry:prepare-weekly')->everyTenMinutes()->withoutOverlapping(30)->runInBackground();

@@ -3,6 +3,7 @@
 namespace App\Modules\Poetry\Services;
 
 use App\Modules\Poetry\Models\PoetryAudioCache;
+use App\Modules\Poetry\Jobs\PreparePoemAudioClip;
 use App\Modules\Poetry\Models\PoetryPoem;
 use App\Modules\Task\Services\FamilyAiConfig;
 use App\Modules\Task\Services\QwenTtsService;
@@ -222,10 +223,7 @@ class PoetryAudioService
         return $this->warm($poemId, $familyId, $this->libraryClipsFor($poem));
     }
 
-    /**
-     * Generate the practice pack after assign/recommend. Runs after the HTTP response
-     * in production; sync in unit tests so assertions see the files.
-     */
+    /** Queue each clip separately so slow TTS never occupies an HTTP worker. */
     public function scheduleWarmLibrary(int $poemId, int $familyId, string $source = 'assign'): void
     {
         if (! $this->hasWarmCredentials($familyId)) {
@@ -239,26 +237,51 @@ class PoetryAudioService
             return;
         }
 
-        $warm = function () use ($poemId, $familyId, $source): void {
-            try {
-                $this->warmLibrary($poemId, $familyId);
-            } catch (\Throwable $e) {
-                Log::warning('poetry.audio.warm_failed', [
-                    'source' => $source,
-                    'poem_id' => $poemId,
-                    'family_id' => $familyId,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        };
-
+        $poem = $this->catalog->findOrFail($poemId);
         if (app()->runningUnitTests()) {
-            $warm();
+            $this->warmLibrary($poemId, $familyId);
 
             return;
         }
+        foreach ($this->libraryClipsFor($poem) as $clip) {
+            $this->scheduleClip($poemId, $familyId, $clip);
+        }
+    }
 
-        dispatch($warm)->afterResponse();
+    private function scheduleClip(int $poemId, int $familyId, string $clip): void
+    {
+        if (Cache::add("poetry-audio-prepare:{$poemId}:{$familyId}:{$clip}", true, 300)) {
+            PreparePoemAudioClip::dispatch($poemId, $familyId, $clip);
+        }
+    }
+
+    /** Metadata for a server file only. Never synthesize in a kid request. */
+    public function readyClip(int $poemId, string $clip, int $familyId): array
+    {
+        $file = $this->absolutePathForReadyClip($poemId, $clip, $familyId);
+        if ($file === null && ! app()->runningUnitTests() && $this->hasWarmCredentials($familyId)) {
+            $this->scheduleClip($poemId, $familyId, $clip);
+        }
+        $row = $file === null ? null : PoetryAudioCache::query()
+            ->where('poem_id', $poemId)
+            ->whereIn('clip_key', [$file['clip'], $file['clip'].'--family-'.$familyId])
+            ->where('status', 'ready')
+            ->orderByDesc('id')
+            ->first();
+        $seedProvider = null;
+        if ($file !== null && $row === null) {
+            $poem = PoetryPoem::query()->find($poemId);
+            $seedProvider = $poem === null ? null : ($this->library->metaFor($poem, $file['clip'])['provider'] ?? null);
+        }
+        return [
+            'clip' => $file['clip'] ?? $clip,
+            'url' => $file === null ? null : $this->streamUrl($poemId, $file['clip']).'&v='.filemtime($file['path']),
+            'mime' => $file['mime'] ?? 'audio/mpeg',
+            'provider' => $file === null ? null : ($row?->provider ?: $seedProvider ?: 'library'),
+            'cached' => $file !== null,
+            'status' => $file === null ? 'pending' : 'ready',
+            'script' => '',
+        ];
     }
 
     /** True when assign/recommend can synthesize into the permanent library (not free-proxy fallback). */

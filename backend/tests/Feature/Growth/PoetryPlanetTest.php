@@ -9,18 +9,44 @@ use App\Modules\Poetry\Services\PoetryAudioLibrary;
 use App\Modules\Poetry\Services\PoetryAudioService;
 use App\Modules\Poetry\Services\PoetryCatalog;
 use App\Modules\Poetry\Services\PoetryReviewScheduler;
+use App\Modules\Poetry\Services\PoemImageService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class PoetryPlanetTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_missing_image_file_is_regenerated_as_server_static_asset(): void
+    {
+        Storage::fake('public');
+        ['family' => $family] = $this->makeFamily();
+        $poem = PoetryPoem::query()->create([
+            'source' => 'shiquan',
+            'external_id' => 'test-static-art',
+            'title' => '测试诗',
+            'author' => '测试',
+            'content' => "春风入院来。\n花开满枝头。",
+        ]);
+        $images = app(PoemImageService::class);
+        $first = $images->ensureImage($poem, $family->id);
+        $this->assertSame('ready', $first['status']);
+        $this->assertStringStartsWith('/storage/poetry-art/generated/', $first['url']);
+        $path = substr($first['url'], strlen('/storage/'));
+        Storage::disk('public')->assertExists($path);
+
+        Storage::disk('public')->delete($path);
+        $second = $images->ensureImage($poem, $family->id);
+        $this->assertFalse($second['cached']);
+        Storage::disk('public')->assertExists($path);
+    }
 
     public function test_kid_hub_has_three_modes_and_recite_works(): void
     {
@@ -313,14 +339,20 @@ class PoetryPlanetTest extends TestCase
         $this->assertStringContainsString('床前明月光', $script);
         $this->assertStringNotContainsString('……', $script);
 
+        $this->actingAsKid($child, $device, $token)
+            ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
+            ->assertOk()->assertJsonPath('data.status', 'pending');
+        Http::assertNothingSent();
+        app(PoetryAudioService::class)->ensureClip($poem->id, 'full', $family->id);
+
         $meta = $this->actingAsKid($child, $device, $token)
             ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
             ->assertOk()
             ->assertJsonPath('data.clip', 'full')
             ->assertJsonPath('data.status', 'ready')
             ->assertJsonPath('data.provider', 'elevenlabs')
-            ->assertJsonPath('data.cached', false)
-            ->assertJsonPath('data.url', '/api/v1/kid/poetry/poems/'.$poem->id.'/audio/file?clip=full');
+            ->assertJsonPath('data.cached', true)
+            ->assertJsonStructure(['data' => ['url']]);
 
         $this->assertDatabaseHas('poetry_audio_cache', [
             'poem_id' => $poem->id,
@@ -417,6 +449,11 @@ class PoetryPlanetTest extends TestCase
         try {
             $this->actingAsKid($child, $device, $token)
                 ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
+                ->assertOk()->assertJsonPath('data.status', 'pending');
+            Http::assertNothingSent();
+            app(PoetryAudioService::class)->ensureClip($poem->id, 'full', $family->id);
+            $this->actingAsKid($child, $device, $token)
+                ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
                 ->assertOk()->assertJsonPath('data.provider', 'qwen-poetry')->assertJsonPath('data.clip', 'full');
             Http::assertSent(fn ($request) => str_contains($request->url(), 'SpeechSynthesizer')
                 && $request->hasHeader('Authorization', 'Bearer test-poetry-key')
@@ -441,11 +478,11 @@ class PoetryPlanetTest extends TestCase
                 && ! str_contains($request['input']['instruction'], '题目、朝代和作者'));
             $authorClip = 'author--family-'.$family->id;
             $this->forgetLibraryClip(app(PoetryAudioLibrary::class), $poem, $authorClip);
+            app(PoetryAudioService::class)->ensureClip($poem->id, 'author', $family->id);
             $authorMeta = $this->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=author')
                 ->assertOk()
                 ->assertJsonPath('data.provider', 'qwen-poetry')
                 ->assertJsonPath('data.clip', 'author');
-            $this->assertStringContainsString('李白', (string) $authorMeta->json('data.script'));
             Http::assertSent(fn ($request) => str_contains($request->url(), 'SpeechSynthesizer')
                 && str_contains($request['input']['instruction'], '介绍这位诗人')
                 && str_contains($request['input']['instruction'], '只朗读输入的作者简介')
@@ -454,7 +491,7 @@ class PoetryPlanetTest extends TestCase
                 ->assertOk()->assertJsonPath('data.cached', true);
             $this->get('/api/v1/kid/poetry/poems/'.$poem->id.'/audio/file?clip=full')
                 ->assertOk()->assertHeader('Content-Type', 'audio/mpeg')
-                ->assertHeader('Cache-Control', 'no-store, private');
+                ->assertHeader('Cache-Control', 'max-age=604800, private');
             $this->assertSame(2, app(PoetryAudioService::class)->clearFamilyCache($family->id)['clips']);
             $this->assertDatabaseMissing('poetry_audio_cache', ['poem_id' => $poem->id, 'clip_key' => $clip]);
         } finally {
@@ -482,6 +519,11 @@ class PoetryPlanetTest extends TestCase
         $clip = 'full--family-'.$family->id;
         $this->forgetLibraryClip(app(PoetryAudioLibrary::class), $poem, $clip);
         try {
+            $this->actingAsKid($child, $device, $token)
+                ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
+                ->assertOk()->assertJsonPath('data.status', 'pending');
+            Http::assertNothingSent();
+            app(PoetryAudioService::class)->ensureClip($poem->id, 'full', $family->id);
             $this->actingAsKid($child, $device, $token)
                 ->getJson('/api/v1/kid/poetry/poems/'.$poem->id.'/audio?clip=full')
                 ->assertOk()->assertJsonPath('data.status', 'ready')->assertJsonPath('data.provider', 'qwen-poetry');

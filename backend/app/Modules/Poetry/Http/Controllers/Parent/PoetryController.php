@@ -236,7 +236,6 @@ class PoetryController
         );
 
         // Prefetch static practice pack (full + lines + meanings) onto the server.
-        app(PoetryAudioService::class)->scheduleWarmLibrary((int) $poem->id, $familyId, 'assign');
         app(PoemImageService::class)->schedulePreparation((int) $poem->id, $familyId);
 
         return response()->json([

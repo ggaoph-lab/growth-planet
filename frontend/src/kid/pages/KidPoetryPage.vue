@@ -256,26 +256,11 @@ async function openPoem(card: PoemCard, asChallenge = false): Promise<void> {
     view.value = 'poem'
     if (!detail.value.image.url) pollImage(card.id)
     void loadChinesePinyin()
-    // Safety-net prefetch; assign/recommend already warm the full static pack server-side.
-    void warmPoemLibrary(detail.value)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t('kid.planetSignalError')
   } finally {
     loading.value = false
   }
-}
-
-function poemLibraryClipsFor(d: PoemDetail): string[] {
-  const clips = ['full', 'author']
-  d.poem.lines.forEach((_, i) => {
-    clips.push(`line-${i}`, `meaning-${i}`)
-  })
-  return clips
-}
-
-function warmPoemLibrary(d: PoemDetail): void {
-  const clips = poemLibraryClipsFor(d)
-  void api.post(`/kid/poetry/poems/${d.poem.id}/audio/warm`, { clips }).catch(() => null)
 }
 
 function back(): void {

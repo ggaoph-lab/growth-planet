@@ -17,7 +17,6 @@ class PoetryRecommendationService
     public function __construct(
         private readonly PoetryCatalog $catalog,
         private readonly Clock $clock,
-        private readonly PoetryAudioService $audio,
     ) {}
 
     public function weekKey(CarbonImmutable $businessDate): string
@@ -62,7 +61,6 @@ class PoetryRecommendationService
         ])->load('poem');
 
         // Prefetch static practice pack so kid playback hits server files, not live TTS.
-        $this->audio->scheduleWarmLibrary((int) $pick['poem']->id, (int) $child->family_id, 'recommend');
         app(PoemImageService::class)->schedulePreparation((int) $pick['poem']->id, (int) $child->family_id);
 
         return $row;

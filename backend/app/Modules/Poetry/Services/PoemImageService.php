@@ -35,8 +35,11 @@ class PoemImageService
             $row = PoetryImageCache::query()->where('poem_id', $poem->id)
                 ->where('provider', $candidate)->where('status', 'ready')
                 ->whereNotNull('image_url')->first();
-            if ($row !== null && ! $this->shouldRegenerateMock($row, $poem)) {
-                return ['url' => $row->image_url, 'provider' => $candidate, 'status' => 'ready', 'cached' => true];
+            if ($row !== null && $this->cachedFileExists($row) && ! $this->shouldRegenerateMock($row, $poem)) {
+                if ($candidate !== $name) {
+                    $this->schedulePreparation((int) $poem->id, $familyId);
+                }
+                return ['url' => $this->publicCachedUrl($row), 'provider' => $candidate, 'status' => 'ready', 'cached' => true];
             }
         }
 
@@ -50,7 +53,12 @@ class PoemImageService
     public function schedulePreparation(int $poemId, int $familyId): void
     {
         if (app()->runningUnitTests()) {
-            (new PreparePoemAssets($poemId, $familyId))->handle($this, app(PoetryAiCoach::class));
+            (new PreparePoemAssets($poemId, $familyId))->handle(
+                $this,
+                app(PoetryAiCoach::class),
+                app(PoetryAudioService::class),
+                $this->providers,
+            );
             return;
         }
         if (! Cache::add("poetry-prepare:{$poemId}:{$familyId}", true, 300)) {
@@ -98,9 +106,9 @@ class PoemImageService
             ->whereNotNull('image_url')
             ->first();
 
-        if ($cached !== null && ! $this->shouldRegenerateMock($cached, $poem)) {
+        if ($cached !== null && $this->cachedFileExists($cached) && ! $this->shouldRegenerateMock($cached, $poem)) {
             return [
-                'url' => $cached->image_url,
+                'url' => $this->publicCachedUrl($cached),
                 'provider' => $name,
                 'status' => 'ready',
                 'cached' => true,
@@ -114,9 +122,9 @@ class PoemImageService
                 ->lockForUpdate()
                 ->first();
 
-            if ($row !== null && $row->status === 'ready' && $row->image_url && ! $this->shouldRegenerateMock($row, $poem)) {
+            if ($row !== null && $row->status === 'ready' && $row->image_url && $this->cachedFileExists($row) && ! $this->shouldRegenerateMock($row, $poem)) {
                 return [
-                    'url' => $row->image_url,
+                    'url' => $this->publicCachedUrl($row),
                     'provider' => $name,
                     'status' => 'ready',
                     'cached' => true,
@@ -236,11 +244,33 @@ class PoemImageService
         }
 
         // One-shot upgrade from the oldest abstract PNG placeholders.
-        if (str_starts_with($model, 'mock-placeholder') || str_contains($url, 'image/png;base64')) {
+        if (str_starts_with($model, 'mock-placeholder') || str_starts_with($url, 'data:')) {
             return true;
         }
 
         return false;
+    }
+
+    private function cachedFileExists(PoetryImageCache $row): bool
+    {
+        $url = (string) $row->image_url;
+        if (str_starts_with($url, '/storage/')) {
+            return Storage::disk('public')->exists(substr($url, strlen('/storage/')));
+        }
+        if (str_starts_with($url, '/poetry-art/')) {
+            return true; // Bundled with the nginx frontend image, not the PHP image.
+        }
+        return false;
+    }
+
+    private function publicCachedUrl(PoetryImageCache $row): string
+    {
+        $url = (string) $row->image_url;
+        if (str_starts_with($url, '/storage/')) {
+            $path = substr($url, strlen('/storage/'));
+            return $url.'?v='.Storage::disk('public')->lastModified($path);
+        }
+        return $url;
     }
 
     /** Prefer env DASHSCOPE_API_KEY; fall back to the family Qwen chat key. */
@@ -261,8 +291,22 @@ class PoemImageService
      */
     private function persistRemoteImageLocally(PoetryPoem $poem, string $provider, string $url): string
     {
+        if (str_starts_with($url, 'data:image/svg+xml;base64,')) {
+            $bytes = base64_decode(substr($url, strlen('data:image/svg+xml;base64,')), true);
+            if ($bytes === false || $bytes === '') {
+                throw new \RuntimeException('Invalid generated SVG');
+            }
+            $path = "poetry-art/generated/{$poem->id}-{$provider}.svg";
+            if (! Storage::disk('public')->put($path, $bytes)) {
+                throw new \RuntimeException('Generated SVG storage write failed');
+            }
+            return '/storage/'.$path;
+        }
         if (! str_starts_with($url, 'https://') && ! str_starts_with($url, 'http://')) {
-            return $url;
+            if (str_starts_with($url, '/storage/') || str_starts_with($url, '/poetry-art/')) {
+                return $url;
+            }
+            throw new \RuntimeException('Image provider did not return a storable image');
         }
 
         try {
@@ -274,17 +318,22 @@ class PoemImageService
                     'status' => $response->status(),
                 ]);
 
-                return $url;
+                throw new \RuntimeException('Image mirror returned HTTP '.$response->status());
             }
             $bytes = $response->body();
             if ($bytes === '') {
-                return $url;
+                throw new \RuntimeException('Image mirror returned empty body');
             }
             $mime = strtolower((string) $response->header('Content-Type'));
+            if (! str_starts_with($mime, 'image/')) {
+                throw new \RuntimeException('Image mirror returned non-image content');
+            }
             $ext = str_contains($mime, 'jpeg') || str_contains($mime, 'jpg') ? 'jpg'
                 : (str_contains($mime, 'webp') ? 'webp' : 'png');
             $path = "poetry-art/generated/{$poem->id}-{$provider}.{$ext}";
-            Storage::disk('public')->put($path, $bytes);
+            if (! Storage::disk('public')->put($path, $bytes)) {
+                throw new \RuntimeException('Image mirror storage write failed');
+            }
 
             return '/storage/'.$path;
         } catch (\Throwable $e) {
@@ -294,7 +343,7 @@ class PoemImageService
                 'error' => $e->getMessage(),
             ]);
 
-            return $url;
+            throw $e;
         }
     }
 }

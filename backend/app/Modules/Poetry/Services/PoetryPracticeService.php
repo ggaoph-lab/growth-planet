@@ -179,11 +179,14 @@ class PoetryPracticeService
     public function showPoem(ChildProfile $child, int $poemId): array
     {
         $poem = $this->catalog->findOrFail($poemId);
-        // storyFor seeds enrichment (local-first); line meanings then hit the same row.
-        $story = $this->ai->storyFor($poem, $child->family_id);
+        $content = $this->ai->cachedContentFor($poem);
+        $story = $content['story'];
         $authorIntro = $this->ai->authorIntroFor($poem);
-        $lineMeanings = $this->ai->lineMeaningsFor($poem, $child->family_id);
+        $lineMeanings = $content['line_meanings'];
         $image = $this->images->cachedOrSchedule($poem, $child->family_id);
+        if ($content['needs_preparation'] && $image['url'] !== null) {
+            $this->images->schedulePreparation((int) $poem->id, (int) $child->family_id);
+        }
 
         $records = PoetryRecitationRecord::query()
             ->where('child_id', $child->id)
