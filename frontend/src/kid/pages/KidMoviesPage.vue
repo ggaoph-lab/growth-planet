@@ -580,7 +580,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.page { padding: 0 16px 32px; max-width: 960px; margin: 0 auto; }
+.page { width: 100%; padding: 0 var(--kid-gutter) var(--kid-page-bottom); max-width: var(--kid-content-max); margin: 0 auto; }
 .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .back { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; min-height: 44px; }
 .quota { background: rgba(255,255,255,0.08); padding: 12px; border-radius: 12px; margin-bottom: 16px; }
@@ -600,7 +600,7 @@ h3 { margin: 0; font-size: 15px; }
 }
 @media (min-width: 1024px) {
   .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   }
 }
 @media (orientation: landscape) {
@@ -611,7 +611,7 @@ h3 { margin: 0; font-size: 15px; }
 }
 @media (orientation: landscape) and (min-width: 768px) {
   .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
   }
 }

@@ -147,18 +147,10 @@ function whenText(entry: LedgerEntry): string {
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
-}
-@media (min-width: 768px) {
-  .page {
-    max-width: 720px;
-    padding: 0 24px 40px;
-  }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head {
   display: flex;

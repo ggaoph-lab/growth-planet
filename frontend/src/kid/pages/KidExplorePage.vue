@@ -85,11 +85,13 @@ onMounted(load)
     <p v-if="error" class="err">{{ error }}</p>
     <p v-if="loading" class="hint">{{ t('common.loading') }}</p>
 
-    <article v-for="p in projects" :key="p.id" class="card">
-      <h2>{{ p.title }}</h2>
-      <p class="meta">{{ t('common.stageOf', { current: p.current_stage }) }} · {{ p.category }}</p>
-      <button type="button" class="big" @click="logStage(p)">{{ t('common.recordToday') }}</button>
-    </article>
+    <div class="project-grid">
+      <article v-for="p in projects" :key="p.id" class="card">
+        <h2>{{ p.title }}</h2>
+        <p class="meta">{{ t('common.stageOf', { current: p.current_stage }) }} · {{ p.category }}</p>
+        <button type="button" class="big" @click="logStage(p)">{{ t('common.recordToday') }}</button>
+      </article>
+    </div>
 
     <el-empty v-if="!loading && projects.length === 0" :description="t('kid.exploreEmpty')" />
 
@@ -99,18 +101,10 @@ onMounted(load)
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
-}
-@media (min-width: 768px) {
-  .page {
-    max-width: 720px;
-    padding: 0 24px 40px;
-  }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head {
   display: flex;
@@ -139,9 +133,13 @@ onMounted(load)
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+  max-width: 720px;
 }
+.new .big { width: auto; flex: 0 0 auto; padding: 12px 24px; }
 .input {
   flex: 1;
+  min-width: 0;
+  font: inherit;
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -152,8 +150,14 @@ onMounted(load)
   background: rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   padding: 16px;
-  margin-bottom: 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.card h2 { overflow-wrap: anywhere; }
+.card .big { margin-top: auto; }
+@media (max-width: 400px) { .new { flex-wrap: wrap; } .new .big { width: 100%; } }
 .card h2 {
   margin: 0 0 6px;
 }

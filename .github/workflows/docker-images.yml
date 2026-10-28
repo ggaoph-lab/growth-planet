@@ -11,10 +11,12 @@ on:
       - "frontend/**"
       - "apps/word-atlas/**"
       - "scripts/sync-word-atlas-assets.sh"
+      - "scripts/prepare-word-atlas-media.sh"
       - "deploy/docker/**"
       - "compose.prod.yaml"
       - "compose.build.yaml"
       - ".github/workflows/docker-images.yml"
+      - ".dockerignore"
   workflow_dispatch:
 
 env:
@@ -47,17 +49,15 @@ jobs:
             nginx=true
           else
             git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/image-inputs.txt
-            if grep -Eq '^(backend/|deploy/docker/php/|compose\.prod\.yaml$|compose\.build\.yaml$)' /tmp/image-inputs.txt; then php=true; fi
-            if grep -Eq '^(frontend/|apps/word-atlas/|scripts/sync-word-atlas-assets\.sh$|deploy/docker/nginx/|compose\.build\.yaml$)' /tmp/image-inputs.txt; then nginx=true; fi
+            if grep -Eq '^(backend/|deploy/docker/php/|compose\.prod\.yaml$|compose\.build\.yaml$|\.dockerignore$)' /tmp/image-inputs.txt; then php=true; fi
+            if grep -Eq '^(frontend/|apps/word-atlas/|scripts/sync-word-atlas-assets\.sh$|deploy/docker/nginx/|compose\.build\.yaml$|\.dockerignore$)' /tmp/image-inputs.txt; then nginx=true; fi
           fi
           echo "php=$php" >> "$GITHUB_OUTPUT"
           echo "nginx=$nginx" >> "$GITHUB_OUTPUT"
           echo "Build PHP: $php; build nginx: $nginx"
 
-      - name: Sync Word Atlas media
-        if: steps.changes.outputs.nginx == 'true'
-        run: bash scripts/sync-word-atlas-assets.sh
-
+      # Bulk Atlas media is persisted on deployment hosts and excluded from the
+      # build context. Frontend/Atlas UI releases must never fetch it in CI.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

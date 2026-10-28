@@ -391,12 +391,29 @@ async function logout(): Promise<void> {
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
   backdrop-filter: none;
   background: #fff;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .phone .eyebrow {
   display: none;
 }
 .phone .topbar h1 {
   font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.phone .actions {
+  min-width: 0;
+  gap: 6px;
+  margin-left: auto;
+}
+.phone .actions :deep(.lang .select) {
+  max-width: clamp(96px, 28vw, 150px);
+}
+.phone .actions :deep(.el-button) {
+  min-height: 40px;
+  max-width: 120px;
+  white-space: normal;
+  line-height: 1.1;
 }
 .phone .content {
   padding: 16px 14px calc(88px + env(safe-area-inset-bottom));
@@ -411,7 +428,7 @@ async function logout(): Promise<void> {
   right: 0;
   bottom: 0;
   display: flex;
-  overflow-x: auto;
+  overflow-x: hidden;
   background: #fff;
   border-top: 1px solid var(--parent-line);
   padding-bottom: env(safe-area-inset-bottom);
@@ -423,8 +440,8 @@ async function logout(): Promise<void> {
   display: none;
 }
 .bottom-link {
-  flex: 1 0 64px;
-  min-width: 64px;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -437,12 +454,13 @@ async function logout(): Promise<void> {
   border: none;
   background: transparent;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0 2px;
 }
 .bottom-link .label {
   white-space: pre-line;
   line-height: 1.15;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 .bottom-link .icon {
   font-size: 20px;
@@ -468,6 +486,9 @@ async function logout(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: min(85vh, 720px);
+  max-height: min(85dvh, 720px);
+  overflow-y: auto;
 }
 .more-item {
   min-height: 48px;
@@ -504,8 +525,6 @@ async function logout(): Promise<void> {
   }
   .bottom-link {
     min-height: 44px;
-    flex-basis: 56px;
-    min-width: 56px;
   }
   .bottom-link .label {
     font-size: 9px;

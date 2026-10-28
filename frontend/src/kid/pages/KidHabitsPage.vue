@@ -59,20 +59,22 @@ onMounted(load)
 
     <el-empty v-if="!loading && habits.length === 0" :description="t('kid.habitsEmpty')" />
 
-    <article v-for="h in habits" :key="h.id" class="card">
-      <div class="row">
-        <span class="icon">{{ h.icon ?? '⭐' }}</span>
-        <div>
-          <h2>{{ h.title }}</h2>
-          <p class="meta">
-            +{{ h.xp_reward }} {{ t('common.xpLabel') }}
-            · +{{ h.point_reward ?? 0 }} {{ t('common.pointsLabel') }}
-            · +{{ h.coin_reward }} {{ t('common.growthCoin') }}
-          </p>
+    <div class="habit-grid">
+      <article v-for="h in habits" :key="h.id" class="card">
+        <div class="row">
+          <span class="icon">{{ h.icon ?? '⭐' }}</span>
+          <div>
+            <h2>{{ h.title }}</h2>
+            <p class="meta">
+              +{{ h.xp_reward }} {{ t('common.xpLabel') }}
+              · +{{ h.point_reward ?? 0 }} {{ t('common.pointsLabel') }}
+              · +{{ h.coin_reward }} {{ t('common.growthCoin') }}
+            </p>
+          </div>
         </div>
-      </div>
-      <button type="button" class="big" :disabled="busy === h.id" @click="checkIn(h)">{{ t('common.checkIn') }}</button>
-    </article>
+        <button type="button" class="big" :disabled="busy === h.id" @click="checkIn(h)">{{ t('common.checkIn') }}</button>
+      </article>
+    </div>
 
     <div v-if="toast" class="toast">{{ toast }}</div>
   </main>
@@ -80,18 +82,10 @@ onMounted(load)
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
-}
-@media (min-width: 768px) {
-  .page {
-    max-width: 720px;
-    padding: 0 24px 40px;
-  }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head {
   display: flex;
@@ -122,8 +116,13 @@ onMounted(load)
   background: rgba(255, 255, 255, 0.1);
   border-radius: 20px;
   padding: 20px;
-  margin-bottom: 14px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
+.habit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.card .big { margin-top: auto; }
+.row > div { min-width: 0; overflow-wrap: anywhere; }
 .row {
   display: flex;
   gap: 14px;

@@ -1114,8 +1114,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page {
-  padding: 0 16px 40px;
-  max-width: 1100px;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
@@ -1620,7 +1620,6 @@ h2 {
 }
 
 @media (min-width: 780px) {
-  .page { padding: 0 24px 48px; }
   .mode-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
@@ -1656,7 +1655,6 @@ h2 {
 }
 
 @media (min-width: 1024px) {
-  .page { max-width: 1120px; }
   .line-text { font-size: 24px; letter-spacing: 0.14em; }
 }
 

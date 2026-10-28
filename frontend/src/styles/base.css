@@ -30,6 +30,28 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+@media (max-width: 767px) {
+  .el-dialog {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    margin-top: 12px !important;
+  }
+  .el-message-box {
+    max-width: calc(100vw - 24px);
+  }
+  .el-tabs__nav-wrap {
+    max-width: 100%;
+  }
+}
+
 /* Bilingual locale: i18n joins 中文\\nEnglish — show as stacked lines, not "中文 / English". */
 html[data-locale='zh-en'] #app,
 html[data-locale='zh-en'] .el-overlay,

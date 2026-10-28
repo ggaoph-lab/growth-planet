@@ -1010,6 +1010,10 @@ code {
   background: var(--terra);
   color: #fff;
 }
+.speak.is-heard:not(.is-on) .speak-icon {
+  background: color-mix(in oklab, var(--sage) 22%, var(--paper-2));
+  color: var(--sage);
+}
 .speak-waves {
   position: absolute;
   inset: 0;
@@ -2355,6 +2359,26 @@ code {
 }
 .learn-actions .btn {
   flex: 1;
+}
+.learn-listen-hint {
+  flex: 1;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.learn-listen-hint span {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  font-size: 13px;
 }
 .hint-keys {
   display: none;

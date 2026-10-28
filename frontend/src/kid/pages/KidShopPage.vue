@@ -284,9 +284,16 @@ onUnmounted(() => {
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 960px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
+}
+@media (min-width: 1200px) {
+  .page { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0 28px; align-items: start; }
+  .page > .head, .page > .err, .page > .hint { grid-column: 1 / -1; }
+  .gifts, .wishes { min-width: 0; }
+  .page > .wishes { width: 100%; max-width: none; margin-top: 0; }
 }
 .head {
   display: flex;
@@ -510,7 +517,6 @@ onUnmounted(() => {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 @media (min-width: 768px) {
-  .page { padding: 0 24px 40px; }
   .wishes { max-width: 720px; }
 }
 @media (min-width: 1024px) {

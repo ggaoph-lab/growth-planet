@@ -158,6 +158,7 @@ prod-build-host-frontend:
 
 prod-up:
 	mkdir -p deploy/certs backups
+	bash scripts/prepare-word-atlas-media.sh
 	$(COMPOSE_PROD) up -d
 
 prod-down:

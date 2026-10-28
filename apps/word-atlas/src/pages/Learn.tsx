@@ -11,7 +11,7 @@ import { gap, normalize } from "../lib/text";
 import { answer, advance, buildSession, gradeFor, sessionStats } from "../store/session";
 import { Rating } from "../store/srs";
 import { store, useStore, type ActiveSession, type QuizKind, type Step } from "../store/store";
-import { EntryView, Highlight } from "../ui/EntryView";
+import { EntryView, Highlight, introSpeakIds } from "../ui/EntryView";
 import { Illustration } from "../ui/Illustration";
 import { Galaxy } from "../galaxy/Galaxy";
 import { AmbiencePicker } from "../ui/Ambience";
@@ -94,29 +94,56 @@ function Intro({ step }: { step: Step }) {
   const { entry } = useEntry(step.id);
   const settings = useStore((s) => s.settings);
   const elapsed = useStepTimer();
+  const required = useMemo(() => (entry ? introSpeakIds(entry) : []), [entry]);
+  const [heard, setHeard] = useState<Set<string>>(() => new Set());
+  // Reset listen progress when the word changes.
+  useEffect(() => {
+    setHeard(new Set());
+  }, [step.id]);
+  const ready = required.length === 0 || required.every((id) => heard.has(id));
+  const markHeard = useCallback((id: string) => {
+    setHeard((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
   useEffect(() => {
     if (entry && settings.autoplay) void play(atlas.audio(entry, settings.accent), entry.w, settings.accent);
   }, [entry, atlas, settings.autoplay, settings.accent]);
   const next = useCallback(() => {
+    if (!ready) return;
     stopAudio();
     if (store.get().settings.sfx) void cue("flip");
     advance(elapsed());
-  }, [elapsed]);
-  useKeys({ Enter: next, " ": next });
+  }, [elapsed, ready]);
+  useKeys(ready ? { Enter: next, " ": next } : {});
   if (!entry) return <span className="spinner" />;
   return (
     <div className="intro">
       <p className="stage-label">
         <span className="dot dot-new" /> 初次见面
       </p>
-      <EntryView entry={entry} mode="intro" />
+      <EntryView entry={entry} mode="intro" heardSpeaks={heard} onSpeakHeard={markHeard} />
       <footer className="learn-actions">
-        <button className="btn btn-primary btn-xl" onClick={next} autoFocus>
-          认识了 <ArrowRight size={20} />
-        </button>
-        <span className="hint-keys">
-          <kbd>Enter</kbd> 继续
-        </span>
+        {ready ? (
+          <>
+            <button className="btn btn-primary btn-xl" onClick={next} autoFocus>
+              认识了 <ArrowRight size={20} />
+            </button>
+            <span className="hint-keys">
+              <kbd>Enter</kbd> 继续
+            </span>
+          </>
+        ) : (
+          <p className="learn-listen-hint" aria-live="polite">
+            先点完例句和搭配的小喇叭再继续
+            <span>
+              {required.filter((id) => heard.has(id)).length}/{required.length}
+            </span>
+          </p>
+        )}
       </footer>
     </div>
   );

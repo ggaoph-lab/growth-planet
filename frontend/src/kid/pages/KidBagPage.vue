@@ -458,8 +458,9 @@ onMounted(load)
 
 <style scoped>
 .page {
-  padding: 0 16px 40px;
-  max-width: 1400px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
 }
 .head {
@@ -501,6 +502,7 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 44px;
 }
 .mode-chip.on {
   background: var(--gp-accent, #5b8def);
@@ -516,8 +518,8 @@ onMounted(load)
 .hint-inline.center { text-align: center; margin-top: 8px; }
 .hint-inline.pick { color: #ffe08a; opacity: 1; }
 .board {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 20px;
   align-items: flex-start;
 }
@@ -525,8 +527,9 @@ onMounted(load)
   cursor: pointer;
 }
 .box {
-  width: 400px;
-  height: 400px;
+  width: 100%;
+  min-width: 0;
+  height: clamp(280px, 35vw, 400px);
   max-width: 100%;
   overflow: hidden;
   border-radius: 28px;
@@ -593,6 +596,8 @@ onMounted(load)
   gap: 4px;
   cursor: grab;
   touch-action: none;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .chip-emoji {
   font-size: 30px;
@@ -649,6 +654,7 @@ onMounted(load)
 .sheet-panel {
   width: min(560px, 100%);
   max-height: min(72vh, 640px);
+  max-height: min(82dvh, 640px);
   overflow: auto;
   background: #1a2440;
   color: #fff;
@@ -674,6 +680,20 @@ onMounted(load)
   justify-content: space-between;
   gap: 8px;
   align-items: baseline;
+  flex-wrap: wrap;
+}
+@media (max-width: 639px) {
+  .box-head { padding: 16px 16px 8px; }
+  .box-head strong { font-size: 20px; }
+  .box-body { gap: 10px; padding: 10px 12px 16px; }
+  .chip { flex: 1 1 100px; min-width: 0; min-height: 96px; padding: 12px 8px; }
+}
+@media (orientation: landscape) and (max-height: 600px) and (min-width: 600px) {
+  .board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .box { height: 280px; }
+  .box-head { padding: 12px 16px 8px; }
+  .box-head strong { font-size: 18px; }
+  .chip { min-width: 96px; min-height: 92px; padding: 10px; }
 }
 .when { font-size: 12px; opacity: 0.7; }
 .meta { margin: 4px 0 0; font-size: 13px; opacity: 0.75; }

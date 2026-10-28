@@ -260,7 +260,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <main class="page">
+  <main class="page" :class="{ reading: view === 'article' }">
     <header class="head">
       <button type="button" class="back" @click="back">
         {{ view === 'home' ? t('kid.backPlanet') : t('kid.encyclopedia.back') }}
@@ -425,10 +425,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 .page {
-  padding: 0 16px 40px;
-  max-width: 720px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
 }
+.page.reading { max-width: 960px; }
+@media (min-width: 1024px) {
+  .home .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+  .page > .list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.topic, .topic .meta { min-width: 0; }
+.topic .name { overflow-wrap: anywhere; }
 .head {
   display: grid;
   grid-template-columns: auto 1fr auto;

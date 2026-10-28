@@ -10,6 +10,21 @@ import { Speak } from "./Speak";
 import { shareWord } from "./share";
 import { openWord } from "../lib/router";
 
+/** Speak targets that must be tapped before "认识了" on intro (examples + collocations). */
+export function introSpeakIds(entry: Entry): string[] {
+  const ids: string[] = [];
+  entry.ex.forEach((x, i) => {
+    ids.push(`ex-${i}-en`);
+    if (x.zh) ids.push(`ex-${i}-zh`);
+  });
+  entry.col.forEach((c, i) => {
+    const { en, zh } = splitPair(c);
+    if (en) ids.push(`col-${i}-en`);
+    if (zh) ids.push(`col-${i}-zh`);
+  });
+  return ids;
+}
+
 export function Highlight({ text, word }: { text: string; word: string }) {
   const parts = splitHighlight(text, word);
   if (!parts) return <>{text}</>;
@@ -51,7 +66,20 @@ export function Pronounce({ entry, refw }: { entry: Entry; refw: WordRef | Entry
   );
 }
 
-export function EntryView({ entry, mode = "detail", eager = true }: { entry: Entry; mode?: "detail" | "intro" | "reveal"; eager?: boolean }) {
+export function EntryView({
+  entry,
+  mode = "detail",
+  eager = true,
+  heardSpeaks,
+  onSpeakHeard,
+}: {
+  entry: Entry;
+  mode?: "detail" | "intro" | "reveal";
+  eager?: boolean;
+  /** Speak ids already tapped (intro listen gate). */
+  heardSpeaks?: ReadonlySet<string>;
+  onSpeakHeard?: (id: string) => void;
+}) {
   const atlas = useAtlas();
   const ref = atlas.byId.get(entry.id);
   const card = useStore((s) => s.progress.cards[entry.id]);
@@ -66,6 +94,7 @@ export function EntryView({ entry, mode = "detail", eager = true }: { entry: Ent
     return { label: f, id: hit?.id };
   });
   const status = card ? (isMastered(card) ? "已掌握" : "学习中") : null;
+  const track = (id: string) => (onSpeakHeard ? { heard: heardSpeaks?.has(id), onPlay: () => onSpeakHeard(id) } : {});
 
   return (
     <article className={`entry entry-${mode}`}>
@@ -125,11 +154,11 @@ export function EntryView({ entry, mode = "detail", eager = true }: { entry: Ent
                   {entry.ex.length > 1 && <span className={`ex-tag ${i ? "is-ielts" : ""}`}>{i ? "雅思语境" : "日常"}</span>}
                   <p className="ex-en" lang="en">
                     <Highlight text={x.en} word={entry.w} />
-                    <Speak url={exUrls[i] ?? null} text={x.en} accent={i === 1 && exUrls[1] ? "us" : accent} size="sm" className="ex-speak" />
+                    <Speak url={exUrls[i] ?? null} text={x.en} accent={i === 1 && exUrls[1] ? "us" : accent} size="sm" className="ex-speak" {...track(`ex-${i}-en`)} />
                   </p>
                   <p className="ex-zh">
                     {x.zh}
-                    {x.zh && <Speak url={phraseAudioUrl(x.zh, "zh")} text={x.zh} accent="zh" size="sm" className="ex-speak" />}
+                    {x.zh && <Speak url={phraseAudioUrl(x.zh, "zh")} text={x.zh} accent="zh" size="sm" className="ex-speak" {...track(`ex-${i}-zh`)} />}
                   </p>
                 </li>
               ))}
@@ -141,7 +170,7 @@ export function EntryView({ entry, mode = "detail", eager = true }: { entry: Ent
           <section className="block">
             <h3 className="eyebrow">常用搭配</h3>
             <ul className="collocations">
-              {entry.col.map((c) => {
+              {entry.col.map((c, i) => {
                 const { en, zh } = splitPair(c);
                 return (
                   <li key={c}>
@@ -155,13 +184,14 @@ export function EntryView({ entry, mode = "detail", eager = true }: { entry: Ent
                           size="sm"
                           className="col-speak"
                           label={<em>{accent === "us" ? "美" : "英"}</em>}
+                          {...track(`col-${i}-en`)}
                         />
                       )}
                     </div>
                     {zh && (
                       <div className="col-line col-zh">
                         <small>{zh}</small>
-                        <Speak url={phraseAudioUrl(zh, "zh")} text={zh} accent="zh" size="sm" className="col-speak" label={<em>中</em>} />
+                        <Speak url={phraseAudioUrl(zh, "zh")} text={zh} accent="zh" size="sm" className="col-speak" label={<em>中</em>} {...track(`col-${i}-zh`)} />
                       </div>
                     )}
                   </li>

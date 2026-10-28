@@ -132,6 +132,11 @@ services:
       - ./deploy/docker/nginx/prod-ssl.conf:/etc/growth-planet/nginx/prod-ssl.conf:ro
       # Serve /storage/* (Wanx poem art, etc.) from the same disk the app writes.
       - app-storage:/var/www/backend/storage/app:ro
+      # Prepared once from the existing container (or on a fresh install).
+      # UI image updates never replace or download these large media directories.
+      - ./apps/word-atlas/public/atlas/img:/var/www/frontend/dist/ielts/atlas/img:ro
+      - ./apps/word-atlas/public/atlas/audio:/var/www/frontend/dist/ielts/atlas/audio:ro
+      - ./apps/word-atlas/public/atlas/thumb:/var/www/frontend/dist/ielts/atlas/thumb:ro
     depends_on:
       app:
         condition: service_started

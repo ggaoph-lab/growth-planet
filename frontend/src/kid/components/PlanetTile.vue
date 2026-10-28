@@ -60,9 +60,10 @@ const icon = computed(() => ICONS[props.planet.icon] ?? '⭐')
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 132px;
-  padding: 16px 8px;
-  border: none;
+  min-width: 0;
+  min-height: 148px;
+  padding: 24px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
@@ -88,6 +89,26 @@ const icon = computed(() => ICONS[props.planet.icon] ?? '⭐')
   text-align: center;
   white-space: pre-line;
   line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.tile:focus-visible { outline: 3px solid var(--gp-sun); outline-offset: 4px; }
+@media (hover: hover) {
+  .tile:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.35); }
+}
+@media (min-width: 960px) {
+  .tile { min-height: 164px; gap: 14px; }
+  .icon { font-size: 48px; }
+  .title { font-size: 18px; }
+}
+@media (max-width: 374px) {
+  .tile { min-height: 132px; padding: 20px 8px; border-radius: 20px; }
+  .title { font-size: 15px; }
+  .icon { font-size: 38px; }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .tile { min-height: 112px; padding: 16px 10px; gap: 8px; }
+  .icon { font-size: 34px; }
+  .title { font-size: 15px; }
 }
 .locked .icon {
   filter: grayscale(0.6);

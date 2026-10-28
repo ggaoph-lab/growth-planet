@@ -539,18 +539,10 @@ onUnmounted(stopSpeaking)
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
-}
-@media (min-width: 768px) {
-  .page {
-    max-width: 720px;
-    padding: 0 24px 40px;
-  }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head {
   display: flex;
@@ -582,6 +574,10 @@ onUnmounted(stopSpeaking)
   flex-direction: column;
   gap: 16px;
 }
+@media (min-width: 1024px) {
+  .task-board { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); align-items: start; gap: 24px; }
+}
+.active-stack, .done-dock { min-width: 0; }
 .active-stack {
   position: relative;
   display: flex;

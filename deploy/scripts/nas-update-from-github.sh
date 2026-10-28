@@ -77,6 +77,8 @@ rsync -a --delete \
   --exclude 'apps/word-atlas/public/atlas/img/' \
   --exclude 'apps/word-atlas/public/atlas/audio/' \
   --exclude 'apps/word-atlas/public/atlas/thumb/' \
+  --exclude 'apps/word-atlas/public/atlas/.media-revision' \
+  --exclude 'apps/word-atlas/public/atlas/.media-migrate-*/' \
   --exclude 'backend/vendor/' \
   --exclude '.release-*/' \
   "$work/src/" "$ROOT/"
@@ -108,6 +110,9 @@ compose() {
 }
 
 if [[ "$DOCKER_OK" -eq 1 ]]; then
+  # Must run before recreating nginx: the old image may hold the only local copy.
+  media_container="$(compose ps -q nginx 2>/dev/null || true)"
+  bash "$ROOT/scripts/prepare-word-atlas-media.sh" "${media_container:-growth-planet-nginx-1}"
   if [[ -x "$ROOT/deploy/scripts/nas-backup.sh" || -x "$ROOT/deploy/scripts/backup.sh" ]]; then
     compose run --rm --no-deps backup true 2>/dev/null || true
   fi

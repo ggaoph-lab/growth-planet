@@ -8,6 +8,13 @@ frontend/test-results
 frontend/playwright-report
 # Rebuild Word Atlas inside the image; keep frontend/dist for FRONTEND_DIST=host.
 apps/word-atlas/dist
+# Atlas bulk media lives on the deployment host, independently of code images.
+apps/word-atlas/public/atlas/img
+apps/word-atlas/public/atlas/audio
+apps/word-atlas/public/atlas/thumb
+frontend/dist/ielts/atlas/img
+frontend/dist/ielts/atlas/audio
+frontend/dist/ielts/atlas/thumb
 backend/vendor
 backend/storage/logs
 backend/storage/framework/cache

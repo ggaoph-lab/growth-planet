@@ -116,7 +116,11 @@ function goHome(): void {
 
 <style scoped>
 .kid {
+  --kid-content-max: 1440px;
+  --kid-gutter: max(clamp(16px, 3vw, 40px), env(safe-area-inset-left), env(safe-area-inset-right));
+  --kid-page-bottom: clamp(32px, 5vw, 64px);
   min-height: 100vh;
+  min-height: 100dvh;
   color: var(--gp-text-light);
   background:
     radial-gradient(2px 2px at 20% 30%, #fff 50%, transparent 51%),
@@ -130,11 +134,17 @@ function goHome(): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 14px var(--kid-gutter) 20px;
 }
 .me {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 10px;
   margin: 0;
   padding: 4px 8px 4px 4px;
@@ -151,6 +161,7 @@ function goHome(): void {
 .avatar {
   width: 44px;
   height: 44px;
+  flex: none;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -159,15 +170,22 @@ function goHome(): void {
 .name {
   font-size: 18px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bar-end {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  margin-left: auto;
 }
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   min-height: 48px;
 }
@@ -216,6 +234,7 @@ function goHome(): void {
 .sheet {
   width: min(480px, 100%);
   max-height: min(88vh, 640px);
+  max-height: min(88dvh, 640px);
   overflow-y: auto;
   background: #262a66;
   border-radius: 24px 24px 0 0;
@@ -231,9 +250,32 @@ function goHome(): void {
   }
   .sheet {
     max-height: min(92vh, 480px);
+    max-height: min(92dvh, 480px);
     border-radius: 20px;
     padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
   }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .bar { padding: 6px var(--kid-gutter) 10px; }
+  .me { padding-top: 0; padding-bottom: 0; min-height: 44px; }
+  .avatar { width: 36px; height: 36px; font-size: 24px; }
+  .name { font-size: 16px; }
+  .round { width: 44px; height: 44px; }
+  .header-actions { min-height: 44px; }
+}
+@media (max-width: 480px) {
+  .bar { padding: 8px 12px; }
+  .me { max-width: 100%; }
+  .name { max-width: 34vw; font-size: 16px; }
+  .round { width: 44px; height: 44px; }
+  .bar-end, .header-actions { gap: 4px; }
+}
+@media (max-width: 639px) and (orientation: portrait) {
+  .kid > :deep(main > .head) { display: flex; flex-wrap: wrap; gap: 10px; }
+  .kid > :deep(main > .head > h1) { order: 3; flex: 1 0 100%; text-align: left; font-size: 24px; line-height: 1.3; margin: 0; overflow-wrap: anywhere; }
+  .kid > :deep(main > .head > .spacer) { display: none; }
+  .kid > :deep(main > .head > .link) { margin-left: auto; }
+  .kid > :deep(main > .head > .back) { min-height: 44px; max-width: 100%; }
 }
 .sheet h2 {
   margin: 0 0 4px;

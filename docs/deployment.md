@@ -74,6 +74,10 @@ bash deploy/scripts/nas-update-from-github.sh
 3. **`docker compose pull`** 拉取预构建镜像（不再在 NAS 上 `build`）
 4. 重启容器并执行 `migrate` / `app:preflight`
 
+雅思星球的 `atlas/img`、`atlas/audio`、`atlas/thumb` 作为宿主机持久目录挂载，已从代码镜像和 CI 构建上下文中排除。首次从旧版镜像升级时，更新脚本先从正在运行的 nginx 容器复制这些目录到本机磁盘；该过程不访问网络。以后根据 `apps/word-atlas/MEDIA_REVISION` 与本地 `.media-revision` 判断是否同步，版本一致时不下载媒体。只有明确更新媒体版本或新安装缺少媒体时才获取资源。
+
+手动执行 `docker compose up` 的首次升级，应先运行 `bash scripts/prepare-word-atlas-media.sh`。`make prod-up` 和更新脚本已自动包含这一步。部署 CentOS 时先 `ping 192.168.1.8`，能够连通就优先使用该局域网地址传输代码。
+
 若当前用户无 Docker 权限：只同步代码，并提示在 Container Manager 中 Pull / Start。
 
 **应急**（GHCR 不可用、必须离线）：`LOCAL_BUILD=1 bash deploy/scripts/nas-update-from-github.sh`（慢，等同旧流程）。

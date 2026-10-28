@@ -27,10 +27,7 @@ const EnglishLearning = defineAsyncComponent({
 </template>
 
 <style scoped>
-.page { padding: 0 16px 32px; max-width: 1120px; margin: 0 auto; }
-@media (min-width: 768px) {
-  .page { padding: 0 24px 40px; }
-}
+.page { width: 100%; padding: 0 var(--kid-gutter) var(--kid-page-bottom); max-width: var(--kid-content-max); margin: 0 auto; }
 .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .back { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; }
 :deep(.hint) { opacity: 0.75; padding: 24px 0; }

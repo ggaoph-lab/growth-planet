@@ -57,8 +57,9 @@ function open(name: 'kid-schulte' | 'kid-mirror' | 'kid-sudoku'): void {
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
 }
 .head {
@@ -144,9 +145,6 @@ function open(name: 'kid-schulte' | 'kid-mirror' | 'kid-sudoku'): void {
   outline-offset: 2px;
 }
 @media (min-width: 768px) and (min-height: 600px) {
-  .page {
-    max-width: 880px;
-  }
   .head h1 {
     font-size: 28px;
   }
@@ -164,14 +162,27 @@ function open(name: 'kid-schulte' | 'kid-mirror' | 'kid-sudoku'): void {
     justify-self: center;
   }
 }
+@media (min-width: 1100px) {
+  .list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+  .card { flex-direction: column; text-align: center; min-height: 240px; padding: 28px 20px; }
+  .copy { flex: 1; align-items: center; }
+  .card:last-child:nth-child(odd) { grid-column: auto; max-width: none; justify-self: stretch; }
+}
 @media (orientation: landscape) and (max-height: 520px) {
   .list {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
   }
   .card {
     min-height: 96px;
+    flex-direction: column;
+    text-align: center;
+    gap: 8px;
+    padding: 14px 10px;
   }
+  .name { font-size: 16px; }
+  .emoji { font-size: 30px; }
+  .card:last-child:nth-child(odd) { grid-column: auto; max-width: none; }
 }
 </style>

@@ -20,8 +20,8 @@ WORKDIR /word-atlas
 COPY apps/word-atlas/package.json apps/word-atlas/package-lock.json ./
 RUN npm ci
 COPY apps/word-atlas/ ./
-# Media dirs may be absent in CI until sync-word-atlas-assets runs on the host;
-# Vite still builds; missing img/audio only affect runtime media URLs.
+# Bulk img/audio/thumb are excluded from the build context. Production mounts
+# persistent host media; UI releases therefore only ship code and small catalogs.
 ENV ATLAS_BASE=/ielts/
 RUN npm run build \
     && mkdir -p /frontend/dist/ielts \

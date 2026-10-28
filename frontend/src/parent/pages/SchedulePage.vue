@@ -14,13 +14,13 @@ import type {
   SchoolSchedule,
   SubjectItemRequirement,
 } from '@/shared/api/types'
-import { useIsPhone } from '@/shared/useMediaQuery'
+import { useMediaQuery } from '@/shared/useMediaQuery'
 
 const SUBJECTS: HomeworkSubject[] = ['语文', '数学', '英语', '科学', '道法', '体育', '美术', '音乐', '其他']
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const
 
 const { t } = useI18n()
-const isPhone = useIsPhone()
+const useCompactGrid = useMediaQuery('(max-width: 1199px)')
 const tab = ref<'week' | 'exceptions' | 'subjects' | 'extras'>('week')
 const children = ref<ParentChild[]>([])
 const childId = ref<number | undefined>()
@@ -300,7 +300,23 @@ onMounted(() => {
           <span class="hint">{{ t('schedule.periodCount') }}</span>
           <el-button type="primary" :loading="saving" @click="saveWeek">{{ t('common.save') }}</el-button>
         </div>
-        <div class="grid-wrap" :class="{ phone: isPhone }">
+        <div v-if="useCompactGrid" class="day-grid">
+          <section v-for="wd in WEEKDAYS" :key="wd" class="day-card">
+            <h2>{{ weekdayLabel(wd) }}</h2>
+            <div v-for="p in periodIndexes" :key="p" class="day-period">
+              <label :for="`schedule-${wd}-${p}`">{{ t('schedule.period') }} {{ p }}</label>
+              <el-select
+                :id="`schedule-${wd}-${p}`"
+                :model-value="grid[wd]?.[p] ?? ''"
+                clearable filterable allow-create default-first-option
+                @update:model-value="(v: string) => { if (!grid[wd]) grid[wd] = {}; grid[wd]![p] = v ?? '' }"
+              >
+                <el-option v-for="s in SUBJECTS" :key="s" :label="s" :value="s" />
+              </el-select>
+            </div>
+          </section>
+        </div>
+        <div v-else class="grid-wrap">
           <table class="grid">
             <thead>
               <tr>
@@ -468,6 +484,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 .head h1 {
   margin: 0;
@@ -507,7 +524,29 @@ onMounted(() => {
   width: 48px;
   background: var(--el-fill-color-lighter);
 }
-.phone .grid {
-  min-width: 640px;
+.day-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.day-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 14px;
+  background: var(--el-bg-color);
+}
+.day-card h2 { margin: 0 0 10px; font-size: 16px; }
+.day-period {
+  display: grid;
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.day-period .el-select { width: 100%; min-width: 0; }
+@media (max-width: 767px) {
+  .toolbar > * { max-width: 100%; }
+  .toolbar .el-input { flex: 1 1 180px; }
 }
 </style>

@@ -6,8 +6,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/apps/word-atlas/public/atlas"
 REPO_URL="${WORD_ATLAS_REPO:-https://github.com/designfuchen/word-atlas.git}"
-# Change this revision only when the Atlas media itself is intentionally updated.
-MEDIA_REF="${WORD_ATLAS_MEDIA_REF:-99c007673d38f02c418d8e4cd2e9ec90b5d40be5}"
+# Change MEDIA_REVISION only when the media itself is intentionally updated.
+MEDIA_REF="${WORD_ATLAS_MEDIA_REF:-$(cat "$ROOT/apps/word-atlas/MEDIA_REVISION")}"
+MARKER="$DEST/.media-revision"
 
 need_sync=0
 for dir in img audio thumb; do
@@ -17,8 +18,10 @@ for dir in img audio thumb; do
   fi
 done
 
-if [[ "${1:-}" != "--force" && "$need_sync" -eq 0 ]]; then
-  echo "Word Atlas media already present under $DEST (use --force to re-sync)."
+if [[ "${1:-}" != "--force" && "$need_sync" -eq 0 ]] && \
+  [[ ! -f "$MARKER" || "$(cat "$MARKER")" == "$MEDIA_REF" ]]; then
+  printf '%s\n' "$MEDIA_REF" > "$MARKER"
+  echo "Word Atlas media unchanged ($MEDIA_REF); keeping existing files."
   exit 0
 fi
 
@@ -42,3 +45,4 @@ for dir in img audio thumb; do
 done
 
 echo "Done."
+printf '%s\n' "$MEDIA_REF" > "$MARKER"

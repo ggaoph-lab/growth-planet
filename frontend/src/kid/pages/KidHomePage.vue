@@ -102,42 +102,57 @@ function open(planet: Planet): void {
 
 <style scoped>
 .home {
-  padding: 0 16px 32px;
-  max-width: 960px;
+  width: 100%;
+  padding: 8px var(--kid-gutter) var(--kid-page-bottom);
+  max-width: 1600px;
   margin: 0 auto;
 }
+.greet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
 .greet h1 {
-  margin: 8px 0 4px;
-  font-size: 28px;
+  margin: 0;
+  font-size: clamp(24px, 2.5vw, 36px);
+  overflow-wrap: anywhere;
 }
 .greet p {
-  margin: 0 0 20px;
+  margin: 0;
   opacity: 0.8;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(12px, 1.5vw, 24px);
 }
-@media (min-width: 600px) {
-  .grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
+@media (min-width: 640px) {
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (min-width: 900px) {
-  .grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
+@media (min-width: 960px) {
+  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-@media (orientation: landscape) and (max-width: 899px) {
-  .grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
+@media (min-width: 1200px) {
+  .grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
-@media (orientation: landscape) and (min-width: 600px) {
-  .grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
+@media (min-width: 1600px) {
+  .grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+@media (max-width: 639px) {
+  .greet { gap: 4px; margin-bottom: 16px; padding-bottom: 16px; }
+  .greet p { width: 100%; font-size: 14px; }
+}
+@media (orientation: landscape) and (max-height: 600px) and (min-width: 600px) {
+  .home { padding-top: 4px; }
+  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .greet { margin-bottom: 12px; padding-bottom: 8px; }
+  .greet h1 { font-size: 22px; }
+  .greet p { font-size: 14px; }
 }
 .error,
 .loading {

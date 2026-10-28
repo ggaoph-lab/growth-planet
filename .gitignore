@@ -39,6 +39,7 @@ apps/word-atlas/dist/
 apps/word-atlas/public/atlas/img/
 apps/word-atlas/public/atlas/audio/
 apps/word-atlas/public/atlas/thumb/
+apps/word-atlas/public/atlas/.media-revision
 
 # Backups
 backups/

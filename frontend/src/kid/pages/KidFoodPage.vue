@@ -79,33 +79,39 @@ onMounted(load)
       <span class="spacer" />
     </header>
 
-    <section class="prefs">
-      <label v-for="(v, key) in toggles" :key="key" class="check">
-        <input v-model="toggles[key as keyof typeof toggles]" type="checkbox" />
-        {{ toggleLabel(key as keyof typeof toggles) }}
-      </label>
-      <div class="row">
-        <span>{{ t('common.saidTasty') }}？</span>
-        <button type="button" class="chip" :class="{ on: saidTasty === true }" @click="saidTasty = true">{{ t('common.yes') }}</button>
-        <button type="button" class="chip" :class="{ on: saidTasty === false }" @click="saidTasty = false">{{ t('common.no') }}</button>
+    <div class="food-layout">
+      <section class="prefs">
+        <label v-for="(v, key) in toggles" :key="key" class="check">
+          <input v-model="toggles[key as keyof typeof toggles]" type="checkbox" />
+          {{ toggleLabel(key as keyof typeof toggles) }}
+        </label>
+        <div class="row">
+          <span>{{ t('common.saidTasty') }}？</span>
+          <button type="button" class="chip" :class="{ on: saidTasty === true }" @click="saidTasty = true">{{ t('common.yes') }}</button>
+          <button type="button" class="chip" :class="{ on: saidTasty === false }" @click="saidTasty = false">{{ t('common.no') }}</button>
+        </div>
+        <div class="row">
+          <span>{{ t('common.willingEatAgain') }}</span>
+          <button type="button" class="chip" :class="{ on: willingAgain === true }" @click="willingAgain = true">{{ t('common.yes') }}</button>
+          <button type="button" class="chip" :class="{ on: willingAgain === false }" @click="willingAgain = false">{{ t('common.no') }}</button>
+        </div>
+      </section>
+
+      <div class="food-content">
+        <p v-if="error" class="err">{{ error }}</p>
+        <p v-if="loading" class="hint">{{ t('common.loading') }}</p>
+
+        <div class="food-grid">
+          <article v-for="f in foods" :key="f.id" class="card">
+            <h2>{{ f.name }}</h2>
+            <p v-if="f.category" class="meta">{{ f.category }}</p>
+            <button type="button" class="big" :disabled="busy === f.id" @click="record(f)">{{ t('common.recordExploration') }}</button>
+          </article>
+        </div>
+
+        <el-empty v-if="!loading && foods.length === 0" :description="t('kid.foodEmpty')" />
       </div>
-      <div class="row">
-        <span>{{ t('common.willingEatAgain') }}</span>
-        <button type="button" class="chip" :class="{ on: willingAgain === true }" @click="willingAgain = true">{{ t('common.yes') }}</button>
-        <button type="button" class="chip" :class="{ on: willingAgain === false }" @click="willingAgain = false">{{ t('common.no') }}</button>
-      </div>
-    </section>
-
-    <p v-if="error" class="err">{{ error }}</p>
-    <p v-if="loading" class="hint">{{ t('common.loading') }}</p>
-
-    <article v-for="f in foods" :key="f.id" class="card">
-      <h2>{{ f.name }}</h2>
-      <p v-if="f.category" class="meta">{{ f.category }}</p>
-      <button type="button" class="big" :disabled="busy === f.id" @click="record(f)">{{ t('common.recordExploration') }}</button>
-    </article>
-
-    <el-empty v-if="!loading && foods.length === 0" :description="t('kid.foodEmpty')" />
+    </div>
 
     <div v-if="toast" class="toast">{{ toast }}</div>
   </main>
@@ -113,18 +119,10 @@ onMounted(load)
 
 <style scoped>
 .page {
-  padding: 0 16px 32px;
-  max-width: 560px;
+  width: 100%;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
+  max-width: var(--kid-content-max);
   margin: 0 auto;
-}
-@media (min-width: 768px) {
-  .page {
-    max-width: 720px;
-    padding: 0 24px 40px;
-  }
-}
-@media (min-width: 1024px) {
-  .page { max-width: 960px; }
 }
 .head {
   display: flex;
@@ -157,6 +155,14 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 10px;
+  align-self: start;
+}
+.food-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.food-content { min-width: 0; }
+.food-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+@media (min-width: 1024px) {
+  .food-layout { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 24px; }
+  .prefs { margin-bottom: 0; }
 }
 .check {
   display: flex;
@@ -176,6 +182,7 @@ onMounted(load)
   border-radius: 999px;
   padding: 6px 12px;
   cursor: pointer;
+  min-height: 44px;
 }
 .chip.on {
   background: var(--gp-accent, #5b8def);
@@ -185,8 +192,12 @@ onMounted(load)
   background: rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   padding: 16px;
-  margin-bottom: 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
+.card .big { margin-top: auto; }
+.card h2 { overflow-wrap: anywhere; }
 .card h2 {
   margin: 0 0 4px;
 }

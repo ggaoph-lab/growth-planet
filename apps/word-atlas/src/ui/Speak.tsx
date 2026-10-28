@@ -11,6 +11,8 @@ export function Speak({
   rate = 1,
   className = "",
   kbd,
+  heard,
+  onPlay,
 }: {
   url: string | null;
   text: string;
@@ -20,10 +22,15 @@ export function Speak({
   rate?: number;
   className?: string;
   kbd?: string;
+  /** Already tapped at least once (e.g. intro listen gate). */
+  heard?: boolean;
+  /** Fires when the user taps to play (not on autoplay elsewhere). */
+  onPlay?: () => void;
 }) {
   const [on, setOn] = useState(false);
   const run = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    onPlay?.();
     setOn(true);
     try {
       await play(url, text, accent, rate);
@@ -34,7 +41,7 @@ export function Speak({
   return (
     <button
       type="button"
-      className={`speak speak-${size} ${on ? "is-on" : ""} ${label ? "has-label" : ""} ${className}`}
+      className={`speak speak-${size} ${on ? "is-on" : ""} ${heard ? "is-heard" : ""} ${label ? "has-label" : ""} ${className}`}
       onClick={run}
       aria-label={typeof label === "string" ? `朗读 ${label}` : `朗读 ${text}`}
       title={kbd ? `朗读（${kbd}）` : "朗读"}

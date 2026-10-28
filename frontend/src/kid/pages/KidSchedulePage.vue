@@ -113,6 +113,14 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
+        <div v-if="week" class="week-cards">
+          <section v-for="wd in weekdays" :key="wd" class="week-day">
+            <h3>{{ t(`schedule.weekdayShort.${wd}`) }}</h3>
+            <p v-for="p in periodIndexes" :key="p">
+              <span>{{ p }}</span><span>{{ cell(wd, p) || '—' }}</span>
+            </p>
+          </section>
+        </div>
       </section>
     </template>
   </main>
@@ -121,8 +129,15 @@ onMounted(() => {
 <style scoped>
 .page {
   min-height: 100%;
-  padding: 16px 16px 48px;
+  width: 100%;
+  max-width: var(--kid-content-max);
+  margin: 0 auto;
+  padding: 0 var(--kid-gutter) var(--kid-page-bottom);
   color: #fff;
+}
+@media (min-width: 768px) {
+  .page { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
+  .top, .error, .muted, .week { grid-column: 1 / -1; }
 }
 .top {
   display: flex;
@@ -191,6 +206,7 @@ onMounted(() => {
 .table-wrap {
   overflow-x: auto;
 }
+.week-cards { display: none; }
 table {
   width: 100%;
   border-collapse: collapse;
@@ -205,5 +221,15 @@ td {
 }
 thead th {
   background: rgba(0, 0, 0, 0.2);
+}
+@media (max-width: 767px) {
+  .top { flex-wrap: wrap; }
+  .top h1 { min-width: 0; overflow-wrap: anywhere; }
+  .back, .link { min-height: 44px; }
+  .table-wrap { display: none; }
+  .week-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 10px; }
+  .week-day { min-width: 0; padding: 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.15); }
+  .week-day h3 { margin: 0 0 8px; }
+  .week-day p { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; margin: 6px 0; overflow-wrap: anywhere; }
 }
 </style>
