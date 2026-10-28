@@ -526,9 +526,8 @@ async function playBlobViaWebAudio(blob: Blob, epoch: number, onStarted?: () => 
   return endedClean && epoch === speakEpoch
 }
 
-async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
-  const objectUrl = URL.createObjectURL(blob)
-  currentObjectUrl = objectUrl
+async function playViaElement(src: string, epoch: number, onStarted?: () => void, rate = 1, objectUrl = false): Promise<boolean> {
+  if (objectUrl) currentObjectUrl = src
   // Always reuse the DOM-mounted element so iPad/Chrome keep the gesture unlock.
   const audio = typeof document !== 'undefined' ? getSharedAudio() : new Audio()
   currentAudio = audio
@@ -549,7 +548,7 @@ async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => v
     applyRate()
     if (epoch === speakEpoch && !audio.muted && audio.volume > 0) onStarted?.()
   }
-  audio.src = objectUrl
+  audio.src = src
   applyRate()
   clearRateWatch()
   rateWatch = setInterval(() => {
@@ -612,6 +611,17 @@ async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => v
   return endedClean && epoch === speakEpoch
 }
 
+async function playBlobViaElement(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
+  return playViaElement(URL.createObjectURL(blob), epoch, onStarted, rate, true)
+}
+
+function isIosWebKit(): boolean {
+  if (typeof navigator === 'undefined') return false
+  // iPadOS can report itself as a Mac when desktop browsing is enabled.
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
 async function playBlob(blob: Blob, epoch: number, onStarted?: () => void, rate = 1): Promise<boolean> {
   if (epoch !== speakEpoch) return false
   haltPlayback()
@@ -641,6 +651,17 @@ export async function speakAudioUrl(url: string, onStarted?: () => void, rate = 
   // Still fetch and try the real clip before reporting a playback failure.
   if (!audioUnlocked) await unlockSpeak()
   if (epoch !== speakEpoch) return false
+
+  // Safari on iPad may fetch an MP3 successfully yet suspend Web Audio before
+  // decode/start. Stream the versioned server URL through the gesture-unlocked
+  // media element instead, letting WebKit use its native decoder and HTTP cache.
+  if (isIosWebKit()) {
+    try {
+      return await playViaElement(src, epoch, onStarted, rate)
+    } catch {
+      return false
+    }
+  }
 
   try {
     const response = await fetch(src, { credentials: 'same-origin', cache: 'no-store' })

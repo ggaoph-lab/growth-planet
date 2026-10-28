@@ -240,12 +240,16 @@ class PoetryAudioService
         $poem = $this->catalog->findOrFail($poemId);
         if (app()->runningUnitTests()) {
             $this->warmLibrary($poemId, $familyId);
+            $this->warm($poemId, $familyId, ['story']);
 
             return;
         }
         foreach ($this->libraryClipsFor($poem) as $clip) {
             $this->scheduleClip($poemId, $familyId, $clip);
         }
+        // The story is family-specific; prepare it with the assigned poem so
+        // the kid's first tap does not wait for an on-demand TTS queue job.
+        $this->scheduleClip($poemId, $familyId, 'story');
     }
 
     private function scheduleClip(int $poemId, int $familyId, string $clip): void

@@ -127,3 +127,21 @@ it('plays neural audio through Web Audio so rate changes are audible', async () 
   source.onended?.()
   expect(await speech).toBe(true)
 })
+
+it('streams server MP3 through the native media element on iPadOS desktop mode', async () => {
+  vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+  vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+  const fetchSpy = vi.spyOn(globalThis, 'fetch')
+  const { unlockSpeak, speakAudioUrl } = await import('@/shared/speak')
+  await unlockSpeak()
+
+  const speech = speakAudioUrl('/api/v1/kid/poetry/poems/18/audio/file?clip=full&v=1')
+  await flushPromises()
+  const audio = document.querySelector('audio')!
+  expect(audio.src).toContain('/api/v1/kid/poetry/poems/18/audio/file?clip=full&v=1')
+  expect(fetchSpy).not.toHaveBeenCalled()
+  expect(play).toHaveBeenCalledTimes(2)
+  audio.dispatchEvent(new Event('ended'))
+  expect(await speech).toBe(true)
+})
