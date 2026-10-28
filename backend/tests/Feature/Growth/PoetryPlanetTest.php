@@ -4,6 +4,7 @@ namespace Tests\Feature\Growth;
 
 use App\Modules\Core\Settings\Settings;
 use App\Modules\Poetry\Models\PoetryAudioCache;
+use App\Modules\Poetry\Models\PoetryImageCache;
 use App\Modules\Poetry\Models\PoetryPoem;
 use App\Modules\Poetry\Services\PoetryAudioLibrary;
 use App\Modules\Poetry\Services\PoetryAudioService;
@@ -46,6 +47,30 @@ class PoetryPlanetTest extends TestCase
         $second = $images->ensureImage($poem, $family->id);
         $this->assertFalse($second['cached']);
         Storage::disk('public')->assertExists($path);
+    }
+
+    public function test_existing_png_is_converted_to_static_webp_without_regeneration(): void
+    {
+        Storage::fake('public');
+        $poem = PoetryPoem::query()->create([
+            'source' => 'shiquan', 'external_id' => 'test-image-compression',
+            'title' => '测试图', 'content' => '花开满园。',
+        ]);
+        $image = imagecreatetruecolor(120, 120);
+        ob_start();
+        imagepng($image);
+        $png = ob_get_clean();
+        imagedestroy($image);
+        $this->assertIsString($png);
+        Storage::disk('public')->put('poetry-art/generated/'.$poem->id.'-wanx.png', $png);
+        $row = PoetryImageCache::query()->create([
+            'poem_id' => $poem->id, 'provider' => 'wanx', 'model' => 'test',
+            'prompt' => 'test', 'image_url' => '/storage/poetry-art/generated/'.$poem->id.'-wanx.png',
+            'status' => 'ready',
+        ]);
+        app(PoemImageService::class)->optimizeExistingImages($poem);
+        $this->assertSame('/storage/poetry-art/generated/'.$poem->id.'-wanx.webp', $row->fresh()->image_url);
+        Storage::disk('public')->assertExists('poetry-art/generated/'.$poem->id.'-wanx.webp');
     }
 
     public function test_kid_hub_has_three_modes_and_recite_works(): void

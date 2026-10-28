@@ -25,7 +25,7 @@ Artisan::command('poetry:prepare-assets {--limit=500}', function () {
         $images->schedulePreparation((int) $pair->poem_id, (int) $pair->family_id);
     }
     $this->info('Scheduled '.$pairs->count().' assigned or recommended poem assets.');
-})->purpose('Queue image and line-meaning preparation for existing poetry assignments');
+})->purpose('Queue image, explanation, and audio preparation for existing poetry assignments');
 
 Artisan::command('poetry:prepare-weekly', function () {
     $recommendations = app(PoetryRecommendationService::class);

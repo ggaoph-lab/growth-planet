@@ -30,7 +30,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Detect image inputs
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+        run: |
+          php=false
+          nginx=false
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$REF_NAME" == refs/tags/* || "$BEFORE" == 0000000000000000000000000000000000000000 ]]; then
+            php=true
+            nginx=true
+          elif ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+            php=true
+            nginx=true
+          else
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/image-inputs.txt
+            if grep -Eq '^(backend/|deploy/docker/php/|compose\.prod\.yaml$|compose\.build\.yaml$)' /tmp/image-inputs.txt; then php=true; fi
+            if grep -Eq '^(frontend/|apps/word-atlas/|scripts/sync-word-atlas-assets\.sh$|deploy/docker/nginx/|compose\.build\.yaml$)' /tmp/image-inputs.txt; then nginx=true; fi
+          fi
+          echo "php=$php" >> "$GITHUB_OUTPUT"
+          echo "nginx=$nginx" >> "$GITHUB_OUTPUT"
+          echo "Build PHP: $php; build nginx: $nginx"
+
       - name: Sync Word Atlas media
+        if: steps.changes.outputs.nginx == 'true'
         run: bash scripts/sync-word-atlas-assets.sh
 
       - name: Set up QEMU
@@ -73,6 +98,7 @@ jobs:
       # amd64 only for now: CentOS / Synology DS918+ are x86_64, and QEMU arm64
       # package:discover has been segfaulting in CI (exit 139).
       - name: Build and push php
+        if: steps.changes.outputs.php == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -86,6 +112,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=php
 
       - name: Build and push nginx
+        if: steps.changes.outputs.nginx == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .

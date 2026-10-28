@@ -67,6 +67,29 @@ class PoemImageService
         PreparePoemAssets::dispatch($poemId, $familyId);
     }
 
+    /** Convert older stored PNG/JPEG illustrations without calling the image provider again. */
+    public function optimizeExistingImages(PoetryPoem $poem): void
+    {
+        $rows = PoetryImageCache::query()->where('poem_id', $poem->id)->where('status', 'ready')->get();
+        foreach ($rows as $row) {
+            $url = (string) $row->image_url;
+            if (! str_starts_with($url, '/storage/') || ! preg_match('/\.(png|jpe?g)$/i', $url)) {
+                continue;
+            }
+            $path = substr($url, strlen('/storage/'));
+            if (! Storage::disk('public')->exists($path)) {
+                continue;
+            }
+            try {
+                $webpUrl = $this->storeWebp($poem, $row->provider, Storage::disk('public')->get($path));
+                $row->image_url = $webpUrl;
+                $row->save();
+            } catch (\Throwable $e) {
+                Log::warning('poetry.image_optimize_failed', ['poem_id' => $poem->id, 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
     public function __construct(
         private readonly ImageProviderManager $providers,
         private readonly PoetryAiCoach $ai,
@@ -328,14 +351,7 @@ class PoemImageService
             if (! str_starts_with($mime, 'image/')) {
                 throw new \RuntimeException('Image mirror returned non-image content');
             }
-            $ext = str_contains($mime, 'jpeg') || str_contains($mime, 'jpg') ? 'jpg'
-                : (str_contains($mime, 'webp') ? 'webp' : 'png');
-            $path = "poetry-art/generated/{$poem->id}-{$provider}.{$ext}";
-            if (! Storage::disk('public')->put($path, $bytes)) {
-                throw new \RuntimeException('Image mirror storage write failed');
-            }
-
-            return '/storage/'.$path;
+            return $this->storeWebp($poem, $provider, $bytes);
         } catch (\Throwable $e) {
             Log::warning('poetry.image_mirror_failed', [
                 'poem_id' => $poem->id,
@@ -344,6 +360,29 @@ class PoemImageService
             ]);
 
             throw $e;
+        }
+    }
+
+    private function storeWebp(PoetryPoem $poem, string $provider, string $bytes): string
+    {
+        $image = @imagecreatefromstring($bytes);
+        if ($image === false) {
+            throw new \RuntimeException('Image bytes could not be decoded');
+        }
+        try {
+            ob_start();
+            $ok = imagewebp($image, null, 82);
+            $webp = ob_get_clean();
+            if (! $ok || ! is_string($webp) || $webp === '') {
+                throw new \RuntimeException('WebP encoding failed');
+            }
+            $path = "poetry-art/generated/{$poem->id}-{$provider}.webp";
+            if (! Storage::disk('public')->put($path, $webp)) {
+                throw new \RuntimeException('WebP storage write failed');
+            }
+            return '/storage/'.$path;
+        } finally {
+            imagedestroy($image);
         }
     }
 }

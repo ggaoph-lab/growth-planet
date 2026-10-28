@@ -35,6 +35,7 @@ class PreparePoemAssets implements ShouldQueue
             return;
         }
         $ai->upgradeEnrichmentViaAi($poem, $this->familyId);
+        $images->optimizeExistingImages($poem);
         $image = $images->ensureImage($poem, $this->familyId);
         $audio->scheduleWarmLibrary($this->poemId, $this->familyId);
         if ($image['url'] === null) {
