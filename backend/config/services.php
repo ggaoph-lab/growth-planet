@@ -99,6 +99,7 @@ return [
         'api_key' => env('ELEVENLABS_API_KEY', ''),
         // The synchronous /v1/text-to-speech endpoint supports Flash; v4 Turbo uses Text to Dialogue WebSocket.
         'model' => env('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'),
+        'model_en' => env('ELEVENLABS_TTS_MODEL_EN', 'eleven_multilingual_v2'),
         'voice_en' => env('ELEVENLABS_VOICE_EN', 'EXAVITQu4vr4xnSDxMaL'), // Sarah
         'voice_zh' => env('ELEVENLABS_VOICE_ZH', 'Xb7hH8MSUJpSbSDYk0k2'), // Alice
         'timeout' => (int) env('ELEVENLABS_TTS_TIMEOUT', 30),

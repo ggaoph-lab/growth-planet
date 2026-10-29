@@ -1,4 +1,4 @@
-/** Content-addressed phrase / Chinese clips (ElevenLabs forge → public/atlas/audio/phrase/). */
+/** Content-addressed phrase / Chinese clips (local Kokoro forge → public/atlas/audio/phrase/). */
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -17,5 +17,5 @@ export function phraseKey(text: string) {
 export function phraseAudioUrl(text: string, kind: "en" | "zh") {
   const t = text.trim();
   if (!t) return null;
-  return `${BASE}/atlas/audio/phrase/${kind}/${phraseKey(t)}.mp3`;
+  return `${BASE}/atlas/audio/phrase/${kind}/${phraseKey(t)}.mp3?v=1dd9da12`;
 }

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .local/
+public/audio-progress.json
 .env
 .env.*
 !.env.example

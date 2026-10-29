@@ -39,8 +39,15 @@ git -C "$TMP/word-atlas" sparse-checkout set public/atlas/img public/atlas/audio
 
 mkdir -p "$DEST"
 for dir in img audio thumb; do
-  rm -rf "$DEST/$dir"
-  mv "$TMP/word-atlas/public/atlas/$dir" "$DEST/$dir"
+  if [[ "$dir" == audio && -d "$DEST/audio/phrase" ]]; then
+    # The locally generated phrase catalog has its own revision and must survive
+    # upstream word-audio refreshes. rsync excludes protect it from --delete.
+    rsync -a --delete --exclude='/phrase/' --exclude='/.phrase-revision' \
+      "$TMP/word-atlas/public/atlas/audio/" "$DEST/audio/"
+  else
+    rm -rf "$DEST/$dir"
+    mv "$TMP/word-atlas/public/atlas/$dir" "$DEST/$dir"
+  fi
   echo "  synced $dir ($(du -sh "$DEST/$dir" | awk '{print $1}'))"
 done
 

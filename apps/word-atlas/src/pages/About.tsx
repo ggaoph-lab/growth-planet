@@ -90,7 +90,7 @@ export function About() {
         <section className="panel">
           <h3 className="eyebrow">内容从哪里来</h3>
           <p className="muted">
-            释义、例句、搭配和提示由大语言模型按统一的词典规范重新撰写；插画由图像模型按统一画风逐词绘制；单词与例句发音由 ElevenLabs 合成（英音 Alice，美音 Sarah）。词组与中文翻译可按同样音色预生成（scripts/atlas/gen_phrase_audio.py）；在成长星球里若还没有预录音，会先走神经朗读再退回系统语音。所有内容都经过结构和一致性的自动校验，但没有逐条人工审校。看到错的地方，欢迎在 GitHub 提 Issue，或者直接改数据提 PR。
+            释义、例句、搭配和提示由大语言模型按统一的词典规范重新撰写；插画由图像模型按统一画风逐词绘制；原有的单词与英文例句发音由 ElevenLabs 合成。新增的英文搭配与中文翻译使用本地开源语音模型预生成（scripts/atlas/gen_phrase_audio_local.py），分别采用美语和普通话音色；在成长星球里若还没有预录音，会先走神经朗读再退回系统语音。所有内容都经过结构和一致性的自动校验，但没有逐条人工审校。看到错的地方，欢迎在 GitHub 提 Issue，或者直接改数据提 PR。
           </p>
           <p className="muted">词光不是官方雅思词表，也不承诺提分。它只想把背单词这件事，做得好看一点、扎实一点。</p>
         </section>

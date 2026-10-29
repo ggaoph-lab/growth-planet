@@ -2,7 +2,7 @@
 # Update Growth Planet on Synology (or any Docker host) from GitHub + GHCR.
 #
 # Default path (fast): sync compose/scripts → docker compose pull → up → migrate.
-# Fallback: LOCAL_BUILD=1 builds images on the NAS (slow; avoid unless offline).
+# LOCAL_BUILD=1 builds images on the deployment host.
 #
 # Safe to run from /volume1/docker/growth-planet (SSH or Task Scheduler).
 set -euo pipefail
@@ -14,7 +14,7 @@ REPO_URL="${REPO_URL:-https://github.com/ggaoph-lab/growth-planet}"
 BRANCH="${BRANCH:-main}"
 COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
 ENV_FILE="${ENV_FILE:-deploy/compose/.env.prod}"
-# Set LOCAL_BUILD=1 to build on the NAS instead of pulling GHCR images.
+# Set LOCAL_BUILD=1 to build on the host instead of pulling GHCR images.
 LOCAL_BUILD="${LOCAL_BUILD:-0}"
 KEEP_PATHS=(
   "deploy/compose/.env.prod"
@@ -103,7 +103,6 @@ fi
 
 new_commit="$(curl -fsSL "https://api.github.com/repos/ggaoph-lab/growth-planet/commits/${BRANCH}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')"
-printf '%s\n' "$new_commit" >"$ROOT/DEPLOYED-COMMIT"
 
 compose() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
@@ -113,6 +112,7 @@ if [[ "$DOCKER_OK" -eq 1 ]]; then
   # Must run before recreating nginx: the old image may hold the only local copy.
   media_container="$(compose ps -q nginx 2>/dev/null || true)"
   bash "$ROOT/scripts/prepare-word-atlas-media.sh" "${media_container:-growth-planet-nginx-1}"
+  bash "$ROOT/scripts/prepare-word-atlas-phrase-audio.sh"
   if [[ -x "$ROOT/deploy/scripts/nas-backup.sh" || -x "$ROOT/deploy/scripts/backup.sh" ]]; then
     compose run --rm --no-deps backup true 2>/dev/null || true
   fi
@@ -157,10 +157,12 @@ fi
 
 http_port="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
 http_port="${http_port:-8088}"
-if curl -fsS -m 8 "http://127.0.0.1:${http_port}/healthz" >/dev/null 2>&1; then
-  echo "healthz ok"
-  curl -fsS -m 8 "http://127.0.0.1:${http_port}/api/health" || true
-  echo
+if [[ "$DOCKER_OK" -eq 1 ]]; then
+  curl -fsS -m 8 "http://127.0.0.1:${http_port}/healthz" >/dev/null
+  curl -fsS -m 8 "http://127.0.0.1:${http_port}/api/health" >/dev/null
+  printf '%s\n' "$new_commit" >"$ROOT/DEPLOYED-COMMIT"
+  echo "healthz and api/health ok"
+  echo "Deployed ${BRANCH} @ ${new_commit}"
+else
+  echo "Code updated toward ${BRANCH} @ ${new_commit}; Docker deployment pending."
 fi
-
-echo "Updated toward ${BRANCH} @ ${new_commit}"

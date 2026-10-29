@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>雅思星球语音生成进度</title>
+<style>
+  :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #151b3b; color: #fff; }
+  main { width: min(560px, calc(100vw - 36px)); padding: 32px; border-radius: 26px; background: #262d5e; box-sizing: border-box; }
+  h1 { margin: 0 0 8px; font-size: 26px; }
+  p { color: #d9def8; line-height: 1.6; }
+  strong { display: block; margin: 25px 0 12px; font-size: 42px; }
+  progress { width: 100%; height: 20px; accent-color: #ffd67a; }
+  .numbers { display: flex; justify-content: space-between; gap: 12px; margin-top: 15px; color: #e8eafd; }
+  #state { margin-bottom: 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>雅思星球语音生成</h1>
+  <p>普通话与美语音频正在本机制作。页面每 10 秒更新一次。</p>
+  <strong id="percent">读取中…</strong>
+  <progress id="bar" max="100" value="0" aria-label="语音生成进度"></progress>
+  <div class="numbers"><span id="count">—</span><span id="failures">—</span></div>
+  <p id="state" aria-live="polite"></p>
+</main>
+<script>
+async function refresh() {
+  try {
+    const response = await fetch('audio-progress.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) throw new Error('进度暂不可用');
+    const data = await response.json();
+    const percent = Math.min(100, Math.round(data.done / data.total * 1000) / 10);
+    document.getElementById('percent').textContent = percent.toFixed(1) + '%';
+    document.getElementById('bar').value = percent;
+    document.getElementById('count').textContent = `${data.done.toLocaleString()} / ${data.total.toLocaleString()} 条`;
+    document.getElementById('failures').textContent = `本轮失败 ${data.failures} 条`;
+    const age = (Date.now() - new Date(data.updated_at).getTime()) / 1000;
+    document.getElementById('state').textContent = data.status === 'paused' ? '已暂停；已完成文件均已保留' : data.done === data.total ? '生成完成' : age > 45 ? '进度暂未更新；已完成文件仍会保留' : '正在生成…';
+  } catch (error) {
+    document.getElementById('state').textContent = error.message;
+  }
+}
+refresh(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>

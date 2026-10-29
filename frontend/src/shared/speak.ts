@@ -732,6 +732,7 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
         ready = raced.audio
       } else {
         void neural.catch(() => null)
+        if (engineLock.get(apiLang) === 'neural') return false
         lockBrowserEngine(apiLang)
       }
     }
@@ -743,14 +744,17 @@ async function speakPrepared(text: string, browserLang: string, apiLang: string,
       const played = await playBlob(base64ToBlob(ready.base64, mime), epoch, onStarted, rate)
       if (played || epoch !== speakEpoch) return played
       // Neural playback failed after a prior neural success — stay consistent with browser.
+      if (engineLock.get(apiLang) === 'neural') return false
       lockBrowserEngine(apiLang)
     }
   } catch (error) {
     // Browser autoplay denial is actionable; don't silently queue another blocked voice.
     if (error instanceof AutoplayBlockedError) return false
+    if (engineLock.get(apiLang) === 'neural') return false
     lockBrowserEngine(apiLang)
   }
   if (epoch !== speakEpoch) return false
+  if (engineLock.get(apiLang) === 'neural') return false
   lockBrowserEngine(apiLang)
   return speakBrowser(text, browserLang, epoch, onStarted, rate)
 }

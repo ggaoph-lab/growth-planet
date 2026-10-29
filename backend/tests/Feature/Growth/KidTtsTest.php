@@ -7,7 +7,9 @@ use App\Modules\Task\Services\QwenRealtimeTtsClient;
 use App\Modules\Task\Services\QwenTtsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class KidTtsTest extends TestCase
@@ -17,6 +19,7 @@ class KidTtsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Storage::fake('local');
         // Local developer keys must never be used by automated tests.
         config(['services.elevenlabs.api_key' => '']);
     }
@@ -25,7 +28,7 @@ class KidTtsTest extends TestCase
     {
         config([
             'services.elevenlabs.api_key' => 'test-elevenlabs-key',
-            'services.elevenlabs.model' => 'eleven_flash_v2_5',
+            'services.elevenlabs.model_en' => 'eleven_multilingual_v2',
         ]);
         ['family' => $family] = $this->makeFamily();
         Http::fake(['api.elevenlabs.io/*' => Http::response(str_repeat('a', 2200), 200, ['Content-Type' => 'audio/mpeg'])]);
@@ -36,8 +39,9 @@ class KidTtsTest extends TestCase
         Http::assertSent(function (\Illuminate\Http\Client\Request $request): bool {
             return str_contains($request->url(), '/v1/text-to-speech/')
                 && $request->hasHeader('xi-api-key', 'test-elevenlabs-key')
-                && ($request->data()['model_id'] ?? null) === 'eleven_flash_v2_5'
-                && ($request->data()['language_code'] ?? null) === 'en';
+                && ($request->data()['model_id'] ?? null) === 'eleven_multilingual_v2'
+                && ! isset($request->data()['language_code'])
+                && ($request->data()['voice_settings']['stability'] ?? null) === 0.65;
         });
     }
 
@@ -73,6 +77,22 @@ class KidTtsTest extends TestCase
         $this->assertSame($audio, $tts->synthesize('Good morning.', $family->id, 'en-US'));
         $this->travel(14)->hours();
         $this->assertSame($audio, $tts->synthesize('Good morning.', $family->id, 'en-US'));
+    }
+
+    public function test_generated_audio_survives_cache_expiry_on_server_disk(): void
+    {
+        config(['services.tts.prefer_gemini' => false, 'services.qwen.api_key' => '']);
+        ['family' => $family] = $this->makeFamily();
+        $audio = ['audio_base64' => base64_encode(str_repeat('a', 80)), 'mime' => 'audio/mpeg', 'provider' => 'edge_tts'];
+        $this->mock(EdgeTtsClient::class, function ($mock) use ($audio): void {
+            $mock->shouldReceive('synthesize')->once()->andReturn($audio);
+        });
+
+        $tts = app(QwenTtsService::class);
+        $this->assertSame($audio, $tts->synthesize('Persistent English audio.', $family->id, 'en-US'));
+        $this->assertCount(1, Storage::disk('local')->allFiles('tts-clips/v1'));
+        Cache::flush();
+        $this->assertSame($audio, $tts->synthesize('Persistent English audio.', $family->id, 'en-US'));
     }
 
     public function test_qwen_is_preferred_over_edge_when_configured(): void
@@ -295,8 +315,8 @@ class KidTtsTest extends TestCase
         $this->actingAsKid($child, $device, $token)
             ->postJson('/api/v1/kid/tts', ['text' => 'I like apples.', 'lang' => 'en-US'])
             ->assertOk()
-            ->assertJsonPath('data.available', true)
-            ->assertJsonPath('data.provider', 'google_tts');
+            ->assertJsonPath('data.available', false)
+            ->assertJsonPath('data.provider', null);
 
         Http::assertNotSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com'));
     }

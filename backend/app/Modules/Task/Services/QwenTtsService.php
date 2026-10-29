@@ -6,6 +6,7 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Kid read-aloud TTS.
@@ -150,6 +151,8 @@ class QwenTtsService
         $allowQwen = in_array($ttsProvider, ['auto', 'qwen'], true);
         $allowEdge = in_array($ttsProvider, ['auto', 'edge', 'elevenlabs'], true);
         $this->qwenHardFailure = null;
+        if ($english && (($ttsProvider === 'elevenlabs' && $elevenKey === '')
+            || ($ttsProvider === 'qwen' && $qwenKey === ''))) return null;
 
         // Opt-in ElevenLabs (雅思星球同款 Alice/Sarah). In auto mode only when a key is set
         // and provider was not forced to qwen/edge — parents pick "elevenlabs" to prefer it.
@@ -158,12 +161,14 @@ class QwenTtsService
             if ($result !== null) {
                 return $result;
             }
+            if ($english) return null;
         } elseif ($allowEleven && $ttsProvider === 'auto' && $elevenKey !== '') {
             // Soft prefer ElevenLabs whenever a key is configured (poetry zh + Word Atlas en).
             $result = $this->synthesizeElevenLabs($text, $elevenKey, $lang);
             if ($result !== null) {
                 return $result;
             }
+            if ($english) return null;
         }
 
         if ($allowQwen && $qwenKey !== '') {
@@ -174,6 +179,7 @@ class QwenTtsService
             if ($result !== null) {
                 return $result;
             }
+            if ($english) return null;
             // Free-tier / billing / auth failures: skip Edge (~7s) and Google (~5s+) so the
             // kid client can fall back to browser speech instead of sitting in silence.
             if ($this->qwenHardFailure !== null) {
@@ -188,6 +194,7 @@ class QwenTtsService
             if ($result !== null) {
                 return $result;
             }
+            if ($english) return null;
         }
 
         $result = $this->synthesizeGoogleTranslate($text, $lang);
@@ -201,7 +208,7 @@ class QwenTtsService
 
     private function cacheKey(string $text, string $voice): string
     {
-        return 'tts:v9:'.$voice.':'.hash('sha256', $text);
+        return 'tts:v11:'.$voice.':'.hash('sha256', $text);
     }
 
     /** @param  array<string, mixed>|null  $cfg */
@@ -216,7 +223,11 @@ class QwenTtsService
                 ? (string) config('services.elevenlabs.voice_en', 'EXAVITQu4vr4xnSDxMaL')
                 : (string) config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2');
 
-            return 'eleven:'.$voice;
+            $model = str_starts_with($lang, 'en')
+                ? (string) config('services.elevenlabs.model_en', 'eleven_multilingual_v2')
+                : (string) config('services.elevenlabs.model', 'eleven_flash_v2_5');
+
+            return 'eleven:'.$voice.':'.$model;
         }
 
         return 'qwen:'.$this->qwenVoiceFor($lang, $cfg);
@@ -270,7 +281,9 @@ class QwenTtsService
         $voice = $english
             ? (string) config('services.elevenlabs.voice_en', 'EXAVITQu4vr4xnSDxMaL')
             : (string) config('services.elevenlabs.voice_zh', 'Xb7hH8MSUJpSbSDYk0k2');
-        $model = (string) config('services.elevenlabs.model', 'eleven_flash_v2_5');
+        $model = $english
+            ? (string) config('services.elevenlabs.model_en', 'eleven_multilingual_v2')
+            : (string) config('services.elevenlabs.model', 'eleven_flash_v2_5');
         $timeout = max(8, (int) config('services.elevenlabs.timeout', 30));
         $url = 'https://api.elevenlabs.io/v1/text-to-speech/'.$voice.'?output_format=mp3_44100_64';
 
@@ -278,11 +291,17 @@ class QwenTtsService
             $response = Http::withHeaders([
                 'xi-api-key' => $apiKey,
                 'Accept' => 'audio/mpeg',
-            ])->timeout($timeout)->post($url, [
+            ])->timeout($timeout)->post($url, array_filter([
                 'text' => $text,
                 'model_id' => $model,
-                'language_code' => $english ? 'en' : 'zh',
-            ]);
+                'language_code' => $model === 'eleven_multilingual_v2' ? null : ($english ? 'en' : 'zh'),
+                'voice_settings' => $english ? [
+                    'stability' => 0.65,
+                    'similarity_boost' => 0.8,
+                    'style' => 0,
+                    'use_speaker_boost' => true,
+                ] : null,
+            ], static fn ($value) => $value !== null));
         } catch (\Throwable $e) {
             Log::warning('tts.elevenlabs_http', ['error' => $e->getMessage()]);
 
@@ -319,10 +338,18 @@ class QwenTtsService
     {
         $cached = Cache::get($cacheKey);
         if (! is_array($cached) || ! isset($cached['audio_base64'], $cached['mime'], $cached['provider'])) {
-            return null;
+            $path = $this->audioPath($cacheKey);
+            $cached = Storage::disk('local')->exists($path)
+                ? json_decode((string) Storage::disk('local')->get($path), true)
+                : null;
+            if (! is_array($cached) || ! isset($cached['audio_base64'], $cached['mime'], $cached['provider'])) {
+                return null;
+            }
+            Cache::put($cacheKey, $cached, now()->addDays(2));
         }
         if (($cached['provider'] ?? '') === 'piper') {
             Cache::forget($cacheKey);
+            Storage::disk('local')->delete($this->audioPath($cacheKey));
 
             return null;
         }
@@ -340,7 +367,13 @@ class QwenTtsService
         }
 
         // Audio is keyed by normalized text and voice; keep morning prewarming useful all day.
+        Storage::disk('local')->put($this->audioPath($cacheKey), json_encode($result, JSON_THROW_ON_ERROR));
         Cache::put($cacheKey, $result, now()->addDays(2));
+    }
+
+    private function audioPath(string $cacheKey): string
+    {
+        return 'tts-clips/v1/'.hash('sha256', $cacheKey).'.json';
     }
 
     public function qwenConfigured(int $familyId): bool

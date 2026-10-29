@@ -248,6 +248,11 @@ function playSpeech(text: string, lang: 'en-US' | 'zh-CN', afterCurrent = false)
   })()
   activeSpeech = playback
   activeSpeechKey = key
+  void playback.then(played => {
+    if (!played && mounted && request === speechRequest && lang === 'en-US') {
+      feedback.value = '伙伴声音暂时不可用，请点喇叭重试。\nPartner voice is temporarily unavailable. Tap the speaker to retry.'
+    }
+  })
   void playback.finally(() => {
     if (activeSpeech === playback) {
       activeSpeech = null
