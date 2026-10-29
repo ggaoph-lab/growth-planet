@@ -44,6 +44,7 @@ echo "Dumping MySQL..."
 "${COMPOSE[@]}" exec -T mysql \
   mysqldump \
     --single-transaction \
+    --no-tablespaces \
     --routines \
     --triggers \
     --hex-blob \
@@ -65,9 +66,12 @@ if command -v age >/dev/null 2>&1 && [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
   age -r "$BACKUP_AGE_RECIPIENT" -o "$OUT" "$ARCHIVE"
 else
   OUT="$BACKUP_DIR/growth-planet-${STAMP}.tar.enc"
-  openssl enc -aes-256-cbc -pbkdf2 -salt \
-    -pass "pass:${BACKUP_ENCRYPTION_PASSPHRASE}" \
-    -in "$ARCHIVE" -out "$OUT"
+  # CentOS 7's OpenSSL 1.0 lacks PBKDF2; use the app container's OpenSSL 3.
+  export BACKUP_ENCRYPTION_PASSPHRASE
+  "${COMPOSE[@]}" exec -T -e BACKUP_ENCRYPTION_PASSPHRASE app \
+    openssl enc -aes-256-cbc -pbkdf2 -salt \
+      -pass env:BACKUP_ENCRYPTION_PASSPHRASE \
+    < "$ARCHIVE" > "$OUT"
 fi
 
 chmod 600 "$OUT"
