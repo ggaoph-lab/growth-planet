@@ -22,6 +22,7 @@ export interface SchulteSizeBoard {
   coins: number
   best_ms: number | null
   awarded: boolean
+  remaining: number
   ranks: SchulteRank[]
 }
 

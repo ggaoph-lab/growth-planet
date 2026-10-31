@@ -28,9 +28,10 @@ class SchulteController
         $data = $request->validate([
             'size' => ['required', 'integer', 'in:3,4,5'],
             'elapsed_ms' => ['required', 'integer', 'min:1', 'max:'.SchulteScoreService::MAX_MS],
+            'play_id' => ['required', 'uuid'],
         ]);
         $child = $this->context->child();
-        $result = $this->scores->record($child, $this->context->family(), (int) $data['size'], (int) $data['elapsed_ms']);
+        $result = $this->scores->record($child, $this->context->family(), (int) $data['size'], (int) $data['elapsed_ms'], $data['play_id']);
 
         return response()->json(['data' => $result]);
     }

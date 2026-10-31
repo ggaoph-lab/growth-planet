@@ -19,7 +19,7 @@ import { AmbienceController, AmbiencePicker } from "./ui/Ambience";
 import { Logo } from "./ui/Logo";
 import { Palette } from "./ui/Palette";
 import { Sheet } from "./ui/Sheet";
-import { shouldShowSplash, Splash } from "./ui/Splash";
+import { Starfield } from "./ui/Starfield";
 import { Toasts } from "./ui/Toast";
 
 const NAV: { page: Route["page"]; label: string; icon: typeof Compass }[] = [
@@ -29,14 +29,26 @@ const NAV: { page: Route["page"]; label: string; icon: typeof Compass }[] = [
   { page: "me", label: "我的", icon: User },
 ];
 
+function isSkin(theme: string) {
+  return theme === "starlight" || theme === "aurora";
+}
+
 function useTheme() {
   const theme = useStore((s) => s.settings.theme);
+  const wordFont = useStore((s) => s.settings.wordFont);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-font", wordFont);
+  }, [wordFont]);
   useEffect(() => {
     const root = document.documentElement;
+    const skin = isSkin(theme);
+    if (skin) root.setAttribute("data-skin", theme);
+    else root.removeAttribute("data-skin");
     if (theme === "system") root.removeAttribute("data-theme");
-    else root.setAttribute("data-theme", theme);
-    const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0D1120" : "#F6F1E7");
+    else root.setAttribute("data-theme", skin ? "dark" : theme);
+    const dark = theme === "dark" || skin || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+    const color = theme === "aurora" ? "#05060F" : theme === "starlight" ? "#070A16" : dark ? "#0D1120" : "#F6F1E7";
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", color);
   }, [theme]);
   return theme;
 }
@@ -96,7 +108,6 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
   const onboarded = useStore((s) => s.settings.onboarded);
   const theme = useStore((s) => s.settings.theme);
   const [palette, setPalette] = useState(false);
-  const [splash, setSplash] = useState(shouldShowSplash);
   // Embedded under Growth Planet as 雅思星球 (/ielts/).
   const inGrowthPlanet = import.meta.env.BASE_URL.includes("/ielts");
   const [cloudReady, setCloudReady] = useState(!inGrowthPlanet);
@@ -122,7 +133,7 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
     if (!word) window.scrollTo({ top: 0 });
   }, [route.page]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const dark = theme === "dark" || isSkin(theme) || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
 
   useEffect(() => {
     if (!inGrowthPlanet) return;
@@ -148,6 +159,7 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
 
   return (
     <div className={`app ${focus ? "is-focus" : ""}`}>
+      {theme === "starlight" && <Starfield />}
       {!focus && (
         <header className="topbar">
           {inGrowthPlanet && (
@@ -178,7 +190,7 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
               <kbd>⌘K</kbd>
             </button>
             <AmbiencePicker />
-            <button className="icon-btn" onClick={() => store.settings({ theme: dark ? "light" : "dark" })} aria-label={dark ? "切换到浅色" : "切换到深色"}>
+            <button className="icon-btn" onClick={() => store.settings({ theme: dark ? "light" : "starlight" })} aria-label={dark ? "切换到浅色" : "切换到星光"}>
               {dark ? <Sun size={19} /> : <Moon size={19} />}
             </button>
             <a className="icon-btn hide-sm" href="#/about" aria-label="关于与开源" title="关于与开源">
@@ -223,8 +235,7 @@ function Shell({ privateAvailable }: { privateAvailable: boolean }) {
 
       <WordSheet id={word} />
       <Palette open={palette} onClose={() => setPalette(false)} />
-      {!onboarded && route.page !== "about" && !splash && <Onboarding />}
-      {splash && <Splash onDone={() => setSplash(false)} />}
+      {!onboarded && route.page !== "about" && <Onboarding />}
       <Toasts />
       <AmbienceController />
     </div>

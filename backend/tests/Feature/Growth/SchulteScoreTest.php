@@ -61,7 +61,7 @@ class SchulteScoreTest extends TestCase
 
         $this->assertSame(6, $this->balance($child));
 
-        $this->finish($child, $device, $token, 5, 200)->assertStatus(422);
+        $this->finish($child, $device, $token, 5, 200)->assertStatus(429);
         $this->assertSame(6, $this->balance($child));
     }
 
@@ -100,9 +100,13 @@ class SchulteScoreTest extends TestCase
 
     private function finish(ChildProfile $child, TrustedDevice $device, string $token, int $size, int $elapsedMs): TestResponse
     {
+        $start = $this->actingAsKid($child, $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/games/schulte/start', ['level' => (string) $size]);
+        if ($start->status() !== 200) return $start;
         return $this->actingAsKid($child, $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
-            ->postJson('/api/v1/kid/games/schulte', ['size' => $size, 'elapsed_ms' => $elapsedMs]);
+            ->postJson('/api/v1/kid/games/schulte', ['size' => $size, 'elapsed_ms' => $elapsedMs, 'play_id' => $start->json('data.play_id')]);
     }
 
     private function balance(ChildProfile $child): int

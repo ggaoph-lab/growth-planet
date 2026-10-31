@@ -1008,6 +1008,9 @@ export default {
     taskReward: '🎁 {xp} XP · {points} points · {coins} growth coins',
     taskRewardPending: '🎁 {xp} XP · {points} points · {coins} growth coins when you finish',
     games: {
+      remaining: '{n} plays left today',
+      tomorrow: 'All plays used today. Come back tomorrow.',
+      tryLater: 'Please try again later',
       intro: 'Pick a little game and practice your focus.',
       schulte: 'Schulte grid',
       schulteBlurb: 'Tap the numbers in order: 1, 2, 3…',

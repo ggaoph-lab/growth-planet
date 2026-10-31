@@ -116,7 +116,7 @@ if (app) {
   for (const [name, hash, w, h] of views) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 2, colorScheme: "light" });
     const page = await ctx.newPage();
-    await page.addInitScript(() => localStorage.setItem("word-atlas:settings", JSON.stringify({ onboarded: true, startLevel: 2, splash: false })));
+    await page.addInitScript(() => localStorage.setItem("word-atlas:settings", JSON.stringify({ onboarded: true, startLevel: 2 })));
     await page.goto(new URL(hash, app).href, { waitUntil: "networkidle" });
     await page.waitForTimeout(1600);
     await page.screenshot({ path: path.join(root, `docs/assets/${name}.jpg`), type: "jpeg", quality: 86 });

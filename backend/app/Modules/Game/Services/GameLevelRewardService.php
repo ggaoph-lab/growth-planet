@@ -27,6 +27,7 @@ class GameLevelRewardService
     public function __construct(
         private readonly Clock $clock,
         private readonly RewardGrantService $rewards,
+        private readonly GamePlayService $plays,
     ) {}
 
     public static function coins(string $level): int
@@ -67,6 +68,7 @@ class GameLevelRewardService
                 'id' => $level,
                 'coins' => self::coins($level),
                 'awarded' => ($row?->coins_awarded ?? 0) > 0,
+                'remaining' => $this->plays->remaining($child, $family, $game, $level),
             ];
         }
 
@@ -76,14 +78,15 @@ class GameLevelRewardService
     /**
      * @return array{awarded_coins: int, board: array{date: string, levels: list<array{id: string, coins: int, awarded: bool}>}}
      */
-    public function claim(ChildProfile $child, Family $family, string $game, string $level): array
+    public function claim(ChildProfile $child, Family $family, string $game, string $level, string $playId): array
     {
         self::assertGame($game);
         $coins = self::coins($level);
         $date = $this->clock->today($family->timezone)->toDateString();
         $awarded = 0;
 
-        DB::transaction(function () use ($child, $family, $game, $level, $coins, $date, &$awarded): void {
+        DB::transaction(function () use ($child, $family, $game, $level, $playId, $coins, $date, &$awarded): void {
+            $this->plays->finish($child, $family, $game, $level, $playId);
             $row = $this->lockRow($child, $family, $game, $level, $date);
             if ($row->reward_grant_id !== null) {
                 return;

@@ -22,9 +22,9 @@ function board(bestMs: number | null = null, awarded = false): SchulteBoard {
   return {
     date: '2026-10-20',
     sizes: [
-      { size: 3, limit_ms: 9000, coins: 1, best_ms: bestMs, awarded, ranks: bestMs == null ? [] : [{ child_id: 4, nickname: '小星星', best_ms: bestMs, coins: awarded ? 1 : 0 }] },
-      { size: 4, limit_ms: 16000, coins: 2, best_ms: null, awarded: false, ranks: [] },
-      { size: 5, limit_ms: 25000, coins: 3, best_ms: null, awarded: false, ranks: [] },
+      { size: 3, limit_ms: 9000, coins: 1, best_ms: bestMs, awarded, remaining: 2, ranks: bestMs == null ? [] : [{ child_id: 4, nickname: '小星星', best_ms: bestMs, coins: awarded ? 1 : 0 }] },
+      { size: 4, limit_ms: 16000, coins: 2, best_ms: null, awarded: false, remaining: 2, ranks: [] },
+      { size: 5, limit_ms: 25000, coins: 3, best_ms: null, awarded: false, remaining: 2, ranks: [] },
     ],
   }
 }
@@ -42,12 +42,12 @@ beforeEach(() => {
   localStorage.clear()
   setAppLocale('zh-CN')
   vi.mocked(api.get).mockResolvedValue(board())
-  vi.mocked(api.postIdempotent).mockResolvedValue({
+  vi.mocked(api.postIdempotent).mockImplementation(async (path) => path.endsWith('/start') ? { play_id: 'play-1' } : ({
     elapsed_ms: 1,
     improved: true,
     awarded_coins: 0,
     board: board(),
-  })
+  }))
 })
 
 afterEach(() => {
@@ -58,7 +58,9 @@ afterEach(() => {
 describe('SchulteGrid', () => {
   it('advances only when the next number is tapped', async () => {
     wrapper = mount(SchulteGrid, { props: { sounds: true, childId: 4 } })
+    await flushPromises()
     await wrapper.get('button.go').trigger('click')
+    await flushPromises()
 
     expect(wrapper.get('.next-num').text()).toBe('1')
     await cell('2').trigger('click')
@@ -78,12 +80,12 @@ describe('SchulteGrid', () => {
     let now = 10_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     vi.mocked(api.get).mockResolvedValue(board(1500))
-    vi.mocked(api.postIdempotent).mockResolvedValue({
+    vi.mocked(api.postIdempotent).mockImplementation(async (path) => path.endsWith('/start') ? { play_id: 'play-1' } : ({
       elapsed_ms: 5000,
       improved: false,
       awarded_coins: 0,
       board: board(1500),
-    })
+    }))
     rememberBest(4, 3, 1500)
     wrapper = mount(SchulteGrid, { props: { animate: false, sounds: true, childId: 4 } })
     await flushPromises()
@@ -91,7 +93,9 @@ describe('SchulteGrid', () => {
     expect(wrapper.text()).toContain('9 秒内 +1 积分')
     expect(wrapper.text()).toContain('从 1 点到 9')
 
+    await flushPromises()
     await wrapper.get('button.go').trigger('click')
+    await flushPromises()
     now = 20_000
     expect(wrapper.find('.cell').classes()).not.toContain('animate')
     expect((wrapper.find('.size').element as HTMLButtonElement).disabled).toBe(true)
@@ -109,7 +113,9 @@ describe('SchulteGrid', () => {
 
   it('records the first finish and can switch to a larger grid', async () => {
     wrapper = mount(SchulteGrid, { props: { childId: 8 } })
+    await flushPromises()
     await wrapper.get('button.go').trigger('click')
+    await flushPromises()
     for (let n = 1; n <= 9; n += 1) await cell(String(n)).trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('新纪录')

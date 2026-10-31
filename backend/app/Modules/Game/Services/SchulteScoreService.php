@@ -23,6 +23,7 @@ class SchulteScoreService
     public function __construct(
         private readonly Clock $clock,
         private readonly RewardGrantService $rewards,
+        private readonly GamePlayService $plays,
     ) {}
 
     /**
@@ -65,6 +66,7 @@ class SchulteScoreService
                 'coins' => $rule['coins'],
                 'best_ms' => $mine?->best_ms,
                 'awarded' => ($mine?->coins_awarded ?? 0) > 0,
+                'remaining' => $this->plays->remaining($child, $family, 'schulte', (string) $size),
                 'ranks' => $rows->map(fn (SchulteDailyScore $score) => [
                     'child_id' => $score->child_id,
                     'nickname' => $score->child?->nickname ?? '',
@@ -80,7 +82,7 @@ class SchulteScoreService
     /**
      * @return array{elapsed_ms: int, improved: bool, awarded_coins: int, board: array{date: string, sizes: list<array<string, mixed>>}}
      */
-    public function record(ChildProfile $child, Family $family, int $size, int $elapsedMs): array
+    public function record(ChildProfile $child, Family $family, int $size, int $elapsedMs, ?string $playId = null): array
     {
         $rule = self::rule($size);
         if ($elapsedMs < $rule['min_ms'] || $elapsedMs > self::MAX_MS) {
@@ -91,7 +93,8 @@ class SchulteScoreService
         $awarded = 0;
         $improved = false;
 
-        DB::transaction(function () use ($child, $family, $size, $elapsedMs, $rule, $date, &$awarded, &$improved): void {
+        DB::transaction(function () use ($child, $family, $size, $elapsedMs, $playId, $rule, $date, &$awarded, &$improved): void {
+            if ($playId !== null) $this->plays->finish($child, $family, 'schulte', (string) $size, $playId);
             [$score, $improved] = $this->lockScore($child, $family, $size, $date, $elapsedMs);
             if ($score->reward_grant_id === null && $elapsedMs <= $rule['limit_ms']) {
                 $grant = $this->rewards->grant(new RewardIntent(
