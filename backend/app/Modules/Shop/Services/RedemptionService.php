@@ -56,6 +56,7 @@ class RedemptionService
         $usePoints = $reward->pricedInPoints();
         $snapshot = [
             'name' => $reward->name,
+            'game_minutes' => $reward->game_minutes,
             'kind' => $reward->kind->value,
             'currency' => $usePoints ? 'point' : 'coin',
             'coin_price' => (int) ($reward->coin_price ?? 0),

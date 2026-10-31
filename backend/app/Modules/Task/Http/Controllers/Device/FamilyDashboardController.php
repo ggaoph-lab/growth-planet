@@ -31,8 +31,12 @@ class FamilyDashboardController
         foreach ($children as $child) {
             $tasks = $this->generator->ensureForChildOnDate($family, $child, $date);
             foreach ($tasks as $task) {
-                if ($task->status->value === 'cancelled') continue;
+                if ($task->status->value === 'cancelled') {
+                    continue;
+                }
                 $rows[] = [
+                    'id' => $task->id,
+                    'requires_self_check' => (bool) ($task->snapshot['requires_self_check'] ?? false),
                     'child' => $child->nickname,
                     'title' => (string) ($task->snapshot['title'] ?? ''),
                     'status' => $task->status->value,
@@ -53,6 +57,7 @@ class FamilyDashboardController
                 'poetry' => '诗词学习', 'encyclopedia' => '百科探索', 'exploration' => '探索学习',
                 'game' => '游戏活动', 'ielts' => '英语学习', default => '成长活动',
             };
+
             return [
                 'child' => $childNames[$entry->child_id] ?? '',
                 'title' => $label.(! empty($detail['source_name']) ? ' · '.$detail['source_name'] : ''),

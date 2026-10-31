@@ -1,11 +1,12 @@
 <?php
 
+use App\Modules\Task\Http\Controllers\Device\FamilyDashboardController;
+use App\Modules\Task\Http\Controllers\Device\FamilyHubController;
+use App\Modules\Task\Http\Controllers\Device\FamilyReminderController as DeviceFamilyReminderController;
+use App\Modules\Task\Http\Controllers\Kid\FamilyHubChatController;
 use App\Modules\Task\Http\Controllers\Kid\TaskController as KidTaskController;
 use App\Modules\Task\Http\Controllers\Kid\TtsController as KidTtsController;
 use App\Modules\Task\Http\Controllers\Parent\FamilyReminderController as ParentFamilyReminderController;
-use App\Modules\Task\Http\Controllers\Device\FamilyReminderController as DeviceFamilyReminderController;
-use App\Modules\Task\Http\Controllers\Device\FamilyDashboardController;
-use App\Modules\Task\Http\Controllers\Kid\FamilyHubChatController;
 use App\Modules\Task\Http\Controllers\Parent\HomeworkController;
 use App\Modules\Task\Http\Controllers\Parent\TaskCategoryController;
 use App\Modules\Task\Http\Controllers\Parent\TaskController;
@@ -34,6 +35,10 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
 });
 
 Route::prefix('v1/device')->group(function () {
+    Route::get('family-hub/approvals', [FamilyHubController::class, 'pending']);
+    Route::post('family-hub/decide', [FamilyHubController::class, 'decide'])->middleware('throttle:20,1');
+    Route::post('family-hub/tasks/{id}/complete', [FamilyHubController::class, 'complete'])->whereNumber('id')->middleware('throttle:30,1');
+    Route::get('family-hub/game', [FamilyHubController::class, 'game']);
     Route::get('family-dashboard', [FamilyDashboardController::class, 'index']);
     Route::get('family-reminders', [DeviceFamilyReminderController::class, 'index']);
     Route::get('family-reminders/{id}/audio', [DeviceFamilyReminderController::class, 'audio'])->whereNumber('id');

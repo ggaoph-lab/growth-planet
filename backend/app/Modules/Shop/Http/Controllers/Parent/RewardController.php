@@ -46,6 +46,7 @@ class RewardController
             $reward = Reward::query()->create([
                 'family_id' => $this->context->familyId(),
                 'name' => $data['name'],
+                'game_minutes' => $data['game_minutes'] ?? null,
                 'description' => $data['description'] ?? null,
                 'kind' => $kind,
                 'coin_price' => $coinPrice,
@@ -166,6 +167,7 @@ class RewardController
             'kind' => [$creating ? 'required' : 'sometimes', Rule::enum(RewardKind::class)],
             'coin_price' => ['nullable', 'integer', 'min:0'],
             'point_price' => ['nullable', 'integer', 'min:0'],
+            'game_minutes' => ['nullable', 'integer', 'min:1', 'max:240'],
             'stock' => ['nullable', 'integer', 'min:0'],
             'requires_approval' => ['nullable', 'boolean'],
             'status' => ['nullable', Rule::enum(RewardStatus::class)],

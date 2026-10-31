@@ -29,6 +29,7 @@ class TrustedDevice extends Model
     protected function casts(): array
     {
         return [
+            'hub_approvals_enabled' => 'boolean',
             'last_used_at' => 'immutable_datetime',
             'revoked_at' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',

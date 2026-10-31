@@ -448,6 +448,7 @@ export type RewardStatus = 'draft' | 'on_shelf' | 'off_shelf'
 export type RewardCurrency = 'coin' | 'point'
 
 export interface Reward {
+  game_minutes?: number | null
   id: number
   family_id: number
   name: string

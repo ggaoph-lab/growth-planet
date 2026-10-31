@@ -27,6 +27,7 @@ class RewardResource extends JsonResource
             'id' => $reward->id,
             'family_id' => $reward->family_id,
             'name' => $reward->name,
+            'game_minutes' => $reward->game_minutes,
             'description' => $reward->description,
             'kind' => $reward->kind->value,
             'currency' => $reward->pricedInPoints() ? 'point' : 'coin',

@@ -45,6 +45,7 @@ const form = ref({
   currency: 'coin' as RewardCurrency,
   coin_price: 10,
   point_price: 10,
+  game_minutes: 15 as number | null,
   stock: null as number | null,
   requires_approval: true,
   status: 'draft' as RewardStatus,
@@ -71,6 +72,7 @@ function resetForm(): void {
     currency: 'coin',
     coin_price: 10,
     point_price: 10,
+    game_minutes: 15,
     stock: null,
     requires_approval: true,
     status: 'draft',
@@ -133,6 +135,7 @@ function openEdit(r: Reward): void {
     currency: r.currency === 'point' || (r.point_price ?? 0) > 0 ? 'point' : 'coin',
     coin_price: r.coin_price || 10,
     point_price: r.point_price || 10,
+    game_minutes: r.game_minutes ?? 15,
     stock: r.stock,
     requires_approval: r.requires_approval,
     status: r.status,
@@ -161,6 +164,7 @@ async function save(): Promise<void> {
         name: form.value.name.trim(),
         description: form.value.description.trim() || null,
         kind: form.value.kind,
+        game_minutes: form.value.kind === 'screen_time' ? form.value.game_minutes : null,
         coin_price: pricedInPoints.value ? 0 : form.value.coin_price,
         point_price: pricedInPoints.value ? form.value.point_price : null,
         stock: form.value.stock,
@@ -182,6 +186,7 @@ async function save(): Promise<void> {
       body.append('name', form.value.name.trim())
       if (form.value.description.trim()) body.append('description', form.value.description.trim())
       body.append('kind', form.value.kind)
+      if (form.value.kind === 'screen_time' && form.value.game_minutes) body.append('game_minutes', String(form.value.game_minutes))
       body.append('coin_price', String(pricedInPoints.value ? 0 : form.value.coin_price))
       if (pricedInPoints.value) body.append('point_price', String(form.value.point_price))
       if (form.value.stock != null) body.append('stock', String(form.value.stock))
@@ -428,6 +433,9 @@ onMounted(load)
               :value="k"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.kind === 'screen_time'" label="游戏时长（分钟）">
+          <el-input-number v-model="form.game_minutes" :min="1" :max="240" />
         </el-form-item>
         <el-form-item :label="t('parent.shop.payWith')">
           <el-radio-group v-model="form.currency">
