@@ -46,7 +46,11 @@ class FamilyDashboardController
 
         $entries = XpLedgerEntry::query()->where('family_id', $family->id)
             ->where('business_date', $date)->where('amount', '>', 0)
-            ->latest('created_at')->limit(20)->get();
+            ->whereNotExists(function ($query) {
+                $query->selectRaw('1')->from('xp_ledger as reversal')
+                    ->whereColumn('reversal.reversal_of_id', 'xp_ledger.id');
+            })
+            ->latest('created_at')->orderByDesc('id')->limit(20)->get();
         $presented = collect(LedgerEntryPresenter::collection($entries, 'xp'))->keyBy('ulid');
         $childNames = $children->pluck('nickname', 'id');
         $activity = $entries->map(function (XpLedgerEntry $entry) use ($presented, $childNames, $family) {

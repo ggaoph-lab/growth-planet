@@ -2,6 +2,12 @@
 
 namespace Tests\Feature\Growth;
 
+use App\Modules\Core\Support\Clock;
+use App\Modules\Ledger\Models\CoinAccount;
+use App\Modules\Ledger\Models\PointAccount;
+use App\Modules\Ledger\Models\XpAccount;
+use App\Modules\Task\Services\TaskInstanceGenerator;
+use App\Modules\Task\Services\TaskKidFlowService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -18,6 +24,31 @@ class FamilyReminderTest extends TestCase
         $this->getJson('/api/v1/device/family-dashboard')->assertUnauthorized();
         $this->withCookie('gp_device', $token)->getJson('/api/v1/device/family-dashboard')
             ->assertOk()->assertJsonStructure(['data' => ['date', 'tasks', 'activity']]);
+    }
+
+    public function test_dashboard_hides_reversed_rewards_after_repeated_completion_and_withdrawal(): void
+    {
+        ['family' => $family, 'parent' => $parent] = $this->makeFamily();
+        $child = $this->makeChild($family);
+        [, $token] = $this->makeDevice($family, $parent);
+        $this->seedTask($family, $parent, ['title' => '新东方阅读', 'xp_reward' => 3, 'coin_reward' => 1, 'point_reward' => 1]);
+        $date = app(Clock::class)->today($family->timezone)->toDateString();
+        $task = app(TaskInstanceGenerator::class)->ensureForChildOnDate($family, $child, $date)->first();
+        $flow = app(TaskKidFlowService::class);
+        for ($i = 0; $i < 3; $i++) {
+            $flow->submit($task->fresh(), $child);
+            $this->withCookie('gp_device', $token)->getJson('/api/v1/device/family-dashboard')
+                ->assertOk()->assertJsonCount(1, 'data.tasks')->assertJsonCount(1, 'data.activity')
+                ->assertJsonPath('data.activity.0.title', '完成任务 · 新东方阅读');
+            if ($i < 2) {
+                $flow->withdraw($task->fresh(), $child, $child->member->user_id);
+                $this->withCookie('gp_device', $token)->getJson('/api/v1/device/family-dashboard')
+                    ->assertOk()->assertJsonCount(0, 'data.activity');
+            }
+        }
+        $this->assertSame(3, XpAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(1, CoinAccount::query()->where('child_id', $child->id)->value('balance'));
+        $this->assertSame(1, PointAccount::query()->where('child_id', $child->id)->value('balance'));
     }
 
     public function test_parent_edits_weekly_multi_time_reminder_and_only_paired_family_device_sees_it(): void
