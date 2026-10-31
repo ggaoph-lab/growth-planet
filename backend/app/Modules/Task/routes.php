@@ -2,6 +2,9 @@
 
 use App\Modules\Task\Http\Controllers\Kid\TaskController as KidTaskController;
 use App\Modules\Task\Http\Controllers\Kid\TtsController as KidTtsController;
+use App\Modules\Task\Http\Controllers\Parent\FamilyReminderController as ParentFamilyReminderController;
+use App\Modules\Task\Http\Controllers\Device\FamilyReminderController as DeviceFamilyReminderController;
+use App\Modules\Task\Http\Controllers\Device\FamilyDashboardController;
 use App\Modules\Task\Http\Controllers\Parent\HomeworkController;
 use App\Modules\Task\Http\Controllers\Parent\TaskCategoryController;
 use App\Modules\Task\Http\Controllers\Parent\TaskController;
@@ -9,6 +12,10 @@ use App\Modules\Task\Http\Controllers\Parent\TaskInstanceController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(function () {
+    Route::get('family-reminders', [ParentFamilyReminderController::class, 'index']);
+    Route::post('family-reminders', [ParentFamilyReminderController::class, 'store']);
+    Route::put('family-reminders/{id}', [ParentFamilyReminderController::class, 'update'])->whereNumber('id');
+    Route::delete('family-reminders/{id}', [ParentFamilyReminderController::class, 'destroy'])->whereNumber('id');
     Route::get('task-categories', [TaskCategoryController::class, 'index']);
     Route::post('task-categories', [TaskCategoryController::class, 'store']);
     Route::put('task-categories/{id}', [TaskCategoryController::class, 'update'])->whereNumber('id');
@@ -23,6 +30,12 @@ Route::prefix('v1/parent')->middleware(['auth:sanctum', 'role:parent'])->group(f
     Route::post('homework/confirm', [HomeworkController::class, 'confirm']);
 
     Route::get('task-instances', [TaskInstanceController::class, 'index']);
+});
+
+Route::prefix('v1/device')->group(function () {
+    Route::get('family-dashboard', [FamilyDashboardController::class, 'index']);
+    Route::get('family-reminders', [DeviceFamilyReminderController::class, 'index']);
+    Route::get('family-reminders/{id}/audio', [DeviceFamilyReminderController::class, 'audio'])->whereNumber('id');
 });
 
 Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(function () {

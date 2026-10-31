@@ -52,6 +52,7 @@ const routes: RouteRecordRaw[] = [
       { path: '', name: 'parent-dashboard', component: () => import('@/parent/pages/DashboardPage.vue'), meta: { role: 'parent', title: 'parent.nav.dashboard' } },
       { path: 'approvals', name: 'parent-approvals', component: () => import('@/parent/pages/ApprovalsPage.vue'), meta: { role: 'parent', title: 'parent.nav.approvals' } },
       { path: 'tasks', name: 'parent-tasks', component: () => import('@/parent/pages/TasksPage.vue'), meta: { role: 'parent', title: 'parent.nav.tasks' } },
+      { path: 'family-reminders', name: 'parent-family-reminders', component: () => import('@/parent/pages/FamilyRemindersPage.vue'), meta: { role: 'parent', title: '语音提醒' } },
       { path: 'habits', name: 'parent-habits', component: () => import('@/parent/pages/HabitsPage.vue'), meta: { role: 'parent', title: 'parent.nav.habits' } },
       { path: 'shop', name: 'parent-shop', component: () => import('@/parent/pages/ShopPage.vue'), meta: { role: 'parent', title: 'parent.nav.shop' } },
       { path: 'life', name: 'parent-life', component: () => import('@/parent/pages/LifePage.vue'), meta: { role: 'parent', title: 'parent.nav.life' } },

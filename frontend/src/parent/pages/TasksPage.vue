@@ -783,6 +783,7 @@ onMounted(load)
     <el-tabs v-model="tab" @tab-change="onTabChange">
       <el-tab-pane :label="t('common.taskTemplates')" name="tasks">
         <div class="toolbar">
+          <RouterLink to="/parent/family-reminders"><el-button>语音提醒</el-button></RouterLink>
           <el-button type="primary" @click="openCreate">{{ t('common.createTask') }}</el-button>
           <el-button @click="openHomework">{{ t('common.importHomework') }}</el-button>
           <el-tag v-if="activeCategoryName" closable @close="categoryFilterId = null">
