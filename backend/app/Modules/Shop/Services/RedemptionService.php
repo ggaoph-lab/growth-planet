@@ -167,6 +167,7 @@ class RedemptionService
         }
 
         $redemption->status = RedemptionStatus::Fulfilled;
+        $redemption->fulfilled_at = $this->clock->now();
         $redemption->save();
     }
 

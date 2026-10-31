@@ -111,10 +111,11 @@ class FamilyHubController
             if ($minutes > 0) {
                 $active = DB::table('family_hub_game_sessions')->where('device_id', $device->id)->where('ends_at', '>', now())->latest('ends_at')->first();
                 abort_if($active && $active->child_id !== $gameChild, 422, '请等待当前孩子的游戏计时结束');
+                abort_if($active && $active->extension_used, 422, '本轮游戏已增加过时长，不能再次追加');
                 $end = $active ? CarbonImmutable::parse($active->ends_at)->addMinutes($minutes) : now()->addMinutes($minutes);
                 $id = DB::table('family_hub_game_sessions')->insertGetId(['family_id' => $device->family_id, 'device_id' => $device->id,
                     'child_id' => $gameChild, 'request_key' => $data['request_key'], 'approval_ids' => json_encode($items->pluck('id')->all()),
-                    'minutes' => $minutes, 'starts_at' => now(), 'ends_at' => $end, 'created_at' => now(), 'updated_at' => now()]);
+                    'extension_used' => $active !== null, 'minutes' => $minutes, 'starts_at' => now(), 'ends_at' => $end, 'created_at' => now(), 'updated_at' => now()]);
                 $game = DB::table('family_hub_game_sessions')->find($id);
             }
 
@@ -129,8 +130,27 @@ class FamilyHubController
         }
 
         return ['id' => $game->id, 'minutes' => $game->minutes, 'child_id' => $game->child_id,
+            'extension_used' => (bool) $game->extension_used, 'ended_early' => $game->ended_early_at !== null,
             'ends_at_ms' => CarbonImmutable::parse($game->ends_at, 'UTC')->getTimestampMs(),
             'server_time_ms' => now()->getTimestampMs()];
+    }
+
+    public function endGame(Request $request)
+    {
+        $device = $this->device($request);
+        $this->actor($request, $device);
+        $data = $request->validate(['session_id' => ['required', 'integer']]);
+
+        return DB::transaction(function () use ($device, $data) {
+            TrustedDevice::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
+            $game = DB::table('family_hub_game_sessions')->where('device_id', $device->id)->latest('id')->first();
+            abort_unless($game && $game->id === $data['session_id'], 409, '游戏状态已更新，请刷新');
+            if ($game->ends_at > now()->toDateTimeString()) {
+                DB::table('family_hub_game_sessions')->where('device_id', $device->id)->where('ends_at', '>', now())->update(['ends_at' => now(), 'ended_early_at' => now(), 'updated_at' => now()]);
+            }
+
+            return response()->json(['data' => ['game' => $this->gameData(DB::table('family_hub_game_sessions')->find($game->id))]]);
+        });
     }
 
     public function game(Request $request)

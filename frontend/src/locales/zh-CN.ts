@@ -366,6 +366,8 @@ export default {
     noRewardsYet: '还没有奖励',
     noRedemptions: '暂无兑换',
     rewardProducts: '奖励商品',
+    redeemedAt: '兑换时间',
+    fulfilledAt: '核销时间',
     redemptionHistory: '兑换记录',
     bagTab: '书包',
     exploreTab: '勇敢探索',

@@ -103,3 +103,9 @@ bash deploy/scripts/nas-update-from-github.sh   # sync + pull + up + migrate
 | [development-plan](docs/development-plan.md) | 分阶段计划、验收标准、待家长确认的问题 |
 
 `prd.md`、`points-rules.md`、`item-tracking.md`、`test-plan.md`、`deployment.md` 为 V0 规划稿，已被 V1.0 文档取代，仅供参考。
+
+## ThinkSmart task and approval controls
+
+Device API routes live under `/api/v1/device/family-hub`: `approvals`, `decide`, `tasks/{id}/complete`, and `game`. A valid paired device cookie scopes all data to its family. Batch decisions additionally require `trusted_devices.hub_approvals_enabled`, disabled by default. This installation deliberately enables direct approval on ThinkSmart without a PIN, per the household's choice. Approvals retain the existing parent authorizer and approval-event trail.
+
+Screen-time rewards have explicit `game_minutes`; current unambiguous names such as `游戏时间15min` are migrated, including pending redemption snapshots. Batches are transactional and version checked. A UUID request key makes game-session retries return the existing result. Game selections for one child are summed; an active session for that child is extended. Different children cannot be combined into one timer.

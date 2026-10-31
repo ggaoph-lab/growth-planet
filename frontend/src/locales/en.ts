@@ -366,6 +366,8 @@ export default {
     noRewardsYet: 'No rewards yet',
     noRedemptions: 'No redemptions',
     rewardProducts: 'Rewards',
+    redeemedAt: 'Redeemed at',
+    fulfilledAt: 'Fulfilled at',
     redemptionHistory: 'Redemptions',
     bagTab: 'Bag',
     exploreTab: 'Explore',

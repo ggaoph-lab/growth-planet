@@ -95,6 +95,10 @@ class ShopRedemptionTest extends TestCase
         $this->assertSame(30, $coin->balance);
         $this->assertSame(0, $coin->held);
         $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
+        $this->assertNotNull($redemption->fresh()->fulfilled_at);
+        $at = $redemption->fresh()->fulfilled_at->toIso8601String();
+        app(RedemptionService::class)->fulfill($redemption->fresh(), $family, $parent->id);
+        $this->assertSame($at, $redemption->fresh()->fulfilled_at->toIso8601String());
     }
 
     public function test_parent_approve_captures_hold_when_balance_exactly_matches_price(): void
@@ -135,6 +139,10 @@ class ShopRedemptionTest extends TestCase
         $this->assertSame(0, $coin->balance);
         $this->assertSame(0, $coin->held);
         $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
+        $this->assertNotNull($redemption->fresh()->fulfilled_at);
+        $at = $redemption->fresh()->fulfilled_at->toIso8601String();
+        app(RedemptionService::class)->fulfill($redemption->fresh(), $family, $parent->id);
+        $this->assertSame($at, $redemption->fresh()->fulfilled_at->toIso8601String());
     }
 
     public function test_parent_approve_captures_point_hold_when_balance_exactly_matches_price(): void
@@ -179,6 +187,10 @@ class ShopRedemptionTest extends TestCase
         $this->assertSame(0, $points->balance);
         $this->assertSame(0, $points->held);
         $this->assertSame(RedemptionStatus::Fulfilled, $redemption->fresh()->status);
+        $this->assertNotNull($redemption->fresh()->fulfilled_at);
+        $at = $redemption->fresh()->fulfilled_at->toIso8601String();
+        app(RedemptionService::class)->fulfill($redemption->fresh(), $family, $parent->id);
+        $this->assertSame($at, $redemption->fresh()->fulfilled_at->toIso8601String());
     }
 
     public function test_kid_cancel_drops_the_pending_redemption_from_the_approval_center(): void

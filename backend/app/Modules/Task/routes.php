@@ -38,6 +38,7 @@ Route::prefix('v1/device')->group(function () {
     Route::get('family-hub/approvals', [FamilyHubController::class, 'pending']);
     Route::post('family-hub/decide', [FamilyHubController::class, 'decide'])->middleware('throttle:20,1');
     Route::post('family-hub/tasks/{id}/complete', [FamilyHubController::class, 'complete'])->whereNumber('id')->middleware('throttle:30,1');
+    Route::post('family-hub/game/end', [FamilyHubController::class, 'endGame'])->middleware('throttle:10,1');
     Route::get('family-hub/game', [FamilyHubController::class, 'game']);
     Route::get('family-dashboard', [FamilyDashboardController::class, 'index']);
     Route::get('family-reminders', [DeviceFamilyReminderController::class, 'index']);

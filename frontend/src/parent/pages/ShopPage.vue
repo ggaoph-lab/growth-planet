@@ -5,10 +5,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import { ApiError, api } from '@/shared/api/client'
 import type { Reward, RewardCurrency, RewardKind, RewardRedemption, RewardStatus, Wish, WishStatus } from '@/shared/api/types'
+import { formatInTimezone } from '@/shared/time'
+import { useSessionStore } from '@/stores/session'
 import { useIsPhone } from '@/shared/useMediaQuery'
 
 const { t } = useI18n()
 const isPhone = useIsPhone()
+const session = useSessionStore()
 const rewards = ref<Reward[]>([])
 const redemptions = ref<RewardRedemption[]>([])
 const wishes = ref<Wish[]>([])
@@ -384,7 +387,12 @@ onMounted(load)
           <el-table-column :label="t('common.status')" width="90">
             <template #default="{ row }">{{ redemptionStatusLabel(row.status) }}</template>
           </el-table-column>
-          <el-table-column prop="created_at" :label="t('common.time')" min-width="140" />
+          <el-table-column :label="t('common.redeemedAt')" min-width="165">
+            <template #default="{ row }">{{ formatInTimezone(row.created_at, session.timezone, 'YYYY-MM-DD HH:mm:ss') }}</template>
+          </el-table-column>
+          <el-table-column :label="t('common.fulfilledAt')" min-width="165">
+            <template #default="{ row }">{{ formatInTimezone(row.fulfilled_at, session.timezone, 'YYYY-MM-DD HH:mm:ss') }}</template>
+          </el-table-column>
         </el-table>
         <div v-else class="phone-list">
           <el-empty v-if="redemptions.length === 0" :description="t('common.noRedemptions')" />
@@ -393,8 +401,10 @@ onMounted(load)
               <div class="phone-title">{{ row.reward_snapshot?.name ?? `#${row.reward_id}` }}</div>
               <div class="phone-meta">
                 {{ row.point_price ? `⭐ ${row.point_price}` : `🪙 ${row.coin_price}` }}
-                · {{ redemptionStatusLabel(row.status) }} · {{ row.created_at }}
+                · {{ redemptionStatusLabel(row.status) }}
               </div>
+              <div class="phone-meta">{{ t('common.redeemedAt') }}：{{ formatInTimezone(row.created_at, session.timezone, 'YYYY-MM-DD HH:mm:ss') }}</div>
+              <div class="phone-meta">{{ t('common.fulfilledAt') }}：{{ formatInTimezone(row.fulfilled_at, session.timezone, 'YYYY-MM-DD HH:mm:ss') }}</div>
             </div>
           </article>
         </div>

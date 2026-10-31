@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { formatInTimezone } from '@/shared/time'
+import { useSessionStore } from '@/stores/session'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -6,6 +8,7 @@ import { ApiError, api } from '@/shared/api/client'
 import type { ApprovalRequest, ApprovalType } from '@/shared/api/types'
 
 const { t } = useI18n()
+const session = useSessionStore()
 const items = ref<ApprovalRequest[]>([])
 const loading = ref(true)
 const acting = ref<number | null>(null)
@@ -139,6 +142,7 @@ onMounted(load)
       <p v-if="isRedemption(item) && redeemCost(item)" class="sub">{{ redeemCost(item) }}</p>
       <p v-else-if="rewardLine(item)" class="sub">{{ rewardLine(item) }}</p>
       <p v-else-if="!taskHeading(item)" class="sub">{{ t('common.subjectLink', { type: item.subject_type, id: item.subject_id }) }}</p>
+      <p v-if="isRedemption(item)" class="sub">{{ t('common.redeemedAt') }}：{{ formatInTimezone(item.requested_at, session.timezone, 'YYYY-MM-DD HH:mm:ss') }}</p>
       <div class="actions">
         <el-button v-if="isRedemption(item)" type="success" :loading="acting === item.id" @click="decide(item, 'approve')">{{ t('parent.approvals.fulfill') }}</el-button>
         <el-button v-else type="success" :loading="acting === item.id" @click="decide(item, 'approve')">{{ t('common.approve') }}</el-button>

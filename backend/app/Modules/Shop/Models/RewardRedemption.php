@@ -13,6 +13,7 @@ class RewardRedemption extends Model
     {
         return [
             'reward_snapshot' => 'array',
+            'fulfilled_at' => 'datetime',
             'status' => RedemptionStatus::class,
         ];
     }

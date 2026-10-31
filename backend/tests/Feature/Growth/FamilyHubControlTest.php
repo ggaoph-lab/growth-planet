@@ -110,4 +110,40 @@ class FamilyHubControlTest extends TestCase
         $this->assertSame(0, $account->fresh()->held);
         $this->assertDatabaseCount('family_hub_game_sessions', 0);
     }
+
+    public function test_only_one_extension_is_allowed_per_game_and_second_attempt_does_not_charge(): void
+    {
+        extract($this->setupHub());
+        foreach ($items as $item) {
+            $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/decide', [
+                'request_key' => (string) Str::uuid(), 'items' => [$item], 'decision' => 'APPROVED',
+            ])->assertOk();
+        }
+        $reward = $this->seedReward($family, ['kind' => RewardKind::ScreenTime, 'coin_price' => 10, 'game_minutes' => 15]);
+        $redemption = app(RedemptionService::class)->request($reward, $child, $family, 'hub:third');
+        $approval = ApprovalRequest::findOrFail($redemption->approval_request_id);
+        $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/decide', [
+            'request_key' => (string) Str::uuid(), 'items' => [['id' => $approval->id, 'lock_version' => 0]], 'decision' => 'APPROVED',
+        ])->assertUnprocessable();
+        $this->assertSame(80, $account->fresh()->balance);
+        $this->assertSame(10, $account->fresh()->held);
+        $this->assertSame('PENDING', $approval->fresh()->status->value);
+        $this->withCookie('gp_device', $token)->getJson('/api/v1/device/family-hub/game')->assertOk()->assertJsonPath('data.game.extension_used', true);
+    }
+
+    public function test_hub_can_end_current_game_early_and_repeat_is_safe(): void
+    {
+        extract($this->setupHub());
+        foreach ($items as $item) {
+            $game = $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/decide', [
+                'request_key' => (string) Str::uuid(), 'items' => [$item], 'decision' => 'APPROVED',
+            ])->assertOk()->json('data.game');
+        }
+        $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/game/end', ['session_id' => $game['id']])
+            ->assertOk()->assertJsonPath('data.game.ended_early', true);
+        $this->assertSame(0, \Illuminate\Support\Facades\DB::table('family_hub_game_sessions')->where('device_id', $device->id)->where('ends_at', '>', now())->count());
+        $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/game/end', ['session_id' => $game['id']])->assertOk();
+        $this->assertSame(80, $account->fresh()->balance);
+        $this->withCookie('gp_device', $token)->postJson('/api/v1/device/family-hub/game/end', ['session_id' => 999999])->assertConflict();
+    }
 }

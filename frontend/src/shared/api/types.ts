@@ -469,6 +469,7 @@ export interface Reward {
 export type RedemptionStatus = 'requested' | 'approved' | 'rejected' | 'cancelled' | 'fulfilled'
 
 export interface RewardRedemption {
+  fulfilled_at?: string | null
   id: number
   ulid: string
   family_id: number
