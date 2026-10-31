@@ -17,7 +17,7 @@ class FamilyReminderTest extends TestCase
 
         $this->getJson('/api/v1/device/family-dashboard')->assertUnauthorized();
         $this->withCookie('gp_device', $token)->getJson('/api/v1/device/family-dashboard')
-            ->assertOk()->assertJsonStructure(['data' => ['date', 'tasks']]);
+            ->assertOk()->assertJsonStructure(['data' => ['date', 'tasks', 'activity']]);
     }
 
     public function test_parent_edits_weekly_multi_time_reminder_and_only_paired_family_device_sees_it(): void
