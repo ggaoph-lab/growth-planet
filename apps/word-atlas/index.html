@@ -18,14 +18,19 @@
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <link rel="preload" href="%BASE_URL%atlas/index.json" as="fetch" crossorigin="anonymous" />
     <script>
-      // Apply the saved theme (dark by default) before first paint.
+      // Apply the saved theme (星光 + 衬线 by default) before first paint.
       (function () {
-        var t = "dark";
+        var t = "starlight";
+        var f = "classic";
         try {
           var s = JSON.parse(localStorage.getItem("word-atlas:settings") || "{}");
           if (s.theme) t = s.theme;
+          if (s.wordFont === "serif" || s.wordFont === "sans" || s.wordFont === "classic") f = s.wordFont === "serif" ? "classic" : s.wordFont;
         } catch (e) {}
-        if (t !== "system") document.documentElement.setAttribute("data-theme", t);
+        document.documentElement.setAttribute("data-font", f);
+        var skin = t === "aurora" || t === "starlight";
+        if (skin) document.documentElement.setAttribute("data-skin", t);
+        if (t !== "system") document.documentElement.setAttribute("data-theme", skin ? "dark" : t);
       })();
     </script>
   </head>

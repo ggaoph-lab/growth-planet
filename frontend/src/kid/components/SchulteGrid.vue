@@ -34,6 +34,9 @@ const sizes: { size: SchulteSize; label: string }[] = [
 
 const size = ref<SchulteSize>(3)
 const phase = ref<'ready' | 'play' | 'done'>('ready')
+const starting = ref(false)
+const playId = ref<string | null>(null)
+const error = ref('')
 const round = ref(0)
 const cells = ref<number[]>([])
 const next = ref(1)
@@ -49,6 +52,7 @@ const awardedCoins = ref(0)
 const board = ref<SchulteBoard | null>(null)
 
 let timer: ReturnType<typeof setInterval> | undefined
+let refreshTimer: ReturnType<typeof setInterval> | undefined
 let missTimer: ReturnType<typeof setTimeout> | undefined
 let hitTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -84,6 +88,7 @@ watch(() => [props.childId, size.value, board.value] as const, refreshBest, { im
 
 onMounted(() => {
   void loadBoard()
+  refreshTimer = setInterval(() => { if (phase.value !== 'play') void loadBoard() }, 60_000)
 })
 
 function stopTimer(): void {
@@ -99,8 +104,21 @@ function pick(nextSize: SchulteSize): void {
   if (phase.value === 'done') phase.value = 'ready'
 }
 
-function begin(): void {
-  if (phase.value === 'play') return
+async function begin(): Promise<void> {
+  if (phase.value === 'play' || starting.value || !board.value || (sizeBoard.value?.remaining ?? 0) === 0) return
+  starting.value = true
+  error.value = ''
+  try {
+    const result = await api.postIdempotent<{ play_id: string }>('/kid/games/schulte/start', { level: String(size.value) })
+    playId.value = result.play_id
+    await loadBoard()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : t('kid.games.tryLater')
+    await loadBoard()
+    starting.value = false
+    return
+  }
+  starting.value = false
   stopTimer()
   round.value += 1
   cells.value = shuffleNumbers(size.value)
@@ -133,6 +151,7 @@ async function finish(): Promise<void> {
     const result = await api.postIdempotent<SchulteFinish>('/kid/games/schulte', {
       size: size.value,
       elapsed_ms: ms,
+      play_id: playId.value,
     })
     board.value = result.board
     improved.value = result.improved
@@ -175,6 +194,7 @@ function tap(index: number): void {
 }
 
 onUnmounted(() => {
+  if (refreshTimer !== undefined) clearInterval(refreshTimer)
   stopTimer()
   if (missTimer !== undefined) clearTimeout(missTimer)
   if (hitTimer !== undefined) clearTimeout(hitTimer)
@@ -197,6 +217,7 @@ onUnmounted(() => {
         >
           <span class="size-n">{{ option.size }}×{{ option.size }}</span>
           <span class="size-label">{{ t(option.label) }}</span>
+          <span class="size-label">{{ t('kid.games.remaining', { n: board?.sizes.find((row) => row.size === option.size)?.remaining ?? 0 }) }}</span>
         </button>
       </div>
 
@@ -247,7 +268,9 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <button v-if="phase !== 'play'" type="button" class="go" @click="begin">
+      <p v-if="error" role="alert">{{ error }}</p>
+      <p v-if="phase !== 'play' && (sizeBoard?.remaining ?? 0) === 0">{{ t('kid.games.tomorrow') }}</p>
+      <button v-if="phase !== 'play'" type="button" class="go" :disabled="starting || !board || (sizeBoard?.remaining ?? 0) === 0" @click="begin">
         {{ phase === 'done' ? t('kid.games.again') : t('kid.games.start') }}
       </button>
     </div>

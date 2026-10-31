@@ -7,6 +7,7 @@ import {
   GAME_LEVEL_REWARDS,
   type GameLevelBoard,
   type GameLevelClaim,
+  type GamePlayStart,
 } from '../gameRewards'
 import {
   MIRROR_COLORS,
@@ -39,10 +40,14 @@ const puzzle = ref<MirrorPuzzle>(createMirrorPuzzle('easy'))
 const placed = ref<Array<number | null>>([])
 const selected = ref(0)
 const missIndex = ref<number | null>(null)
-const phase = ref<'play' | 'done'>('play')
+const phase = ref<'ready' | 'play' | 'done'>('ready')
+const starting = ref(false)
+const playId = ref<string | null>(null)
+const error = ref('')
 const board = ref<GameLevelBoard | null>(null)
 const awardedCoins = ref(0)
 
+let refreshTimer: ReturnType<typeof setInterval> | undefined
 let missTimer: ReturnType<typeof setTimeout> | undefined
 
 const remaining = computed(() => puzzle.value.left.length - matchedCount(puzzle.value, placed.value))
@@ -83,7 +88,7 @@ async function loadBoard(): Promise<void> {
 async function claimReward(): Promise<void> {
   awardedCoins.value = 0
   try {
-    const result = await api.postIdempotent<GameLevelClaim>('/kid/games/mirror', { level: levelId.value })
+    const result = await api.postIdempotent<GameLevelClaim>('/kid/games/mirror', { level: levelId.value, play_id: playId.value })
     board.value = result.board
     awardedCoins.value = result.awarded_coins
   } catch {
@@ -91,20 +96,36 @@ async function claimReward(): Promise<void> {
   }
 }
 
-function begin(level: MirrorLevelId = levelId.value): void {
-  levelId.value = level
-  const next = createMirrorPuzzle(level)
-  puzzle.value = next
-  placed.value = next.left.map(() => null)
-  selected.value = 0
-  missIndex.value = null
-  awardedCoins.value = 0
-  phase.value = 'play'
+async function begin(level: MirrorLevelId = levelId.value): Promise<void> {
+  if (starting.value || phase.value === 'play') return
+  starting.value = true
+  error.value = ''
+  try {
+    const result = await api.postIdempotent<GamePlayStart>('/kid/games/mirror/start', { level })
+    playId.value = result.play_id
+    await loadBoard()
+    levelId.value = level
+    const next = createMirrorPuzzle(level)
+    puzzle.value = next
+    placed.value = next.left.map(() => null)
+    selected.value = 0
+    missIndex.value = null
+
+    awardedCoins.value = 0
+    phase.value = 'play'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : t('kid.games.tryLater')
+    await loadBoard()
+  } finally {
+    starting.value = false
+  }
 }
 
 function pickLevel(id: MirrorLevelId): void {
-  if (id === levelId.value && phase.value === 'play') return
-  begin(id)
+  if (phase.value === 'play' || starting.value) return
+  levelId.value = id
+  error.value = ''
+  phase.value = 'ready'
 }
 
 function tap(index: number): void {
@@ -130,12 +151,13 @@ function tap(index: number): void {
   }
 }
 
-begin()
 onMounted(() => {
   void loadBoard()
+  refreshTimer = setInterval(() => { if (phase.value !== 'play') void loadBoard() }, 60_000)
 })
 
 onUnmounted(() => {
+  if (refreshTimer !== undefined) clearInterval(refreshTimer)
   if (missTimer !== undefined) clearTimeout(missTimer)
 })
 </script>
@@ -150,13 +172,18 @@ onUnmounted(() => {
         class="level"
         :class="{ on: levelId === level.id }"
         :aria-pressed="levelId === level.id"
+        :disabled="phase === 'play' || starting"
         @click="pickLevel(level.id)"
       >
         <span class="level-label">{{ t(levelLabels[level.id]) }}</span>
         <span class="level-coins">{{ t('kid.games.levelReward', { coins: levelCoins(level.id) }) }}</span>
+        <span class="level-coins">{{ t('kid.games.remaining', { n: board?.levels.find((row) => row.id === level.id)?.remaining ?? 0 }) }}</span>
       </button>
     </div>
 
+    <p v-if="error" class="status" role="alert">{{ error }}</p>
+    <p v-if="board && phase !== 'play' && (board?.levels.find((row) => row.id === levelId)?.remaining ?? 0) === 0" class="status">{{ t('kid.games.tomorrow') }}</p>
+    <button v-if="phase !== 'play'" type="button" class="again" :disabled="starting || !board || (board.levels.find((row) => row.id === levelId)?.remaining ?? 0) === 0" @click="begin()">{{ t(phase === 'done' ? 'kid.games.mirrorAgain' : 'kid.games.start') }}</button>
     <p class="status" aria-live="polite">
       <template v-if="phase === 'done'">
         <span>{{ t('kid.games.mirrorDone') }}</span>
@@ -168,7 +195,7 @@ onUnmounted(() => {
       </template>
     </p>
 
-    <div class="stage">
+    <div v-if="phase === 'play' || phase === 'done'" class="stage">
       <div class="board" role="group" :aria-label="t('kid.games.mirror')">
         <template v-for="row in puzzle.rows" :key="`row-${row}`">
           <div
@@ -215,9 +242,6 @@ onUnmounted(() => {
             <span class="choice-name">{{ colorLabel(index - 1) }}</span>
           </div>
         </div>
-        <button v-if="phase === 'done'" type="button" class="again" @click="begin()">
-          {{ t('kid.games.mirrorAgain') }}
-        </button>
       </div>
     </div>
   </section>

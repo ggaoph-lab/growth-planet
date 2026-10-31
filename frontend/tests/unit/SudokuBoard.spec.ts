@@ -75,22 +75,22 @@ beforeEach(() => {
   vi.mocked(api.get).mockResolvedValue({
     date: '2026-10-20',
     levels: [
-      { id: 'easy', coins: 1, awarded: false },
-      { id: 'practice', coins: 2, awarded: false },
-      { id: 'challenge', coins: 3, awarded: false },
+      { id: 'easy', coins: 1, awarded: false, remaining: 2 },
+      { id: 'practice', coins: 2, awarded: false, remaining: 2 },
+      { id: 'challenge', coins: 3, awarded: false, remaining: 2 },
     ],
   })
-  vi.mocked(api.postIdempotent).mockResolvedValue({
+  vi.mocked(api.postIdempotent).mockImplementation(async (path) => path.endsWith('/start') ? { play_id: 'play-1', remaining: 1, date: '2026-10-20' } : ({
     awarded_coins: 1,
     board: {
       date: '2026-10-20',
       levels: [
-        { id: 'easy', coins: 1, awarded: true },
-        { id: 'practice', coins: 2, awarded: false },
-        { id: 'challenge', coins: 3, awarded: false },
+        { id: 'easy', coins: 1, awarded: true, remaining: 1 },
+        { id: 'practice', coins: 2, awarded: false, remaining: 2 },
+        { id: 'challenge', coins: 3, awarded: false, remaining: 2 },
       ],
     },
-  })
+  }))
 })
 
 afterEach(() => {
@@ -101,6 +101,9 @@ afterEach(() => {
 describe('SudokuBoard', () => {
   it('locks a matching digit and ignores a wrong one', async () => {
     wrapper = mount(SudokuBoard, { props: { sounds: true } })
+    await flushPromises()
+    await wrapper.get('button.again').trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('先选数字，再点空格')
     expect(wrapper.text()).toContain('还差 8 格')
 
@@ -119,6 +122,9 @@ describe('SudokuBoard', () => {
 
   it('finishes a seeded board and can start another', async () => {
     wrapper = mount(SudokuBoard, { props: { sounds: true } })
+    await flushPromises()
+    await wrapper.get('button.again').trigger('click')
+    await flushPromises()
     const order = [
       { index: 1, digit: 2 },
       { index: 3, digit: 4 },
@@ -137,15 +143,18 @@ describe('SudokuBoard', () => {
     expect(wrapper.text()).toContain('数独完成啦！')
     expect(wrapper.text()).toContain('+1 积分')
     expect(playWin).toHaveBeenCalledOnce()
-    expect(api.postIdempotent).toHaveBeenCalledWith('/kid/games/sudoku', { level: 'easy' })
+    expect(api.postIdempotent).toHaveBeenCalledWith('/kid/games/sudoku', { level: 'easy', play_id: 'play-1' })
     await wrapper.get('button.again').trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('还差 8 格')
   })
 
   it('switches to a larger grid for practice', async () => {
     wrapper = mount(SudokuBoard)
-    expect(cells()).toHaveLength(16)
+    await flushPromises()
     await wrapper.get('button.level[aria-pressed="false"]').trigger('click')
+    await wrapper.get('button.again').trigger('click')
+    await flushPromises()
     expect(cells()).toHaveLength(36)
     expect(wrapper.findAll('button.digit')).toHaveLength(6)
   })

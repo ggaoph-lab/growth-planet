@@ -14,11 +14,18 @@ export interface GameLevelBoardRow {
   id: GameLevelId
   coins: number
   awarded: boolean
+  remaining: number
 }
 
 export interface GameLevelBoard {
   date: string
   levels: GameLevelBoardRow[]
+}
+
+export interface GamePlayStart {
+  play_id: string
+  remaining: number
+  date: string
 }
 
 export interface GameLevelClaim {

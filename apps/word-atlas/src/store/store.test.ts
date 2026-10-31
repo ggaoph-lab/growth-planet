@@ -28,4 +28,6 @@ test("rejects other versions and unknown settings", () => {
   assert.equal(s.dailyNew, 10);
   assert.equal(s.theme, "dark");
   assert.equal(s.retention, 0.9);
+  assert.equal(sanitizeSettings({ theme: "starlight", wordFont: "serif" }).wordFont, "classic");
+  assert.equal(sanitizeSettings({ theme: "aurora" }).theme, "aurora");
 });

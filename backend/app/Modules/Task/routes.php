@@ -5,6 +5,7 @@ use App\Modules\Task\Http\Controllers\Kid\TtsController as KidTtsController;
 use App\Modules\Task\Http\Controllers\Parent\FamilyReminderController as ParentFamilyReminderController;
 use App\Modules\Task\Http\Controllers\Device\FamilyReminderController as DeviceFamilyReminderController;
 use App\Modules\Task\Http\Controllers\Device\FamilyDashboardController;
+use App\Modules\Task\Http\Controllers\Kid\FamilyHubChatController;
 use App\Modules\Task\Http\Controllers\Parent\HomeworkController;
 use App\Modules\Task\Http\Controllers\Parent\TaskCategoryController;
 use App\Modules\Task\Http\Controllers\Parent\TaskController;
@@ -40,6 +41,7 @@ Route::prefix('v1/device')->group(function () {
 
 Route::prefix('v1/kid')->middleware(['auth:sanctum', 'role:child'])->group(function () {
     Route::get('tasks', [KidTaskController::class, 'index']);
+    Route::post('family-hub/chat', [FamilyHubChatController::class, 'chat']);
     Route::post('tts', [KidTtsController::class, 'speak']);
     Route::post('tts/warm', [KidTtsController::class, 'warm']);
     Route::post('task-instances/{id}/ready', [KidTaskController::class, 'ready'])->whereNumber('id')->middleware('idempotent');

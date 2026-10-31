@@ -1009,6 +1009,9 @@ export default {
     taskReward: '🎁 {xp} 经验 · {points} 积分 · {coins} 成长币',
     taskRewardPending: '🎁 完成后 {xp} 经验 · {points} 积分 · {coins} 成长币',
     games: {
+      remaining: '今日剩余 {n} 次',
+      tomorrow: '今天次数用完了，明天再玩吧',
+      tryLater: '请稍后再试',
       intro: '选一个小游戏，练练眼睛和注意力。',
       schulte: '舒尔特方格',
       schulteBlurb: '按 1、2、3 的顺序点数字',

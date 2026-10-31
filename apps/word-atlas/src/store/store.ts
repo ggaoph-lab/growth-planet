@@ -58,12 +58,17 @@ export interface Progress {
   mistakes: string[];
 }
 
+export type ThemeId = "system" | "light" | "dark" | "starlight" | "aurora";
+export type WordFont = "classic" | "sans";
+
 export interface Settings {
   accent: Accent;
   autoplay: boolean;
   dailyNew: number;
   retention: number;
-  theme: "system" | "light" | "dark";
+  theme: ThemeId;
+  /** English headword / example typeface. */
+  wordFont: WordFont;
   sfx: boolean;
   spell: boolean;
   startLevel: number;
@@ -71,7 +76,6 @@ export interface Settings {
   dataset: "open" | "private";
   ambience: "off" | "stars" | "rain" | "sea" | "forest" | "fire" | "voyage" | "cafe";
   ambienceVolume: number;
-  splash: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -79,7 +83,8 @@ export const defaultSettings: Settings = {
   autoplay: true,
   dailyNew: 10,
   retention: 0.9,
-  theme: "dark",
+  theme: "starlight",
+  wordFont: "classic",
   sfx: true,
   spell: true,
   startLevel: 0,
@@ -87,7 +92,6 @@ export const defaultSettings: Settings = {
   dataset: "open",
   ambience: "stars",
   ambienceVolume: 0.45,
-  splash: true,
 };
 
 export const emptyProgress = (datasetId: string): Progress => ({
@@ -176,7 +180,9 @@ export function sanitizeSettings(v: unknown): Settings {
   if (typeof v.autoplay === "boolean") s.autoplay = v.autoplay;
   if (num(v.dailyNew, 0, 100)) s.dailyNew = Math.round(v.dailyNew as number);
   if (num(v.retention, 0.7, 0.97)) s.retention = v.retention as number;
-  if (v.theme === "system" || v.theme === "light" || v.theme === "dark") s.theme = v.theme;
+  if (v.theme === "system" || v.theme === "light" || v.theme === "dark" || v.theme === "starlight" || v.theme === "aurora") s.theme = v.theme;
+  if (v.wordFont === "classic" || v.wordFont === "sans") s.wordFont = v.wordFont;
+  else if (v.wordFont === "serif") s.wordFont = "classic";
   if (typeof v.sfx === "boolean") s.sfx = v.sfx;
   if (typeof v.spell === "boolean") s.spell = v.spell;
   if (num(v.startLevel, 0, 5)) s.startLevel = Math.round(v.startLevel as number);
@@ -184,7 +190,6 @@ export function sanitizeSettings(v: unknown): Settings {
   if (v.dataset === "open" || v.dataset === "private") s.dataset = v.dataset;
   if (["off", "stars", "rain", "sea", "forest", "fire", "voyage", "cafe"].includes(v.ambience as string)) s.ambience = v.ambience as Settings["ambience"];
   if (num(v.ambienceVolume, 0, 1)) s.ambienceVolume = v.ambienceVolume as number;
-  if (typeof v.splash === "boolean") s.splash = v.splash;
   return s;
 }
 

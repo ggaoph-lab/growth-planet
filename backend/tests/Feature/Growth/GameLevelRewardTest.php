@@ -68,6 +68,31 @@ class GameLevelRewardTest extends TestCase
             ->assertJsonPath('data.levels.1.awarded', false);
     }
 
+    public function test_daily_slots_are_isolated_and_cannot_be_reused(): void
+    {
+        ['child' => $child, 'device' => $device, 'token' => $token] = $this->kid();
+        $start = fn (string $game, string $level) => $this->actingAsKid($child, $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/games/'.$game.'/start', ['level' => $level]);
+
+        $first = $start('mirror', 'easy')->assertOk()
+            ->assertJsonPath('data.remaining', 1)->json('data.play_id');
+        $start('mirror', 'easy')->assertOk()->assertJsonPath('data.remaining', 0);
+        $start('mirror', 'easy')->assertStatus(429)->assertJsonPath('error.code', 'GAME_DAILY_LIMIT');
+        $start('mirror', 'practice')->assertOk()->assertJsonPath('data.remaining', 1);
+        $start('sudoku', 'easy')->assertOk()->assertJsonPath('data.remaining', 1);
+
+        $this->actingAsKid($child, $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/games/mirror', ['level' => 'easy', 'play_id' => $first])
+            ->assertOk()->assertJsonPath('data.awarded_coins', 1);
+        $this->actingAsKid($child, $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/games/mirror', ['level' => 'easy', 'play_id' => $first])
+            ->assertStatus(422)->assertJsonPath('error.code', 'GAME_PLAY_INVALID');
+        $this->assertSame(1, $this->balance($child));
+    }
+
     public function test_unknown_game_is_rejected(): void
     {
         ['child' => $child, 'device' => $device, 'token' => $token] = $this->kid();
@@ -96,9 +121,13 @@ class GameLevelRewardTest extends TestCase
         string $game,
         string $level,
     ): TestResponse {
+        $playId = $this->actingAsKid($child, $device, $token)
+            ->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson('/api/v1/kid/games/'.$game.'/start', ['level' => $level])
+            ->assertOk()->json('data.play_id');
         return $this->actingAsKid($child, $device, $token)
             ->withHeader('Idempotency-Key', (string) Str::uuid())
-            ->postJson('/api/v1/kid/games/'.$game, ['level' => $level]);
+            ->postJson('/api/v1/kid/games/'.$game, ['level' => $level, 'play_id' => $playId]);
     }
 
     private function balance(ChildProfile $child): int

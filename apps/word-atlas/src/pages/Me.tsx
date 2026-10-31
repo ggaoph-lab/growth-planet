@@ -147,12 +147,14 @@ export function Me({ privateAvailable }: { privateAvailable: boolean }) {
             </div>
           </Field>
           <Field label="外观">
-            <div className="segmented">
+            <div className="segmented segmented-wrap">
               {(
                 [
                   ["system", "跟随系统"],
                   ["light", "浅色"],
                   ["dark", "深色"],
+                  ["starlight", "星光"],
+                  ["aurora", "极光"],
                 ] as const
               ).map(([k, l]) => (
                 <button key={k} className={settings.theme === k ? "is-on" : ""} onClick={() => set({ theme: k })}>
@@ -161,9 +163,18 @@ export function Me({ privateAvailable }: { privateAvailable: boolean }) {
               ))}
             </div>
           </Field>
+          <Field label="英文字体" hint="调整英文单词和例句的字体">
+            <div className="segmented">
+              <button className={settings.wordFont === "classic" ? "is-on" : ""} onClick={() => set({ wordFont: "classic" })}>
+                衬线
+              </button>
+              <button className={settings.wordFont === "sans" ? "is-on" : ""} onClick={() => set({ wordFont: "sans" })}>
+                无衬线
+              </button>
+            </div>
+          </Field>
           <Toggle label="自动播放发音" on={settings.autoplay} set={(v) => set({ autoplay: v })} />
           <Toggle label="界面音效" on={settings.sfx} set={(v) => set({ sfx: v })} />
-          <Toggle label="开屏动画（每天一次）" on={settings.splash} set={(v) => set({ splash: v })} />
           <Toggle label="复习时加入拼写题" on={settings.spell} set={(v) => set({ spell: v })} />
           {privateAvailable && (
             <Field label="词库" hint="私人词库只在本机开发服务器中可用，不会被打包发布。">
